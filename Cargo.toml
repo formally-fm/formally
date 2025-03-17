@@ -1,0 +1,15 @@
+[package]
+name = "formally"
+description = "the open-source formal methods toolchain"
+homepage = "https://formally.fm"
+repository = "https://github.com/formally-fm/formally"
+version = "0.1.0"
+edition = "2024"
+license-file = "LICENSE.txt"
+
+[lib]
+crate-type = ["lib"]
+name = "fm"
+path = "src/lib.rs"
+
+[dependencies]
