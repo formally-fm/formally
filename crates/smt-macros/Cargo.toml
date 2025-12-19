@@ -1,0 +1,27 @@
+[package]
+name = "formally-smt-macros"
+description = "the open-source formal methods toolchain - SMT abstraction layer - proc macros"
+homepage = "https://formally.fm"
+repository = "https://github.com/formally-fm/formally"
+version = "0.2025.12"
+edition = "2024"
+license-file = "LICENSE.txt"
+readme = "README.md"
+categories = [ "mathematics" ]
+keywords = [ "formal-methods", "smt" ]
+
+[features]
+default = []
+__subcratedoc = []
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.103"
+quote = "1.0.41"
+syn = { version = "2.0.108", features = ["parsing"] }
+
+[dev-dependencies]
+formally-smt = { path = "../smt", version = "0.2025.12" }
+formally-support = { path = "../support", version = "0.2025.12" }

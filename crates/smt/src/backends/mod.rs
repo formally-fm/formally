@@ -1,0 +1,329 @@
+//
+// ::formally - the open-source formal methods toolchain
+//
+// Copyright (c) 2025 Nicola Gigante
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+//
+
+//! SMT backend(s) and facilities to write them.
+//!
+//! This module provides the supported SMT backends and facilities to write new ones.
+//!
+//! *Currently* only the [Z3](z3::Z3) is provided, but other ones will follow soon.
+//!
+//! When instantiating a [Solver], the backend is chosen by setting the [backend](Config::backend)
+//! field of the [Config] object.
+//!
+//! ```
+//! # mod formally {
+//! #     pub extern crate formally_support as support;
+//! #     pub extern crate formally_smt as smt;
+//! # }
+//! # use formally::support::*;
+//! use formally::smt::{*, backends::z3::Z3};
+//! # fn main() -> Result<()> {
+//! let config = Config::default().backend(Z3);
+//! let solver = Solver::new(&config)?;
+//!
+//! // ...
+//!
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # How to write new backends
+//!
+//! A backend is a type implementing the [Backend] trait. This trait only provides two methods:
+//! 1. [name()](Backend::name()), which just returns a string with the name of the backend.
+//! 2. [instance()](Backend::instance()), which returns the backend *instance*.
+//!
+//! An instance is an object of a type that implements the [Instance] trait, and is the type doing
+//! the real job.
+//! 1. The backend type is what you pass around to tell *which* backend you want to use, e.g. in the
+//!    [Config] of a [Solver].
+//! 2. The instance type is the actual backend.
+//!
+//! The concrete instance type is usually not part of the public API of a backend, but is hidden
+//! behind the `Box<dyn Instance>` return type of [Backend::instance()].
+//!
+//! We refer to the documentation of [Instance] for an understanding of each method of the trait.
+//!
+//! What follows explain general concepts and requirements.
+//!
+//! ## Theories and logics
+//!
+//! The logic to instantiate the backend with is set by name in the [Config] object. The backend
+//! instance is then expected to provide a `&dyn Logic` reference through the
+//! [logic()](Instance::logic()) method. For standard SMT-LIBv2 logics, backend can use the
+//! [standard_logic()](logics::standard_logic()) function to lookup a standard logic by name.
+//!
+//! However, each backend instance is responsible to provide the logic named `"ALL"`, which by
+//! the SMT-LIBv2 specification correspond to a logic with no syntactic restriction based on the
+//! combination of all the theories supported by the solver. This logic can be internally declared
+//! using the [logic] macro and then passed to the `all` argument of
+//! [standard_logic()](logics::standard_logic()). For example:
+//! ```rust,no_run
+//! # mod formally {
+//! #     pub extern crate formally_support as support;
+//! #     pub extern crate formally_smt as smt;
+//! # }
+//! # use formally::{support::*, smt::{*, backends::*, logics::*, theories::*}};
+//! # use std::result::Result;
+//! # #[derive(Contextual)]
+//! # struct MyBackend {
+//! #    context: Context
+//! # }
+//! logic! {
+//!    name: MyBackendALL,
+//!    theories: [ Core, Ints, Reals, Arrays ],
+//!    requirements: [ ]
+//! }
+//! // ...
+//! impl Backend for MyBackend {
+//!     fn name(&self) -> &str {
+//!         "MyBackend"
+//!     }
+//!     // ...
+//!     fn instance(&self, config: &Config) -> Result<Box<dyn Instance>, BackendError> {
+//!         // ...
+//!         if let Some(logic) = &config.logic {
+//!             let logic = standard_logic(&logic, &MyBackendALL);
+//!             // ...
+//!         }
+//!         // ...
+//! #       todo!()
+//!     }
+//!     // ...
+//! }
+//! # fn main() { }
+//! ```
+//!
+//! However, note that backends do not necessarily have to associate names of standard logics (e.g.
+//! `"LIA"`) to the corresponding types declared in the [logics] module. What *is* expected is that
+//! the symbols provided by the background theories of standard logics correspond to those
+//! provided in the [theories] module.
+//!
+//! For instance, if a backend supports some non-standard extension of `"LIA"` (e.g. an additional
+//! function symbol), it can declare a custom `"LIA"` logic that combines the standard `Ints` theory
+//! with a custom theory that declares the additional symbol. On the converse, if a solver supports
+//! `"LIA"` partially, e.g. everything except the `abs` function, it can redeclare a custom logic
+//! based on the standard [Ints](theories::Ints) theory and add a syntactic requirement that scan
+//! terms to forbid the use of `abs`.
+//!
+//! ## Error handling in backends
+//!
+//! In order to simplify the life of backend developers and provide a consistent experience to
+//! users of different backends, backends *do not* directly emit their errors as diagnostics (even
+//! though they technically *could*, because they have access the [Context]). Instead, the methods
+//! of [Instance] return a [Result] whose error type is [BackendError], which provides a
+//! non-exhaustive taxonomy of the possible errors that a backend may encounter. [BackendError] is
+//! [Diagnosable], so users of the backend interface (e.g. [Solver]) can still easily emit those
+//! errors as diagnostics later.
+//!
+//! ## Assumptions and guarantees
+//!
+//! The documentation of each method in [Instance] provides a set of preconditions that the methods
+//! can assume to hold. When the backend instance methods are invoked by [Solver], these assumptions
+//! are guaranteed to hold. However, to guarantee stability even in the presence of bugs (both
+//! in the framework and in the backend), backends are expected to behave as follows.
+//!
+//! 1. any internal error should *not* cause *undefined behavior*, i.e. unsafe code in the backend
+//!    cannot depend on external preconditions to hold. This includes C or C++ code called inside
+//!    the backend code to interface with external APIs.
+//! 2. any internal error should *not* cause a Rust panic or a C++ exception to unwind past the
+//!    boundary of the [Instance] methods. If the backend contains code that may panic or throw an
+//!    exception, that code must be wrapped either inside a [catch_unwind](std::panic::catch_unwind)
+//!    call in Rust or a `try { ... } catch { ... }` block in C++, and the error turned into a
+//!    [BackendError] of kind [BackendErrorKind::Internal].
+//! 3. a violated precondition *can* result either into a [BackendError] of kind
+//!    [BackendErrorKind::ViolatedPrecondition] or into a logical misbehaviour, i.e., wrong answers,
+//!    deadlocks, etc.. In other words, backends are not *forced* to detect the violation of the
+//!    preconditions, and can have arbitrary (but *not* undefined) behavior in those cases.
+
+pub mod z3;
+
+use crate::*;
+use formally::support::{Context, Contextual, Diagnosable, Identifier, Level, Located, Span};
+use std::{error::Error, fmt::Debug, fmt::Formatter, io};
+
+use derive_more::Display;
+use thiserror::Error;
+
+/// The error type for backends.
+///
+/// This error type is [Diagnosable] so it is emitted as a diagnostic when converted to
+/// [DiagnosticEmitted](formally::support::DiagnosticEmitted) (e.g. via the `?` operator).
+#[derive(Debug, Display, Error, Contextual)]
+#[display("SMT backend `{backend}`: {kind}")]
+pub struct BackendError {
+    /// The context.
+    pub context: Context,
+    /// Which error occurred.
+    pub kind: Box<BackendErrorKind>,
+    /// The name of the backend that generated the error.
+    pub backend: String,
+}
+
+impl BackendError {
+    pub fn new(instance: &dyn Instance, kind: BackendErrorKind) -> BackendError {
+        BackendError {
+            context: instance.context(),
+            kind: Box::new(kind),
+            backend: instance.backend().name().to_string(),
+        }
+    }
+}
+
+/// An enumeration of possible errors for [BackendError].
+#[derive(Debug, Display)]
+pub enum BackendErrorKind {
+    /// Some request was unsupported.
+    #[display("unsupported feature: {msg}")]
+    Unsupported {
+        /// A message telling what was unsupported.
+        msg: String,
+        /// A span associated with the unsupported request.
+        span: Option<Span>,
+    },
+
+    /// The requested logic was unsupported.
+    #[display("unsupported logic: {_0}")]
+    UnsupportedLogic(Identifier<'static>),
+
+    /// An external precondition was found to not hold.
+    /// An external precondition was found to not hold.
+    #[display("violated precondition: {_0}")]
+    ViolatedPrecondition(String),
+
+    /// An internal error occurred.
+    #[display("{_0}")]
+    Internal(Box<dyn Error>),
+
+    /// An error of any kind occurred.
+    #[display("{_0}")]
+    Other(Box<dyn Error>),
+
+    /// An I/O error occurred.
+    #[display("input/output error: {_0}")]
+    IO(io::Error),
+}
+
+impl Located for BackendError {
+    fn span(&self) -> Option<Span> {
+        match &*self.kind {
+            BackendErrorKind::Unsupported { span, .. } => span.clone(),
+            _ => None,
+        }
+    }
+}
+
+impl Diagnosable for BackendError {
+    fn level(&self) -> Level {
+        match *self.kind {
+            BackendErrorKind::Unsupported { .. } => Level::Error,
+            _ => Level::Internal,
+        }
+    }
+}
+
+/// The trait for SMT backends.
+///
+/// Types implementing this trait represent backends. See the top-level documentation
+/// for details about [how to write a new backend](backends).
+pub trait Backend {
+    /// Return the name of the backend.
+    fn name(&self) -> &str;
+
+    /// Create an instance of the backend based on the given [Config].
+    fn instance(&self, config: &Config) -> Result<Box<dyn Instance>, BackendError>;
+}
+
+impl Debug for dyn Backend {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
+/// The trait for instances of SMT backends.
+///
+/// Types implementing this trait are the ones doing the hard work for backends.
+///
+/// The documentation of each method lists its intended purpose and what external preconditions
+/// the method can assume to hold when the backend is used through a [Solver].
+///
+/// However, please read before the documentation on [how to write a new backend](backends).
+pub trait Instance: Contextual {
+    /// Return the backend this instance is an instance of.
+    ///
+    /// This is useful to obtain a new different instance of the same backend or the name of the
+    /// backend.
+    fn backend(&self) -> &dyn Backend;
+
+    /// Return the logic object associated with the logic selected by the original [Config] object.
+    fn logic(&self) -> &'_ dyn logics::Logic;
+
+    /// Register a new [Declared] object in the backend instance.
+    ///
+    /// In most cases, declared entities need to be declared to the backend somehow before being
+    /// used in asserted terms. This method allows a backend to do so.
+    ///
+    /// This method *can assume* that the sorts mentioned by the [Declared] object have passed a
+    /// [validate()](Sort::validate) call.
+    fn declare(&mut self, decl: Declared) -> Result<(), BackendError>;
+
+    /// Register a new [Defined] object in the backend instance.
+    ///
+    /// In a few cases, defined entities need to be defined to the backend somehow before being
+    /// used in asserted terms. This method allows a backend to do so.
+    ///
+    /// This method *can assume* that the sorts mentioned by the [Defined] object have passed a
+    /// [validate()](Sort::validate) call, and the terms mentioned have passed a
+    /// [validated()](Term::validated()) call. In aprticular, terms are guaranteed to be fully
+    /// [resolved](Term::resolve()).
+    fn define(&mut self, def: Defined) -> Result<(), BackendError>;
+
+    /// Push a frame on the assertions stack.
+    fn push(&mut self) -> Result<(), BackendError>;
+
+    /// Pop `n` frames on the assertions stack.
+    ///
+    /// If there are not enough pushed frames, this method *should not* return an error, but
+    /// behave as if the maximum number of available frames had been specified.
+    fn pop_n(&mut self, n: usize) -> Result<(), BackendError>;
+
+    /// Asserts a term to the current frame of the assertions stack.
+    ///
+    /// This method *can assume* that the term has passed a call to
+    /// [validated()](Term::validated()), and to be Boolean. In particular, the term is guaranteed
+    /// to be fully [resolved](Term::resolve()), and [Term::type_check()] is guaranteed to
+    /// return [Core::Bool()](theories::Core::Bool()).
+    fn require(&mut self, term: &Term) -> Result<(), BackendError>;
+
+    /// Check the current frame on the assertions stack for satisfiability.
+    fn check(&mut self) -> Result<Option<bool>, BackendError>;
+
+    /// Returns the current model.
+    ///
+    /// If a model does not exist for any *logical* reason, including when the previous call to
+    /// [check()](Instance::check()) did *not* return `Ok(Answer::Yes)`, the method should return
+    /// `Ok(None)`. An error should be returned only if extracting a model failed for some
+    /// unexpected reason (i.e. an I/O error).
+    fn model(&self) -> Result<Option<Box<dyn '_ + ModelProvider>>, BackendError>;
+}

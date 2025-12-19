@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" xmlns:bx="https://boxy-svg.com">
+  <defs>
+    <bx:export>
+      <bx:file format="pdf" path="square.pdf" excluded="true">
+        <bx:page background="#fff0"/>
+      </bx:file>
+      <bx:file format="png" path="square.png" width="5000" height="5000"/>
+      <bx:file format="pdf" path="square.pdf">
+        <bx:page href="#object-0"/>
+      </bx:file>
+    </bx:export>
+  </defs>
+  <rect style="fill: rgb(161, 35, 35);" id="object-0" x="0" y="0" width="500" height="500.002" rx="40" ry="40"/>
+  <text style="fill: rgb(255, 252, 252); font-family: Montserrat; font-size: 200px; font-weight: 900; white-space: pre;" x="-194.71005249023438" y="452.30707359313965"><tspan x="0.003" y="344.12" style="font-weight: 500; font-size: 262.6px; word-spacing: 0px;">::</tspan><tspan style="font-size: 262.6px; word-spacing: 0px;">fm</tspan></text>
+</svg>

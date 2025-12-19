@@ -1,0 +1,13 @@
+(check-sat)
+
+(set-logic LIA)
+(declare-const x Int)
+
+(assert (= x 0))
+(get-value (x))
+
+(set-logic UFLIA)
+
+(check-sat)
+
+(get-proof)

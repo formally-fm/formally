@@ -1,0 +1,6 @@
+(set-logic ALIA)
+(declare-const array (Array Int Int))
+
+(assert (not (= (select (store array 0 42) 0) 42)))
+
+(check-sat)

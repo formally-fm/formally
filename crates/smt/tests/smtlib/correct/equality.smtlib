@@ -1,0 +1,10 @@
+(set-logic ALL)
+(declare-const a Int)
+(declare-const b Int)
+
+(assert (= a 0 b))
+
+(check-sat)
+(get-value (a))
+(get-value (b))
+

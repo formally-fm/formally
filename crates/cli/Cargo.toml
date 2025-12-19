@@ -1,0 +1,19 @@
+[package]
+name = "formally-cli"
+description = "the open-source formal methods toolchain - command-line interface"
+homepage = "https://formally.fm"
+repository = "https://github.com/formally-fm/formally"
+version = "0.2025.12"
+edition = "2024"
+license-file = "LICENSE.txt"
+readme = "README.md"
+categories = [ "mathematics" ]
+keywords = [ "formal-methods", "smt" ]
+
+[[bin]]
+name = "formally"
+
+
+[dependencies]
+clap = { version = "4.5.53", features = ["derive"] }
+formally = { path = "../formally", version = "0.2025.12", features = ["io", "smt"] }

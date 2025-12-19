@@ -1,0 +1,41 @@
+#!/bin/bash
+
+#
+# Script to continuously watch the project files to update `cargo doc` and
+# refreshing the browser page automatically. Place it in your PATH and run with
+# `cargo dox` as it if were a `cargo` subcommand.
+#
+# Dependencies:
+#
+# $ cargo install cargo-watch
+# $ npm install -g browser-sync
+#
+
+set -eu -o pipefail
+shopt -s failglob
+
+die() {
+  echo "$@"
+  exit 1
+}
+
+dependencies() {
+  which cargo-watch >/dev/null || \
+    die "cargo-watch missing: please run \`cargo install cargo-watch\`"
+  which browser-sync >/dev/null || \
+    die "browser-sync missing: please run \`npm install -g browser-sync\`"
+}
+
+killgroup(){
+  kill 0
+}
+
+trap killgroup SIGINT
+
+shift
+
+browser-sync start --ss target/doc -s target/doc --reload-delay 5000 --directory --no-open &
+cargo watch -s "cargo doc $*" &
+wait
+
+echo "exiting..."

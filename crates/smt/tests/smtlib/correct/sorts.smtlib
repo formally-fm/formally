@@ -1,0 +1,13 @@
+(set-logic UFLIA)
+(declare-sort Person 0)
+(declare-sort Food 0)
+(declare-fun likes (Person Food) Bool)
+
+(declare-const mike Person)
+(declare-const cake Food)
+
+(assert (likes mike cake))
+
+(check-sat)
+
+

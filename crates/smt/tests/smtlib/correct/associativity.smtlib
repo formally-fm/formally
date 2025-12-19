@@ -1,0 +1,15 @@
+(set-logic LIA)
+(declare-const a Int)
+(declare-const b Int)
+(declare-const c Int)
+(declare-const d Int)
+
+(assert (= (+ a b c d) 0))
+(assert (> a b c d))
+
+(check-sat)
+(get-value (a))
+(get-value (b))
+(get-value (c))
+(get-value (d))
+

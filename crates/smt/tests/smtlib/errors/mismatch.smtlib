@@ -1,0 +1,11 @@
+(set-logic ALIA)
+(declare-const a Int)
+(declare-const b Int)
+(declare-const array (Array Int Int))
+
+(assert (+ a b))
+(assert array)
+
+
+(check-sat)
+(get-value (a))

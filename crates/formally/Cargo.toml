@@ -1,0 +1,32 @@
+[package]
+name = "formally"
+description = "the open-source formal methods toolchain"
+homepage = "https://formally.fm"
+repository = "https://github.com/formally-fm/formally"
+version = "0.2025.12"
+edition = "2024"
+license-file = "LICENSE.txt"
+readme = "README.md"
+categories = [ "mathematics" ]
+keywords = [ "formal-methods", "smt" ]
+
+[dependencies]
+formally-support = { path = "../support", version = "0.2025.12", features = ["__subcratedoc"] }
+formally-io = { path = "../io", version = "0.2025.12", optional = true, features = ["__subcratedoc"] }
+formally-smt = { path = "../smt", version = "0.2025.12", optional = true, features = ["__subcratedoc"] }
+document-features = "0.2.12"
+
+[features]
+#! This project has the following Cargo features:
+default = ["io", "smt"]
+## Enable the [formally::io] module.
+io = ["formally-io"]
+## Enable the [formally::smt] module.
+smt = ["io", "formally-smt"]
+
+[dev-dependencies]
+rstest = "0.26.0"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

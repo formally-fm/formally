@@ -1,0 +1,26 @@
+[package]
+name = "formally-support-macros"
+description = "the open-source formal methods toolchain - basic support functionality - proc macros"
+homepage = "https://formally.fm"
+repository = "https://github.com/formally-fm/formally"
+version = "0.2025.12"
+edition = "2024"
+license-file = "LICENSE.txt"
+readme = "README.md"
+categories = [ "mathematics" ]
+keywords = [ "formal-methods" ]
+
+[features]
+default = []
+__subcratedoc = []
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.103"
+quote = "1.0.41"
+syn = "2.0.108"
+
+[dev-dependencies]
+formally-support = { path = "../support", version = "0.2025.12" }
