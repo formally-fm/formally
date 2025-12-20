@@ -23,4 +23,4 @@ quote = "1.0.41"
 syn = "2.0.108"
 
 [dev-dependencies]
-formally-support = { path = "../support", version = "0.2025.121" }
+formally-support = { path = "../support", version = "0.2025.12" }

@@ -109,7 +109,7 @@ pub fn derive_locatable(item: TokenStream) -> TokenStream {
 /// `context`, if present, and to all the `#[contextual]` fields.
 ///
 /// In an `enum`, the same applies to each variant.
-/// 
+///
 /// Example:
 /// ```
 /// # mod formally {
