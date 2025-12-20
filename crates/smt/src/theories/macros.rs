@@ -232,7 +232,7 @@
 /// #   pub extern crate formally_support as support;
 /// #   pub extern crate formally_smt as smt;
 /// # }
-/// # use formally::smt::theory;
+/// # use formally::smt::{theory, theories::*};
 /// theory! {
 ///     /// The combined theory of integers and reals.
 ///     ///

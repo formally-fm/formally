@@ -30,7 +30,7 @@
 //!
 //! # What the project currently provides
 //! The project is still in its very early stages and is in active development. These early releases
-//! is meant to be a preview of where the project is going and the start of an open development
+//! are meant to be a preview of where the project is going and the start of an open development
 //! process for the project.
 //!
 //! What the project *does* currently provide consists in the following:
