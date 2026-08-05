@@ -116,7 +116,7 @@ struct ParameterData {
 impl Parameter {
     /// Create a new [Parameter].
     pub fn new<'a>(name: impl Into<Identifier<'a>>, sort: Sort, span: Option<Span>) -> Parameter {
-        Parameter(Nominal::new(Arc::new(ParameterData {
+        Parameter(Nominal(Arc::new(ParameterData {
             name: name.into().into_owned(),
             sort,
             span,
@@ -176,7 +176,7 @@ impl Primitive {
         range: Sort,
         associativity: Option<Associativity>,
     ) -> Primitive {
-        Primitive(Nominal::new(SArc::Arc(Arc::new(PrimitiveData {
+        Primitive(Nominal(SArc::Arc(Arc::new(PrimitiveData {
             name: name.into().into_owned(),
             parameters,
             domain,
@@ -339,7 +339,7 @@ pub struct Declared(Nominal<Arc<Declaration>>);
 
 impl Declared {
     pub(crate) fn new(decl: Declaration) -> Declared {
-        Declared(Nominal::new(Arc::new(decl)))
+        Declared(Nominal(Arc::new(decl)))
     }
 }
 
@@ -485,7 +485,7 @@ pub struct Defined(Nominal<Arc<Definition>>);
 
 impl Defined {
     pub(crate) fn new(def: Definition) -> Defined {
-        Defined(Nominal::new(Arc::new(def)))
+        Defined(Nominal(Arc::new(def)))
     }
 }
 

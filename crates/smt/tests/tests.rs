@@ -51,3 +51,16 @@ fn term_macro() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn term_pool() -> Result<()> {
+    let pool = Pool::new();
+
+    let t1 = pool.unique(term!(and p q));
+
+    let t2 = pool.unique(term!(and p q));
+
+    assert_eq!(Nominal(t1), Nominal(t2));
+
+    Ok(())
+}

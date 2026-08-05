@@ -59,7 +59,7 @@ impl Term {
     /// so two terms that compare equal but point to [TermKind] objects with different memory
     /// addresses will not share the cached result.
     pub fn type_check(&self, ctx: Context) -> Result<Sort> {
-        let nominal = Nominal::new(self.clone());
+        let nominal = Nominal(self.clone());
         let cache = ctx.cache::<TypeCheckCacheTag>();
         if let Some(sort) = cache.get(&nominal) {
             return Ok(sort.clone());

@@ -22,17 +22,14 @@
 // SOFTWARE.
 //
 
-pub mod macros;
-
 use crate::*;
 use formally::support::*;
 
 use derive_more::From;
 use transitive::Transitive;
 
-use std::{ops::Deref, sync::Arc};
-
 pub use rug::{Integer, Rational};
+use std::{hash::Hash, ops::Deref, sync::Arc};
 
 /// A constant term.
 ///
@@ -274,4 +271,3 @@ impl Deref for Term {
         &self.0
     }
 }
-

@@ -144,7 +144,7 @@ impl Sort {
     #[allow(clippy::self_named_constructors)]
     pub const fn sort() -> Sort {
         Sort {
-            head: Function::Primitive(Primitive(Nominal::new(SArc::Static(&SORT_DECL)))),
+            head: Function::Primitive(Primitive(Nominal(SArc::Static(&SORT_DECL)))),
             arguments: Vec::new(),
             span: None,
         }

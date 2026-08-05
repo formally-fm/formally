@@ -322,6 +322,7 @@ pub mod exports {
 pub use formally_smt_macros::*;
 
 mod decl;
+mod pool;
 mod pretty;
 mod resolve;
 mod solver;
@@ -331,7 +332,7 @@ mod type_check;
 mod validate;
 
 #[doc(hidden)]
-pub use term::macros;
+pub mod macros;
 
 pub mod backends;
 pub mod logics;
@@ -339,6 +340,7 @@ pub mod smtlib;
 pub mod theories;
 
 pub use decl::*;
+pub use pool::*;
 pub use solver::*;
 pub use sort::*;
 pub use term::*;

@@ -22,7 +22,7 @@
 // SOFTWARE.
 //
 
-use crate::{term::Function, *};
+use crate::*;
 use formally::support::Identifier;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]

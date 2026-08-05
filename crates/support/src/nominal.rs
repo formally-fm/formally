@@ -43,45 +43,38 @@ use derive_more::From;
 #[derive(Clone, Default, From)]
 #[from(T)]
 #[repr(transparent)]
-pub struct Nominal<T> {
-    inner: T,
-}
+pub struct Nominal<T>(pub T);
 
 impl<T> Nominal<T> {
-    /// Creates a new [Nominal] from the underlying object.
-    pub const fn new(inner: T) -> Nominal<T> {
-        Nominal { inner }
-    }
-
     /// Turns the [Nominal] into its underlying object.
     pub fn into_inner(self) -> T {
-        self.inner
+        self.0
     }
 }
 
 impl<T> AsRef<T> for Nominal<T> {
     fn as_ref(&self) -> &T {
-        &self.inner
+        &self.0
     }
 }
 
 impl<T: Debug> Debug for Nominal<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Nominal({:?})", self.inner)
+        write!(f, "Nominal({:?})", self.0)
     }
 }
 
 impl<T: Deref> Hash for Nominal<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let ptr = &*self.inner as *const T::Target;
+        let ptr = &*self.0 as *const T::Target;
         ptr.hash(state)
     }
 }
 
 impl<T: Deref> PartialEq for Nominal<T> {
     fn eq(&self, other: &Self) -> bool {
-        let this = &*self.inner as *const T::Target;
-        let other = &*other.inner as *const T::Target;
+        let this = &*self.0 as *const T::Target;
+        let other = &*other.0 as *const T::Target;
 
         std::ptr::eq(this, other)
     }
@@ -93,6 +86,6 @@ impl<T> Deref for Nominal<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        &self.inner
+        &self.0
     }
 }
