@@ -22,6 +22,8 @@
 // SOFTWARE.
 //
 
+pub mod macros;
+
 use crate::*;
 use formally::support::*;
 
@@ -157,7 +159,7 @@ pub enum Atom {
 /// The [TermKind] enum lists the possible kinds of terms supported by the framework. [Term] derefs
 /// immutably to [TermKind], and a term's kind is also available through the [Term::kind()] method.
 /// Terms can be constructed from [TermKind] using [Term::from()], although constructing terms
-/// with the [term] is recommended.
+/// with the [term] macro is recommended.
 ///
 /// As mentioned in the [overview](formally::smt), we differ from most SMT APIs in that we do not
 /// offer multiple functions and/or types, one for each possible term node (addition, subtraction,
@@ -273,30 +275,3 @@ impl Deref for Term {
     }
 }
 
-// Used by the `term!` macro internally, so this has to be public, but we want to keep it hidden.
-#[doc(hidden)]
-pub trait Call {
-    fn call(self, args: Vec<Term>) -> Atom;
-}
-
-#[doc(hidden)]
-impl<T: Into<Reference>> Call for T {
-    fn call(self, arguments: Vec<Term>) -> Atom {
-        Atom::Bound(BoundAtom {
-            head: self.into(),
-            arguments,
-            span: None,
-        })
-    }
-}
-
-#[doc(hidden)]
-impl Call for Identifier<'_> {
-    fn call(self, arguments: Vec<Term>) -> Atom {
-        Atom::Unbound(UnboundAtom {
-            head: self.into_owned(),
-            arguments,
-            span: None,
-        })
-    }
-}

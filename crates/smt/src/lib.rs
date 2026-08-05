@@ -330,6 +330,9 @@ mod term;
 mod type_check;
 mod validate;
 
+#[doc(hidden)]
+pub use term::macros;
+
 pub mod backends;
 pub mod logics;
 pub mod smtlib;

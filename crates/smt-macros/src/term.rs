@@ -179,11 +179,12 @@ impl Parse for Term {
 
 impl ToTokens for Root {
     fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.append_all(quote!(&));
         Term::App {
             head: self.head.clone(),
             args: self.args.clone(),
         }
-        .to_tokens(tokens)
+        .to_tokens(tokens);
     }
 }
 
@@ -191,35 +192,38 @@ impl ToTokens for Term {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Term::Int(lit) => tokens.append_all(quote! {
-                formally::smt::Term::from(
-                    formally::smt::Constant::Integer {
-                        value: formally::smt::Integer::from_str_radix(#lit, 10).unwrap(),
-                        span: None
+                formally::smt::macros::Term::Integer(
+                    formally::smt::macros::Constant::Integer {
+                        value: #lit
                     }
                 )
             }),
             Term::Real(lit) => tokens.append_all(quote! {
-                formally::smt::Term::from(
+                formally::smt::Term::Constant(
                     formally::smt::Constant::Rational {
                         value: formally::smt::Rational::from_str_radix(#lit, 10).unwrap(),
                         span: None
                     }
                 )
             }),
-            Term::Ref(ident) => tokens.append_all(quote!((#ident).clone().into())),
+            Term::Ref(ident) => tokens.append_all(quote! {
+                #ident.clone().into()
+            }),
             Term::App { head, args } => match head {
                 Head::Unbound(head) => {
                     let head = head.to_string();
                     tokens.append_all(quote! {
-                        formally::smt::Term::from(
-                            formally::support::Identifier::from(#head.to_string()).call(vec![#(#args),*])
-                        )
+                        formally::smt::macros::Term::Atom(formally::smt::macros::Atom {
+                            head: formally::smt::macros::AtomHead::from(formally::support::Identifier::from(#head.to_string())),
+                            arguments: &[#(#args),*]
+                        })
                     })
                 }
                 Head::Bound(head) => tokens.append_all(quote! {
-                    formally::smt::Term::from(
-                        (#head).clone().call(vec![#(#args),*])
-                    )
+                    formally::smt::macros::Term::Atom(formally::smt::macros::Atom {
+                        head: formally::smt::macros::AtomHead::from((#head).clone()),
+                        arguments: &[#(#args),*]
+                    })
                 }),
             },
         }
