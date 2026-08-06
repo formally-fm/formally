@@ -66,37 +66,47 @@ impl<T: Into<term::Term>> From<T> for Term<'_> {
     }
 }
 
+impl From<Constant> for term::Constant {
+    fn from(cnst: Constant) -> Self {
+        match cnst {
+            Constant::Integer { value } => term::Constant::Integer {
+                value: Integer::from(value),
+                span: None,
+            },
+            Constant::Rational { value } => term::Constant::Rational {
+                value: Rational::from_str_radix(value, 10).unwrap(),
+                span: None,
+            },
+        }
+    }
+}
+
+impl From<&'_ Atom<'_>> for term::Atom {
+    fn from(atom: &Atom) -> Self {
+        match &atom.head {
+            AtomHead::Bound(BoundHead { function }) => term::Atom::Bound(BoundAtom {
+                head: Reference {
+                    function: function.clone(),
+                    span: None,
+                },
+                arguments: atom.arguments.iter().map(Into::into).collect(),
+                span: None,
+            }),
+            AtomHead::Unbound(UnboundHead { name }) => term::Atom::Unbound(UnboundAtom {
+                head: name.clone(),
+                arguments: atom.arguments.iter().map(Into::into).collect(),
+                span: None,
+            }),
+        }
+    }
+}
+
 impl From<&'_ Term<'_>> for term::Term {
     fn from(term: &'_ Term<'_>) -> Self {
         match term {
             Term::Term(t) => t.clone(),
-            Term::Constant(Constant::Integer { value }) => term::Constant::Integer {
-                value: Integer::from(*value),
-                span: None,
-            }
-            .into(),
-            Term::Constant(Constant::Rational { value }) => term::Constant::Rational {
-                value: Rational::from_str_radix(value, 10).unwrap(),
-                span: None,
-            }
-            .into(),
-            Term::Atom(Atom { head, arguments }) => match head {
-                AtomHead::Bound(BoundHead { function }) => term::Atom::Bound(BoundAtom {
-                    head: Reference {
-                        function: function.clone(),
-                        span: None,
-                    },
-                    arguments: arguments.iter().map(Into::into).collect(),
-                    span: None,
-                })
-                .into(),
-                AtomHead::Unbound(UnboundHead { name }) => term::Atom::Unbound(UnboundAtom {
-                    head: name.clone(),
-                    arguments: arguments.iter().map(Into::into).collect(),
-                    span: None,
-                })
-                .into(),
-            },
+            Term::Constant(c) => term::Term::from(term::Constant::from(*c)),
+            Term::Atom(a) => term::Term::from(term::Atom::from(a)),
         }
     }
 }

@@ -24,37 +24,20 @@
 
 use crate::formally;
 use formally::{smt::*, support::Nominal};
+use std::hash::Hasher;
 use std::ops::Deref;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
+    hash::Hash,
     sync::Arc,
 };
-
-// What should I do:
-//
-// ```
-// let pool = Pool::new();
-//
-// let t1: Term = ...;
-//
-// // intern t1 or return an equal term
-// let t2: Term = pool.unique(t1);
-//
-// // create and intern the term or return an equal term
-// let t3: Term = pool.unique(term!(and p #t2));
-// ```
-//
-// When a term is interned, all the subterms are interned, and the returned term is made
-// recursively only of interned terms.
-//
-// A term is looked up recursively.
-//
+use crate::macros::AtomHead;
 
 #[derive(Debug, Clone, Default)]
 pub struct Pool {
-    structural: RefCell<HashSet<Term>>,
-    nominals: RefCell<HashMap<*const TermKind, Term>>,
+    kinds: RefCell<HashSet<Arc<TermKind>>>,
+    terms: RefCell<HashSet<Term>>,
 }
 
 impl Pool {
@@ -73,107 +56,76 @@ pub trait Unique {
 
 impl Unique for &Term {
     fn unique(self, pool: &Pool) -> Term {
-        // if `t` is nominally equal to an interned term, we return it
-        let p = self.kind() as *const TermKind;
-        if let Some(t) = pool.nominals.borrow().get(&p) {
-            return t.clone();
+        // we look up nominally (thanks to the `Eq` instance of `Term`) whether this
+        // exact `Term` is already interned
+        if pool.terms.borrow().contains(self) {
+            return self.clone();
         }
 
-        // if `t` is structurally equal to an interned term, we return the interned one
-        if let Some(t) = pool.structural.borrow().get(self) {
-            return t.clone();
-        }
-
-        // if the term is not here, we intern it recursively uniquing the subterms
-        match self.kind() {
-            c @ TermKind::Constant(_) => {
-                let t = Term::from(c.clone());
-                pool.structural.borrow_mut().insert(t.clone());
-                pool.nominals.borrow_mut().insert(t.kind() as *const TermKind, t.clone());
-                
-                t
-            },
-            TermKind::Atom(atom) => match atom {
-                Atom::Bound(BoundAtom {
-                                head,
-                                arguments,
-                                span,
-                            }) => {
-                    let arguments = arguments.iter().map(|t| t.unique(pool)).collect();
-                    let t = Term::from(TermKind::Atom(Atom::Bound(BoundAtom {
-                        head: head.clone(),
-                        arguments,
-                        span: span.clone(),
-                    })));
-                    pool.structural.borrow_mut().insert(t.clone());
-                    pool.nominals
-                        .borrow_mut()
-                        .insert(t.kind() as *const TermKind, t.clone());
-
-                    t
-                }
-                Atom::Unbound(UnboundAtom {
-                                  head,
-                                  arguments,
-                                  span,
-                              }) => {
-                    let arguments = arguments.iter().map(|t| t.unique(pool)).collect();
-                    let t = Term::from(TermKind::Atom(Atom::Unbound(UnboundAtom {
-                        head: head.clone(),
-                        arguments,
-                        span: span.clone(),
-                    })));
-                    pool.structural.borrow_mut().insert(t.clone());
-                    pool.nominals
-                        .borrow_mut()
-                        .insert(t.kind() as *const TermKind, t.clone());
-
-                    t
-                }
-            },
-        }
+        // otherwise we unique the `TermKind`
+        pool.unique(self.kind())
     }
 }
 
-impl Unique for TermKind {
+impl Unique for &TermKind {
     fn unique(self, pool: &Pool) -> Term {
-        pool.unique(&Term::from(self.clone()))   
+        let kind = match self {
+            TermKind::Constant(_) => self.clone(),
+            TermKind::Atom(atom) => match atom {
+                Atom::Bound(BoundAtom { head, arguments, span }) => {
+                    TermKind::Atom(Atom::Bound(BoundAtom {
+                        head: head.clone(),
+                        arguments: arguments.iter().map(|t| pool.unique(t)).collect(),
+                        span: span.clone()
+                    }))
+                }
+                Atom::Unbound(UnboundAtom { head, arguments, span }) => {
+                    TermKind::Atom(Atom::Unbound(UnboundAtom {
+                        head: head.clone(),
+                        arguments: arguments.iter().map(|t| pool.unique(t)).collect(),
+                        span: span.clone()
+                    }))
+                }
+            }
+        };
+
+        if let Some(kind) = pool.kinds.borrow().get(&kind) {
+            Term::from(kind.clone())
+        } else {
+            let arc = Arc::new(kind.clone());
+            let term = Term::from(arc.clone());
+            pool.kinds.borrow_mut().insert(arc);
+            pool.terms.borrow_mut().insert(term.clone());
+
+            term
+        }
     }
 }
 
 impl Unique for &macros::Term<'_> {
     fn unique(self, pool: &Pool) -> Term {
         match self {
-            macros::Term::Term(t) => t.unique(pool),
-            macros::Term::Constant(c) => match c {
-                macros::Constant::Integer { value } => pool.unique(&Term::from(Constant::Integer {
-                    value: Integer::from(*value),
-                    span: None,
-                })),
-                macros::Constant::Rational { value } => pool.unique(&Term::from(Constant::Rational {
-                    value: Rational::from_str_radix(value, 10).unwrap(),
-                    span: None,
-                })),
-            },
-            macros::Term::Atom(macros::Atom { head, arguments }) => match head {
-                macros::AtomHead::Bound(macros::BoundHead { function }) => {
-                    pool.unique(&Term::from(TermKind::Atom(Atom::Bound(BoundAtom {
+            macros::Term::Term(t) => pool.unique(t),
+            macros::Term::Constant(c) => pool.unique(&TermKind::Constant(Constant::from(*c))),
+            macros::Term::Atom(a) => match &a.head {
+                AtomHead::Bound(macros::BoundHead { function }) => {
+                    pool.unique(&TermKind::Atom(Atom::Bound(BoundAtom {
                         head: Reference {
                             function: function.clone(),
                             span: None,
                         },
-                        arguments: arguments.iter().map(|t| pool.unique(t)).collect(),
+                        arguments: a.arguments.iter().map(|t| pool.unique(t)).collect(),
                         span: None,
-                    }))))
+                    })))
                 }
-                macros::AtomHead::Unbound(macros::UnboundHead { name }) => {
-                    pool.unique(&Term::from(TermKind::Atom(Atom::Unbound(UnboundAtom {
+                AtomHead::Unbound(macros::UnboundHead { name }) => {
+                    pool.unique(&TermKind::Atom(Atom::Unbound(UnboundAtom {
                         head: name.clone(),
-                        arguments: arguments.iter().map(|t| pool.unique(t)).collect(),
+                        arguments: a.arguments.iter().map(|t| pool.unique(t)).collect(),
                         span: None,
-                    }))))
+                    })))
                 }
-            },
+            }
         }
     }
 }

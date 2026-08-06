@@ -219,7 +219,7 @@ pub enum TermKind {
 /// ```
 #[allow(clippy::duplicated_attributes)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located)]
-pub struct Term(Arc<TermKind>);
+pub struct Term(Nominal<Arc<TermKind>>);
 
 impl From<bool> for TermKind {
     fn from(value: bool) -> Self {
@@ -231,9 +231,15 @@ impl From<bool> for TermKind {
     }
 }
 
+impl From<Arc<TermKind>> for Term {
+    fn from(value: Arc<TermKind>) -> Self {
+        Term(Nominal(value))
+    }
+}
+
 impl<T: Into<TermKind>> From<T> for Term {
     fn from(value: T) -> Self {
-        Term(Arc::new(value.into()))
+        Term(Nominal(Arc::new(value.into())))
     }
 }
 

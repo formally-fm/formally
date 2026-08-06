@@ -60,7 +60,7 @@ fn term_pool() -> Result<()> {
 
     let t2 = pool.unique(term!(and p q));
 
-    assert_eq!(Nominal(t1), Nominal(t2));
+    assert_eq!(t1, t2);
 
     Ok(())
 }
