@@ -22,7 +22,7 @@
 // SOFTWARE.
 //
 
-use formally::smt::backends::z3::Z3;
+use formally::smt::backend::z3::Z3;
 use formally::{smt::*, support::*};
 
 #[test]

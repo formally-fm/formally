@@ -38,7 +38,7 @@
 //! instantiating a [Solver].
 //!
 //! The contents of this module are instead most useful when implementing new backends, so we
-//! refer to the documentation on [how to write new backends](backends).
+//! refer to the documentation on [how to write new backends](backend).
 
 #![allow(non_camel_case_types)]
 

@@ -37,7 +37,7 @@
 //! #     pub extern crate formally_smt as smt;
 //! # }
 //! # use formally::support::*;
-//! use formally::smt::{*, backends::z3::Z3};
+//! use formally::smt::{*, backend::z3::Z3};
 //! # fn main() -> Result<()> {
 //! let config = Config::default().backend(Z3);
 //! let solver = Solver::new(&config)?;
@@ -52,18 +52,18 @@
 //!
 //! A backend is a type implementing the [Backend] trait. This trait only provides two methods:
 //! 1. [name()](Backend::name()), which just returns a string with the name of the backend.
-//! 2. [instance()](Backend::instance()), which returns the backend *instance*.
+//! 2. [instance()](Backend::solver()), which returns the backend *instance*.
 //!
-//! An instance is an object of a type that implements the [Instance] trait, and is the type doing
+//! An instance is an object of a type that implements the [Solver] trait, and is the type doing
 //! the real job.
 //! 1. The backend type is what you pass around to tell *which* backend you want to use, e.g. in the
 //!    [Config] of a [Solver].
 //! 2. The instance type is the actual backend.
 //!
 //! The concrete instance type is usually not part of the public API of a backend, but is hidden
-//! behind the `Box<dyn Instance>` return type of [Backend::instance()].
+//! behind the `Box<dyn Instance>` return type of [Backend::solver()].
 //!
-//! We refer to the documentation of [Instance] for an understanding of each method of the trait.
+//! We refer to the documentation of [Solver] for an understanding of each method of the trait.
 //!
 //! What follows explain general concepts and requirements.
 //!
@@ -71,7 +71,7 @@
 //!
 //! The logic to instantiate the backend with is set by name in the [Config] object. The backend
 //! instance is then expected to provide a `&dyn Logic` reference through the
-//! [logic()](Instance::logic()) method. For standard SMT-LIBv2 logics, backend can use the
+//! [logic()](Solver::logic()) method. For standard SMT-LIBv2 logics, backend can use the
 //! [standard_logic()](logics::standard_logic()) function to lookup a standard logic by name.
 //!
 //! However, each backend instance is responsible to provide the logic named `"ALL"`, which by
@@ -84,7 +84,7 @@
 //! #     pub extern crate formally_support as support;
 //! #     pub extern crate formally_smt as smt;
 //! # }
-//! # use formally::{support::*, smt::{*, backends::*, logics::*, theories::*}};
+//! # use formally::{support::*, smt::{*, backend::*, logics::*, theories::*}};
 //! # use std::result::Result;
 //! # #[derive(Contextual)]
 //! # struct MyBackend {
@@ -101,7 +101,7 @@
 //!         "MyBackend"
 //!     }
 //!     // ...
-//!     fn instance(&self, config: &Config) -> Result<Box<dyn Instance>, BackendError> {
+//!     fn instance(&self, config: &Config) -> Result<Box<dyn Solver>, BackendError> {
 //!         // ...
 //!         if let Some(logic) = &config.logic {
 //!             let logic = standard_logic(&logic, &MyBackendALL);
@@ -132,14 +132,14 @@
 //! In order to simplify the life of backend developers and provide a consistent experience to
 //! users of different backends, backends *do not* directly emit their errors as diagnostics (even
 //! though they technically *could*, because they have access the [Context]). Instead, the methods
-//! of [Instance] return a [Result] whose error type is [BackendError], which provides a
+//! of [Solver] return a [Result] whose error type is [BackendError], which provides a
 //! non-exhaustive taxonomy of the possible errors that a backend may encounter. [BackendError] is
 //! [Diagnosable], so users of the backend interface (e.g. [Solver]) can still easily emit those
 //! errors as diagnostics later.
 //!
 //! ## Assumptions and guarantees
 //!
-//! The documentation of each method in [Instance] provides a set of preconditions that the methods
+//! The documentation of each method in [Solver] provides a set of preconditions that the methods
 //! can assume to hold. When the backend instance methods are invoked by [Solver], these assumptions
 //! are guaranteed to hold. However, to guarantee stability even in the presence of bugs (both
 //! in the framework and in the backend), backends are expected to behave as follows.
@@ -148,7 +148,7 @@
 //!    cannot depend on external preconditions to hold. This includes C or C++ code called inside
 //!    the backend code to interface with external APIs.
 //! 2. any internal error should *not* cause a Rust panic or a C++ exception to unwind past the
-//!    boundary of the [Instance] methods. If the backend contains code that may panic or throw an
+//!    boundary of the [Solver] methods. If the backend contains code that may panic or throw an
 //!    exception, that code must be wrapped either inside a [catch_unwind](std::panic::catch_unwind)
 //!    call in Rust or a `try { ... } catch { ... }` block in C++, and the error turned into a
 //!    [BackendError] of kind [BackendErrorKind::Internal].
@@ -159,9 +159,12 @@
 
 pub mod z3;
 
-use crate::*;
-use formally::support::{Context, Contextual, Diagnosable, Identifier, Level, Located, Span};
-use std::{error::Error, fmt::Debug, fmt::Formatter, io};
+use crate::formally;
+use formally::{
+    smt::{self, Config, Declared, Defined, ModelProvider, TermPool, logics},
+    support::{Context, Contextual, Diagnosable, Identifier, Level, Located, Span},
+};
+use std::{error::Error, fmt::Debug, fmt::Formatter, io, rc::Rc};
 
 use derive_more::Display;
 use thiserror::Error;
@@ -182,7 +185,7 @@ pub struct BackendError {
 }
 
 impl BackendError {
-    pub fn new(instance: &dyn Instance, kind: BackendErrorKind) -> BackendError {
+    pub fn new(instance: &dyn Solver, kind: BackendErrorKind) -> BackendError {
         BackendError {
             context: instance.context(),
             kind: Box::new(kind),
@@ -207,7 +210,6 @@ pub enum BackendErrorKind {
     #[display("unsupported logic: {_0}")]
     UnsupportedLogic(Identifier<'static>),
 
-    /// An external precondition was found to not hold.
     /// An external precondition was found to not hold.
     #[display("violated precondition: {_0}")]
     ViolatedPrecondition(String),
@@ -246,19 +248,45 @@ impl Diagnosable for BackendError {
 /// The trait for SMT backends.
 ///
 /// Types implementing this trait represent backends. See the top-level documentation
-/// for details about [how to write a new backend](backends).
+/// for details about [how to write a new backend](backend).
 pub trait Backend {
     /// Return the name of the backend.
     fn name(&self) -> &str;
 
-    /// Create an instance of the backend based on the given [Config].
-    fn instance(&self, config: &Config) -> Result<Box<dyn Instance>, BackendError>;
+    /// Create an instance of the backend term manager based on the given [Config].
+    fn manager(&self) -> Box<dyn Manager>;
+
+    /// Create an instance of the backend solver based on the given `Config` and `Manager`
+    fn solver<'m>(
+        &self,
+        config: &Config,
+        manager: Rc<dyn Manager>,
+    ) -> Result<Box<dyn Solver>, BackendError>;
 }
 
 impl Debug for dyn Backend {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name())
     }
+}
+
+pub trait Term {}
+
+pub trait Manager {
+    /// Return the backend this manager is an instance of.
+    ///
+    /// This is useful to obtain a new different instance of the same backend or the name of the
+    /// backend.
+    fn backend(&self) -> &dyn Backend;
+
+    fn import(&self, term: &smt::Term, ctx: Context) -> Result<&dyn Term, BackendError>;
+
+    fn export(
+        &self,
+        term: &dyn Term,
+        pool: &TermPool,
+        ctx: Context,
+    ) -> Result<smt::Term, BackendError>;
 }
 
 /// The trait for instances of SMT backends.
@@ -268,8 +296,10 @@ impl Debug for dyn Backend {
 /// The documentation of each method lists its intended purpose and what external preconditions
 /// the method can assume to hold when the backend is used through a [Solver].
 ///
-/// However, please read before the documentation on [how to write a new backend](backends).
-pub trait Instance: Contextual {
+/// However, please read before the documentation on [how to write a new backend](backend).
+pub trait Solver: Contextual {
+    fn manager(&self) -> &dyn Manager;
+
     /// Return the backend this instance is an instance of.
     ///
     /// This is useful to obtain a new different instance of the same backend or the name of the
@@ -314,7 +344,7 @@ pub trait Instance: Contextual {
     /// [validated()](Term::validated()), and to be Boolean. In particular, the term is guaranteed
     /// to be fully [resolved](Term::resolve()), and [Term::type_check()] is guaranteed to
     /// return [Core::Bool()](theories::Core::Bool()).
-    fn require(&mut self, term: &Term) -> Result<(), BackendError>;
+    fn require(&mut self, term: &dyn Term) -> Result<(), BackendError>;
 
     /// Check the current frame on the assertions stack for satisfiability.
     fn check(&mut self) -> Result<Option<bool>, BackendError>;
@@ -322,7 +352,7 @@ pub trait Instance: Contextual {
     /// Returns the current model.
     ///
     /// If a model does not exist for any *logical* reason, including when the previous call to
-    /// [check()](Instance::check()) did *not* return `Ok(Answer::Yes)`, the method should return
+    /// [check()](Solver::check()) did *not* return `Ok(Answer::Yes)`, the method should return
     /// `Ok(None)`. An error should be returned only if extracting a model failed for some
     /// unexpected reason (i.e. an I/O error).
     fn model(&self) -> Result<Option<Box<dyn '_ + ModelProvider>>, BackendError>;

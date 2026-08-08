@@ -25,14 +25,18 @@
 use crate::*;
 use formally::{
     smt::{
-        backends::{Backend, Instance, z3::Z3},
+        backend::{Backend, z3::Z3},
         logics::Logic,
     },
     support::*,
 };
 
 use derive_more::From;
-use std::fmt::{Debug, Formatter};
+use std::{
+    borrow::Cow,
+    fmt::{Debug, Formatter},
+    rc::Rc,
+};
 
 /// Configuration for SMT solvers.
 ///
@@ -50,7 +54,7 @@ use std::fmt::{Debug, Formatter};
 /// #     pub extern crate formally_smt as smt;
 /// #     pub extern crate formally_support as support;
 /// # }
-/// # use formally::{smt::{*, backends::z3::Z3}, support::*};
+/// # use formally::{smt::{*, backend::z3::Z3}, support::*};
 /// # fn main() -> Result<()> {
 /// let config =
 ///     Config::default()
@@ -69,10 +73,7 @@ pub struct Config {
     ///
     /// By default, this is a newly constructed default [Context].
     pub context: Context,
-    /// The [Backend] that will be used by the new solver.
-    ///
-    /// The default backend is currently [Z3](backends::z3::Z3).
-    pub backend: Box<dyn Backend>,
+
     /// The name of the logic to instantiate the solver for.
     ///
     /// A [None] value is the default, which means a logic is not selected and the solver will
@@ -90,26 +91,17 @@ impl Default for Config {
             context: Context::new(),
             logic: None,
             produce_models: false,
-            backend: Box::new(Z3),
         }
     }
 }
 
 impl Config {
-    /// Crates a new [Config] object with default values.
+    /// Create a new [Config] object with default values.
     pub fn new() -> Config {
         Config::default()
     }
 
-    /// Sets the `backend` fied.
-    pub fn backend(self, backend: impl 'static + Backend) -> Config {
-        Config {
-            backend: Box::new(backend),
-            ..self
-        }
-    }
-
-    /// Sets the `logic` fied.
+    /// Set the `logic` fied.
     pub fn logic<'a>(self, logic: impl Into<Identifier<'a>>) -> Config {
         Config {
             logic: Some(logic.into().into_owned()),
@@ -117,7 +109,7 @@ impl Config {
         }
     }
 
-    /// Sets the `produce_models` fied.
+    /// Set the `produce_models` fied.
     pub fn produce_models(self, produce_models: bool) -> Config {
         Config {
             produce_models,
@@ -179,6 +171,42 @@ impl Env {
     }
 }
 
+pub struct TermManager {
+    manager: Rc<dyn backend::Manager>,
+}
+
+impl Debug for TermManager {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "TermManager {{ backend: {} }}",
+            self.manager.backend().name()
+        )
+    }
+}
+
+impl Clone for TermManager {
+    fn clone(&self) -> TermManager {
+        TermManager {
+            manager: Rc::from(self.manager.backend().manager()),
+        }
+    }
+}
+
+impl TermManager {
+    pub fn new(backend: &dyn Backend) -> TermManager {
+        TermManager {
+            manager: Rc::from(backend.manager()),
+        }
+    }
+}
+
+impl Default for TermManager {
+    fn default() -> Self {
+        TermManager::new(&Z3)
+    }
+}
+
 /// Main interface to SMT solvers.
 ///
 /// The [Solver] type is at the core of [formally::smt], providing high-level access to backend
@@ -200,20 +228,37 @@ impl Env {
 #[derive(Contextual)]
 pub struct Solver {
     #[contextual]
-    backend: Box<dyn Instance>,
+    backend: Box<dyn backend::Solver>,
 
     #[contextual]
     env: Env,
+
+    manager: Rc<TermManager>,
 }
 
 impl Solver {
-    /// Create a new solver from the given [Config].
-    pub fn new(config: &Config) -> Result<Self> {
-        let backend = config.backend.instance(config)?;
+    pub fn new_with_manager(
+        config: &Config,
+        manager: impl Into<Rc<TermManager>>,
+    ) -> Result<Solver> {
+        let manager = manager.into();
+        let backend = manager
+            .manager
+            .backend()
+            .solver(config, manager.manager.clone())?;
         Ok(Solver {
             env: Env::new().with_parent(backend.logic().theory().env()),
             backend,
+            manager,
         })
+    }
+
+    pub fn new_with_backend(config: &Config, backend: &dyn Backend) -> Result<Solver> {
+        Solver::new_with_manager(config, TermManager::new(backend))
+    }
+
+    pub fn new(config: &Config) -> Result<Solver> {
+        Solver::new_with_manager(config, TermManager::default())
     }
 
     /// Get the currently selected [Logic].
@@ -322,7 +367,11 @@ impl Solver {
             return Err(DiagnosticEmitted);
         }
 
-        Ok(self.backend.require(&term)?)
+        let term = self.manager.manager.import(&term, self.context())?;
+
+        self.backend.require(term)?;
+
+        Ok(())
     }
 
     /// Check the satisfiability of the current assertions.

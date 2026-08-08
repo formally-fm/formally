@@ -265,10 +265,10 @@
 //!
 //! ## SMT backends
 //!
-//! Backends are types implementing the [Backend](backends::Backend) trait. Currently, we only
-//! provide the [backends::z3::Z3] backend, implemented on top of the [z3_sys] crate.
+//! Backends are types implementing the [Backend](backend::Backend) trait. Currently, we only
+//! provide the [backend::z3::Z3] backend, implemented on top of the [z3_sys] crate.
 //!
-//! See the documentation of the [Backend](backends::Instance) trait for information about how to
+//! See the documentation of the [Backend](backend::Solver) trait for information about how to
 //! implement new backends.
 //!
 //! ## Parsing and executing SMT-LIBv2 scripts
@@ -334,7 +334,7 @@ mod validate;
 #[doc(hidden)]
 pub mod macros;
 
-pub mod backends;
+pub mod backend;
 pub mod logics;
 pub mod smtlib;
 pub mod theories;

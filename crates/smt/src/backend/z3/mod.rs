@@ -30,9 +30,9 @@ mod bindings;
 
 use bindings as z3;
 
-use crate::*;
+use crate::formally;
 use formally::{
-    smt::{backends::*, logics::*, theories::SortConstructor},
+    smt::{backend::*, logics::*, theories::SortConstructor},
     support::{Context, Contextual},
 };
 
@@ -73,7 +73,7 @@ impl Backend for Z3 {
         "Z3"
     }
 
-    fn instance(&self, config: &Config) -> Result<Box<dyn Instance>, BackendError> {
+    fn solver(&self, config: &Config) -> Result<Box<dyn Solver>, BackendError> {
         Ok(Box::new(Z3Instance::new(config)?))
     }
 }
@@ -123,7 +123,7 @@ impl Z3Instance {
     }
 }
 
-impl Instance for Z3Instance {
+impl Solver for Z3Instance {
     fn backend(&self) -> &dyn Backend {
         &Z3
     }

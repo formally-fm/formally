@@ -28,7 +28,7 @@ mod formally {
 }
 
 use formally::{
-    smt::{backends::z3::Z3, *},
+    smt::{backend::z3::Z3, *},
     support::*,
 };
 

@@ -112,10 +112,11 @@ impl Term {
     /// to require double the calls to [Term::type_check()], but the latter caches its results in
     /// `env.context()`, so each subterm gets type-checked only once anyway.
     pub fn resolve(&self, env: &Env, role: Role) -> Result<Term> {
-        let pool = self.pool();
         Ok(match self.kind() {
             TermKind::Constant(_) => self.clone(),
-            TermKind::Atom(Atom::Bound(atom)) => pool.term(&TermKind::Atom(Atom::Bound(atom.resolve(env)?))),
+            TermKind::Atom(Atom::Bound(atom)) => {
+                pool.term(&TermKind::Atom(Atom::Bound(atom.resolve(env)?)))
+            }
             TermKind::Atom(Atom::Unbound(unbound)) => {
                 pool.term(&TermKind::Atom(Atom::Bound(unbound.resolve(env, role)?)))
             }

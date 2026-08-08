@@ -48,7 +48,7 @@
 //! rarely need to be mentioned directly.
 //!
 //! Instead, people implementing new *backends* will need to access this module quite
-//! often. We refer to the documentation on [how to write a new backend](crate::backends) for
+//! often. We refer to the documentation on [how to write a new backend](crate::backend) for
 //! details.
 
 use crate::*;
@@ -160,7 +160,7 @@ impl Sort {
 /// corresponding to a sort constructor. For example, the sort `(Array Int Int)` is represented
 /// by `Arrays::Array(Ints::Int(), Ints::Int())`, but the [Function] corresponding to the sort
 /// constructor `(Array X Y)` is `Arrays::Array.to_constructor()`. This is mainly needed in
-/// backends, so we refer to the documentation about [how to write a new backend](backends).
+/// backends, so we refer to the documentation about [how to write a new backend](backend).
 pub trait SortConstructor<const ARITY: usize> {
     /// Get the [Function] associated with this sort constructor.
     fn to_constructor(&self) -> Function;
