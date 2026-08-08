@@ -17,7 +17,7 @@ __subcratedoc = []
 [dependencies]
 formally-support-macros = { path = "../support-macros", version = "0.2025.121", features = ["__subcratedoc"] }
 
-dashmap = "6.1.0"
+dashmap = "6.2.1"
 perfect-derive = "0.1.5"
 derive_more = { version = "2.0.1", features = ["from", "as_ref", "display"] }
 rpds = "1"

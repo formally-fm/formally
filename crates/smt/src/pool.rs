@@ -23,109 +23,140 @@
 //
 
 use crate::formally;
-use formally::{smt::*, support::Nominal};
-use std::hash::Hasher;
-use std::ops::Deref;
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    hash::Hash,
-    sync::Arc,
+use formally::{
+    smt::*,
+    support::{Comparable, Context, Contextual, Nominal},
 };
-use crate::macros::AtomHead;
+use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone, Default)]
-pub struct Pool {
-    kinds: RefCell<HashSet<Arc<TermKind>>>,
-    terms: RefCell<HashSet<Term>>,
+use dashmap::DashSet;
+
+#[derive(Debug, Default, Contextual)]
+pub struct TermPool {
+    pub(crate) context: Context,
+    pub(crate) terms: DashSet<Arc<TermKind>>,
 }
 
-impl Pool {
-    pub fn new() -> Pool {
-        Pool::default()
+impl TermPool {
+    pub fn new() -> TermPool {
+        TermPool::default()
     }
 
-    pub fn unique(&self, t: impl Unique) -> Term {
-        t.unique(self)
-    }
-}
-
-pub trait Unique {
-    fn unique(self, pool: &Pool) -> Term;
-}
-
-impl Unique for &Term {
-    fn unique(self, pool: &Pool) -> Term {
-        // we look up nominally (thanks to the `Eq` instance of `Term`) whether this
-        // exact `Term` is already interned
-        if pool.terms.borrow().contains(self) {
-            return self.clone();
-        }
-
-        // otherwise we unique the `TermKind`
-        pool.unique(self.kind())
+    pub fn term(self: &TermPool, t: impl ToTerm) -> Term {
+        t.to_term(self)
     }
 }
 
-impl Unique for &TermKind {
-    fn unique(self, pool: &Pool) -> Term {
-        let kind = match self {
-            TermKind::Constant(_) => self.clone(),
-            TermKind::Atom(atom) => match atom {
-                Atom::Bound(BoundAtom { head, arguments, span }) => {
-                    TermKind::Atom(Atom::Bound(BoundAtom {
-                        head: head.clone(),
-                        arguments: arguments.iter().map(|t| pool.unique(t)).collect(),
-                        span: span.clone()
-                    }))
-                }
-                Atom::Unbound(UnboundAtom { head, arguments, span }) => {
-                    TermKind::Atom(Atom::Unbound(UnboundAtom {
-                        head: head.clone(),
-                        arguments: arguments.iter().map(|t| pool.unique(t)).collect(),
-                        span: span.clone()
-                    }))
-                }
-            }
-        };
+pub trait ToTerm {
+    fn to_term(self, pool: &TermPool) -> Term;
+}
 
-        if let Some(kind) = pool.kinds.borrow().get(&kind) {
-            Term::from(kind.clone())
+impl ToTerm for &TermKind {
+    fn to_term(self, pool: &TermPool) -> Term {
+        if let Some(kind) = pool.terms.get(self) {
+            Term::new(pool.context(), kind.clone())
         } else {
-            let arc = Arc::new(kind.clone());
-            let term = Term::from(arc.clone());
-            pool.kinds.borrow_mut().insert(arc);
-            pool.terms.borrow_mut().insert(term.clone());
+            let arc = Arc::new(self.clone());
+            let term = Term::new(pool.context(), arc.clone());
+            pool.terms.insert(arc);
 
             term
         }
     }
 }
 
-impl Unique for &macros::Term<'_> {
-    fn unique(self, pool: &Pool) -> Term {
-        match self {
-            macros::Term::Term(t) => pool.unique(t),
-            macros::Term::Constant(c) => pool.unique(&TermKind::Constant(Constant::from(*c))),
-            macros::Term::Atom(a) => match &a.head {
-                AtomHead::Bound(macros::BoundHead { function }) => {
-                    pool.unique(&TermKind::Atom(Atom::Bound(BoundAtom {
+impl ToTerm for TermKind {
+    fn to_term(self, pool: &TermPool) -> Term {
+        if let Some(kind) = pool.terms.get(&self) {
+            Term::new(pool.context(), kind.clone())
+        } else {
+            let arc = Arc::new(self);
+            let term = Term::new(pool.context(), arc.clone());
+            pool.terms.insert(arc);
+
+            term
+        }
+    }
+}
+
+impl ToTerm for &Sort {
+    fn to_term(self, pool: &TermPool) -> Term {
+        let arguments = self
+            .arguments
+            .iter()
+            .map(|arg| match arg {
+                SortArgument::Value(c) => pool.term(TermKind::Constant(c.clone())),
+                SortArgument::Sort(s) => pool.term(s),
+            })
+            .collect();
+        pool.term(TermKind::Atom(Atom::Bound(BoundAtom {
+            head: Reference {
+                function: self.head.clone(),
+                span: None,
+            },
+            arguments,
+            span: None,
+        })))
+    }
+}
+
+impl ToTerm for Sort {
+    fn to_term(self, pool: &TermPool) -> Term {
+        let arguments = self
+            .arguments
+            .into_iter()
+            .map(|arg| match arg {
+                SortArgument::Value(c) => pool.term(TermKind::Constant(c)),
+                SortArgument::Sort(s) => pool.term(s),
+            })
+            .collect();
+        pool.term(TermKind::Atom(Atom::Bound(BoundAtom {
+            head: Reference {
+                function: self.head,
+                span: None,
+            },
+            arguments,
+            span: None,
+        })))
+    }
+}
+
+impl ToTerm for &mut macros::Term<'_> {
+    fn to_term(self, pool: &TermPool) -> Term {
+        match std::mem::take(self) {
+            macros::Term::Term(t) => t,
+            macros::Term::Constant(c) => {
+                let c = match c {
+                    macros::Constant::Integer { value } => Constant::Integer {
+                        value: Integer::from(value),
+                        span: None,
+                    },
+                    macros::Constant::Rational { value } => Constant::Rational {
+                        value: Rational::from_str_radix(value, 10).unwrap(),
+                        span: None,
+                    },
+                };
+                pool.term(TermKind::Constant(c))
+            }
+            macros::Term::Atom(a) => match a.head {
+                macros::AtomHead::Bound(macros::BoundHead { function }) => {
+                    pool.term(TermKind::Atom(Atom::Bound(BoundAtom {
                         head: Reference {
-                            function: function.clone(),
+                            function,
                             span: None,
                         },
-                        arguments: a.arguments.iter().map(|t| pool.unique(t)).collect(),
+                        arguments: a.arguments.into_iter().map(|t| pool.term(t)).collect(),
                         span: None,
                     })))
                 }
-                AtomHead::Unbound(macros::UnboundHead { name }) => {
-                    pool.unique(&TermKind::Atom(Atom::Unbound(UnboundAtom {
-                        head: name.clone(),
-                        arguments: a.arguments.iter().map(|t| pool.unique(t)).collect(),
+                macros::AtomHead::Unbound(macros::UnboundHead { name }) => {
+                    pool.term(TermKind::Atom(Atom::Unbound(UnboundAtom {
+                        head: name,
+                        arguments: a.arguments.into_iter().map(|t| pool.term(t)).collect(),
                         span: None,
                     })))
                 }
-            }
+            },
         }
     }
 }

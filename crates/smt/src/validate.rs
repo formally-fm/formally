@@ -26,12 +26,13 @@ use crate::*;
 use formally::support::*;
 
 impl Term {
-    /// Check the soundness of the term by performing name resolution and type checking together.
+    /// Check the well-formedness of the term by performing name resolution and type checking
+    /// together.
     ///
     /// The resolved term is returned.
     pub fn validated(self, env: &Env) -> Result<Self> {
         let resolved = self.resolve(env, Role::Function)?;
-        let _ = Sort::of(&resolved, env.context())?;
+        let _ = Sort::of(&resolved)?;
         Ok(resolved)
     }
 }
@@ -69,7 +70,7 @@ impl Definition {
         }
         self.body = self.body.validated(env)?;
 
-        let inferred = Sort::of(&self.body, env.context())?;
+        let inferred = Sort::of(&self.body)?;
         if !Sort::equal(&inferred, &self.range) {
             error!(&env.context(), self.span, "sort mismatch in definition");
             note!(

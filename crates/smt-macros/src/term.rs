@@ -179,7 +179,7 @@ impl Parse for Term {
 
 impl ToTokens for Root {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.append_all(quote!(&));
+        tokens.append_all(quote!(& mut));
         Term::App {
             head: self.head.clone(),
             args: self.args.clone(),

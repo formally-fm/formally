@@ -30,7 +30,7 @@ use std::{collections::HashMap, iter::zip};
 struct TypeCheckCacheTag {}
 
 impl CacheTag for TypeCheckCacheTag {
-    type Key = Nominal<Term>;
+    type Key = Term;
     type Value = Sort;
 }
 
@@ -58,10 +58,10 @@ impl Term {
     /// As advised in the documentation of [Term], caching is done by hashing the terms *nominally*,
     /// so two terms that compare equal but point to [TermKind] objects with different memory
     /// addresses will not share the cached result.
-    pub fn type_check(&self, ctx: Context) -> Result<Sort> {
-        let nominal = Nominal(self.clone());
+    pub fn type_check(&self) -> Result<Sort> {
+        let ctx = self.context();
         let cache = ctx.cache::<TypeCheckCacheTag>();
-        if let Some(sort) = cache.get(&nominal) {
+        if let Some(sort) = cache.get(self) {
             return Ok(sort.clone());
         }
 
@@ -70,17 +70,14 @@ impl Term {
             TermKind::Atom(atom) => atom.type_check(ctx.clone())?,
         };
 
-        cache.insert(nominal, sort.clone());
+        cache.insert(self.clone(), sort.clone());
 
         Ok(sort)
     }
 }
 
 impl Constant {
-    /// Deduce the sort of a constant term.
-    ///
-    /// This function is part of the job of [Term::type_check()].
-    pub fn type_check(&self, _ctx: Context) -> Result<Sort> {
+    fn type_check(&self, _ctx: Context) -> Result<Sort> {
         match self {
             Constant::Integer { .. } => Ok(theories::Ints::Int()),
             Constant::Rational { .. } => Ok(theories::Reals::Real()),
@@ -89,10 +86,7 @@ impl Constant {
 }
 
 impl BoundAtom {
-    /// Deduce the sort of a bound atom.
-    ///
-    /// This function is part of the job of [Term::type_check()].
-    pub fn type_check(&self, ctx: Context) -> Result<Sort> {
+    fn type_check(&self, ctx: Context) -> Result<Sort> {
         let domain = self.domain();
 
         if domain.len() != self.arguments.len() {
@@ -108,7 +102,7 @@ impl BoundAtom {
 
         let mut matches = HashMap::new();
         for (sort, arg) in zip(domain, &self.arguments) {
-            let argsort = Sort::of(arg, ctx.clone())?;
+            let argsort = Sort::of(arg)?;
 
             if !sort.matches_with(&argsort, &mut matches) {
                 error!(

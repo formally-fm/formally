@@ -29,7 +29,13 @@ use derive_more::From;
 use transitive::Transitive;
 
 pub use rug::{Integer, Rational};
-use std::{hash::Hash, ops::Deref, sync::Arc};
+use std::hash::Hasher;
+use std::{
+    cell::RefCell,
+    hash::Hash,
+    ops::Deref,
+    sync::{Arc, Weak},
+};
 
 /// A constant term.
 ///
@@ -218,8 +224,40 @@ pub enum TermKind {
 /// assert_ne!(Nominal::new(ponens1), Nominal::new(ponens2));
 /// ```
 #[allow(clippy::duplicated_attributes)]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Located)]
-pub struct Term(Nominal<Arc<TermKind>>);
+#[derive(Debug, Clone, Contextual)]
+pub struct Term {
+    context: Context,
+    kind: Nominal<Arc<TermKind>>,
+}
+
+impl Term {
+    pub(crate) fn new(context: Context, kind: Arc<TermKind>) -> Term {
+        Term {
+            context,
+            kind: Nominal(kind),
+        }
+    }
+}
+
+impl Hash for Term {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.kind.hash(state)
+    }
+}
+
+impl PartialEq for Term {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+impl Eq for Term {}
+
+impl Located for Term {
+    fn span(&self) -> Option<Span> {
+        self.kind.span()
+    }
+}
 
 impl From<bool> for TermKind {
     fn from(value: bool) -> Self {
@@ -231,49 +269,29 @@ impl From<bool> for TermKind {
     }
 }
 
-impl From<Arc<TermKind>> for Term {
-    fn from(value: Arc<TermKind>) -> Self {
-        Term(Nominal(value))
-    }
-}
-
-impl<T: Into<TermKind>> From<T> for Term {
-    fn from(value: T) -> Self {
-        Term(Nominal(Arc::new(value.into())))
-    }
-}
-
 impl<T: Into<Reference>> From<T> for Atom {
     fn from(value: T) -> Self {
-        Atom::Bound(BoundAtom {
-            head: value.into(),
-            arguments: Vec::new(),
-            span: None,
-        })
+        Atom::Bound(BoundAtom::from(value))
     }
 }
 
 impl From<Identifier<'_>> for Atom {
     fn from(id: Identifier) -> Self {
-        Atom::Unbound(UnboundAtom {
-            head: id.into_owned(),
-            arguments: Vec::new(),
-            span: None,
-        })
+        Atom::Unbound(UnboundAtom::from(id))
     }
 }
 
 impl Term {
     /// Get this term's [TermKind].
     pub fn kind(&self) -> &TermKind {
-        &self.0
+        &self.kind
     }
 }
 
-impl Deref for Term {
+impl<'p> Deref for Term {
     type Target = TermKind;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.kind
     }
 }

@@ -305,7 +305,7 @@ impl Solver {
     pub fn require(&mut self, term: impl Into<Term>) -> Result<()> {
         let term = term.into().resolve(&self.env(), Role::Function)?;
         self.backend.logic().check_term(&self.context(), &term)?;
-        let sort = Sort::of(&term, self.context())?;
+        let sort = Sort::of(&term)?;
 
         if !Sort::equal(&sort, &theories::Core::Bool()) {
             error!(

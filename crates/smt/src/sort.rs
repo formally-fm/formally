@@ -145,34 +145,10 @@ impl Debug for Sort {
     }
 }
 
-impl From<Sort> for Term {
-    /// Extract a [Term] representing the given sort.
-    ///
-    /// The resulting term can be turned into a sort again by [Sort::evaluate()].
-    fn from(sort: Sort) -> Self {
-        let arguments = sort
-            .arguments
-            .into_iter()
-            .map(|arg| match arg {
-                SortArgument::Value(c) => Term::from(c),
-                SortArgument::Sort(s) => Term::from(s),
-            })
-            .collect();
-        Term::from(Atom::Bound(BoundAtom {
-            head: Reference {
-                function: sort.head,
-                span: None,
-            },
-            arguments,
-            span: None,
-        }))
-    }
-}
-
 impl Sort {
     /// Alias for `term.type_check(ctx)` which provide a slightly better notation.
-    pub fn of(term: &Term, ctx: Context) -> Result<Sort> {
-        term.type_check(ctx)
+    pub fn of(term: &Term) -> Result<Sort> {
+        term.type_check()
     }
 
     /// Compare two sorts semantically (i.e. excluding source spans).
@@ -189,12 +165,12 @@ impl Sort {
     ///
     /// The evaluation checks that all the functions used have range [Sort::sort()] and that the
     /// arguments are of the right kind (sort arguments or constants).
-    pub fn evaluate(term: &Term, ctx: Context) -> Result<Sort> {
-        let sort = Sort::of(term, ctx.clone())?;
+    pub fn evaluate(termk: &Term, ctx: Context) -> Result<Sort> {
+        let sort = Sort::of(termk)?;
         if !Sort::equal(&sort, &Sort::sort()) {
             error!(
                 &ctx,
-                term.span(),
+                termk.span(),
                 "expected sort, found term of sort `{}`",
                 sort
             );
@@ -203,9 +179,9 @@ impl Sort {
 
         let TermKind::Atom(Atom::Bound(BoundAtom {
             head, arguments, ..
-        })) = term.kind()
+        })) = termk.kind()
         else {
-            internal!(&ctx, term.span(), "sort term does not evaluate to a sort");
+            internal!(&ctx, termk.span(), "sort term does not evaluate to a sort");
             return Err(DiagnosticEmitted);
         };
 
@@ -227,7 +203,7 @@ impl Sort {
         Ok(Sort {
             head: head.function.clone(),
             arguments: evaluated,
-            span: term.span(),
+            span: termk.span(),
         })
     }
 
