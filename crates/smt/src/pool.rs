@@ -31,9 +31,8 @@ use std::sync::{Arc, Mutex};
 
 use dashmap::DashSet;
 
-#[derive(Debug, Default, Contextual)]
+#[derive(Debug, Default)]
 pub struct TermPool {
-    pub(crate) context: Context,
     pub(crate) terms: DashSet<Arc<TermKind>>,
 }
 
@@ -51,13 +50,25 @@ pub trait ToTerm {
     fn to_term(self, pool: &TermPool) -> Term;
 }
 
+impl ToTerm for Term {
+    fn to_term(self, _: &TermPool) -> Term {
+        self
+    }
+}
+
+impl ToTerm for &Term {
+    fn to_term(self, _: &TermPool) -> Term {
+        self.clone()
+    }
+}
+
 impl ToTerm for &TermKind {
     fn to_term(self, pool: &TermPool) -> Term {
         if let Some(kind) = pool.terms.get(self) {
-            Term::new(pool.context(), kind.clone())
+            Term(Nominal(kind.clone()))
         } else {
             let arc = Arc::new(self.clone());
-            let term = Term::new(pool.context(), arc.clone());
+            let term = Term(Nominal(arc.clone()));
             pool.terms.insert(arc);
 
             term
@@ -68,10 +79,10 @@ impl ToTerm for &TermKind {
 impl ToTerm for TermKind {
     fn to_term(self, pool: &TermPool) -> Term {
         if let Some(kind) = pool.terms.get(&self) {
-            Term::new(pool.context(), kind.clone())
+            Term(Nominal(kind.clone()))
         } else {
             let arc = Arc::new(self);
-            let term = Term::new(pool.context(), arc.clone());
+            let term = Term(Nominal(arc.clone()));
             pool.terms.insert(arc);
 
             term

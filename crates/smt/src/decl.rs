@@ -354,15 +354,15 @@ impl Declared {
 /// provided ([function()](Definition::function), [constant()](Definition::constant), and
 /// [sort()](Definition::sort)), for common cases.
 #[derive(Clone, Debug, Located, Locatable)]
-pub struct Definition {
+pub struct Definition<T: ToTerm> {
     pub name: Identifier<'static>,
     pub domain: Vec<Parameter>,
     pub range: Sort,
-    pub body: Term,
+    pub body: T,
     pub span: Option<Span>,
 }
 
-impl Definition {
+impl<T: ToTerm> Definition<T> {
     /// Define a function (or a constant, or a sort).
     ///
     /// This is the most general constructor. It is more convenient than directly constructing the
@@ -401,13 +401,13 @@ impl Definition {
         name: impl Into<Identifier<'a>>,
         domain: impl IntoIterator<Item = Parameter>,
         range: impl Into<Sort>,
-        body: impl Into<Term>,
-    ) -> Definition {
+        body: T,
+    ) -> Definition<T> {
         Definition {
             name: name.into().into_owned(),
             domain: domain.into_iter().collect(),
             range: range.into(),
-            body: body.into(),
+            body,
             span: None,
         }
     }
@@ -418,8 +418,8 @@ impl Definition {
     pub fn predicate<'a>(
         name: impl Into<Identifier<'a>>,
         domain: impl IntoIterator<Item = Parameter>,
-        body: impl Into<Term>,
-    ) -> Definition {
+        body: T,
+    ) -> Definition<T> {
         Definition::function(name, domain, theories::Core::Bool(), body)
     }
 
@@ -429,8 +429,8 @@ impl Definition {
     pub fn constant<'a>(
         name: impl Into<Identifier<'a>>,
         sort: impl Into<Sort>,
-        body: impl Into<Term>,
-    ) -> Definition {
+        body: T,
+    ) -> Definition<T> {
         Definition::function(name, [], sort, body)
     }
 
@@ -440,29 +440,29 @@ impl Definition {
     pub fn sort<'a>(
         name: impl Into<Identifier<'a>>,
         domain: impl IntoIterator<Item = Parameter>,
-        body: impl Into<Term>,
-    ) -> Definition {
+        body: T,
+    ) -> Definition<T> {
         Definition::function(name, domain, Sort::sort(), body)
     }
 
     /// Define a Boolean constant (i.e. a constant of sort [Core::Bool()](theories::Core::Bool()).
     ///
     /// This is equivalent to `Definition::constant(name, theories::Core::Bool(), value)`.
-    pub fn boolean<'a>(name: impl Into<Identifier<'a>>, value: impl Into<Term>) -> Definition {
+    pub fn boolean<'a>(name: impl Into<Identifier<'a>>, value: T) -> Definition<T> {
         Definition::constant(name, theories::Core::Bool(), value)
     }
 
     /// Define an integer constant (i.e. a constant of sort [Ints::Int()](theories::Ints::Int()).
     ///
     /// This is equivalent to `Definition::constant(name, theories::Ints::Int(), value)`.
-    pub fn integer<'a>(name: impl Into<Identifier<'a>>, value: impl Into<Term>) -> Definition {
+    pub fn integer<'a>(name: impl Into<Identifier<'a>>, value: T) -> Definition<T> {
         Definition::constant(name, theories::Ints::Int(), value)
     }
 
     /// Define a real constant (i.e. a constant of sort [Reals::Real()](theories::Reals::Real()).
     ///
     /// This is equivalent to `Definition::constant(name, theories::Reals::Real(), value)`.
-    pub fn real<'a>(name: impl Into<Identifier<'a>>, value: impl Into<Term>) -> Definition {
+    pub fn real<'a>(name: impl Into<Identifier<'a>>, value: T) -> Definition<T> {
         Definition::constant(name, theories::Reals::Real(), value)
     }
 }
@@ -481,10 +481,10 @@ impl Definition {
 /// *equal* to the first. Under the hood, this is the behavior of `Nominal<Arc<Definition>>`, so we
 /// also refer to the [Nominal] type for details.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located, Deref)]
-pub struct Defined(Nominal<Arc<Definition>>);
+pub struct Defined(Nominal<Arc<Definition<Term>>>);
 
 impl Defined {
-    pub(crate) fn new(def: Definition) -> Defined {
+    pub(crate) fn new(def: Definition<Term>) -> Defined {
         Defined(Nominal(Arc::new(def)))
     }
 }

@@ -224,40 +224,8 @@ pub enum TermKind {
 /// assert_ne!(Nominal::new(ponens1), Nominal::new(ponens2));
 /// ```
 #[allow(clippy::duplicated_attributes)]
-#[derive(Debug, Clone, Contextual)]
-pub struct Term {
-    context: Context,
-    kind: Nominal<Arc<TermKind>>,
-}
-
-impl Term {
-    pub(crate) fn new(context: Context, kind: Arc<TermKind>) -> Term {
-        Term {
-            context,
-            kind: Nominal(kind),
-        }
-    }
-}
-
-impl Hash for Term {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.kind.hash(state)
-    }
-}
-
-impl PartialEq for Term {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
-    }
-}
-
-impl Eq for Term {}
-
-impl Located for Term {
-    fn span(&self) -> Option<Span> {
-        self.kind.span()
-    }
-}
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located)]
+pub struct Term(pub(crate) Nominal<Arc<TermKind>>);
 
 impl From<bool> for TermKind {
     fn from(value: bool) -> Self {
@@ -284,14 +252,14 @@ impl From<Identifier<'_>> for Atom {
 impl Term {
     /// Get this term's [TermKind].
     pub fn kind(&self) -> &TermKind {
-        &self.kind
+        &self.0
     }
 }
 
 impl<'p> Deref for Term {
     type Target = TermKind;
 
-    fn deref(&self) -> &Self::Target {
-        &self.kind
+    fn deref(&self) -> &TermKind {
+        &self.0
     }
 }

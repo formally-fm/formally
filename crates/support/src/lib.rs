@@ -56,14 +56,12 @@ mod formally {
 #[doc(inline)]
 pub use formally_support_macros::*;
 
-mod context;
 mod diagnostics;
 mod location;
 mod nominal;
 mod scope;
 mod stack;
 
-pub use context::*;
 pub use diagnostics::*;
 pub use location::*;
 pub use nominal::*;

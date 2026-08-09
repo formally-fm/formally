@@ -53,13 +53,12 @@ impl Term {
     /// together by calling [Term::validated()].
     ///
     /// The method takes a [Context] argument to cache its result into the context's [data
-    /// pool](Context::cache()), so a second invocation on *the same object* is faster.
+    /// pool](Context::cache()), so a second invocation on the same term is faster.
     ///
     /// As advised in the documentation of [Term], caching is done by hashing the terms *nominally*,
     /// so two terms that compare equal but point to [TermKind] objects with different memory
     /// addresses will not share the cached result.
-    pub fn type_check(&self) -> Result<Sort> {
-        let ctx = self.context();
+    pub fn type_check(&self, ctx: Context) -> Result<Sort> {
         let cache = ctx.cache::<TypeCheckCacheTag>();
         if let Some(sort) = cache.get(self) {
             return Ok(sort.clone());
@@ -102,7 +101,7 @@ impl BoundAtom {
 
         let mut matches = HashMap::new();
         for (sort, arg) in zip(domain, &self.arguments) {
-            let argsort = Sort::of(arg)?;
+            let argsort = Sort::of(arg, ctx.clone())?;
 
             if !sort.matches_with(&argsort, &mut matches) {
                 error!(

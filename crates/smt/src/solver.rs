@@ -171,8 +171,10 @@ impl Env {
     }
 }
 
+#[derive(Clone)]
 pub struct TermManager {
     manager: Rc<dyn backend::Manager>,
+    pool: Rc<TermPool>,
 }
 
 impl Debug for TermManager {
@@ -185,18 +187,11 @@ impl Debug for TermManager {
     }
 }
 
-impl Clone for TermManager {
-    fn clone(&self) -> TermManager {
-        TermManager {
-            manager: Rc::from(self.manager.backend().manager()),
-        }
-    }
-}
-
 impl TermManager {
     pub fn new(backend: &dyn Backend) -> TermManager {
         TermManager {
             manager: Rc::from(backend.manager()),
+            pool: Rc::new(TermPool::new()),
         }
     }
 }
@@ -204,6 +199,26 @@ impl TermManager {
 impl Default for TermManager {
     fn default() -> Self {
         TermManager::new(&Z3)
+    }
+}
+
+impl TermManager {
+    pub fn pool(&self) -> &TermPool {
+        &*self.pool
+    }
+
+    pub fn term(&self, term: impl ToTerm) -> Term {
+        self.pool.term(term)
+    }
+
+    pub fn definition<T: ToTerm>(&self, def: Definition<T>) -> Definition<Term> {
+        Definition {
+            name: def.name,
+            domain: def.domain,
+            range: def.range,
+            body: self.term(def.body),
+            span: def.span,
+        }
     }
 }
 
@@ -282,6 +297,10 @@ impl Solver {
         self.env.sorts.clone()
     }
 
+    pub fn resolve(&self, term: &Term, role: Role) -> Result<Term> {
+        self.env.resolve(&term, role, self.manager.pool())
+    }
+
     /// Declare a function (or a constant, or a sort).
     ///
     /// As explained in the [overview](formally::smt), [declare()](Solver::declare) registers a
@@ -320,7 +339,7 @@ impl Solver {
     /// Remember that constants are seen as functions with no arguments, and sorts as constants of
     /// the special sort [Sort::sort()]. See also [Definition::function()],
     /// [Definition::constant()], and [Definition::sort()] for details.
-    pub fn define(&mut self, def: Definition) -> Result<Defined> {
+    pub fn define<T: ToTerm>(&mut self, def: Definition<T>) -> Result<Defined> {
         let mut nested = Env::new().with_parent(self.env());
         for param in &def.domain {
             nested
@@ -328,7 +347,7 @@ impl Solver {
                 .add(param.name(), Function::Parameter(param.clone()));
         }
 
-        let def = Defined::new(def.validated(&nested)?);
+        let def = Defined::new(self.manager.definition(def).validated(&nested)?);
         self.backend
             .logic()
             .check_function(&self.context(), &def.clone().into())?;
@@ -347,10 +366,10 @@ impl Solver {
     ///
     /// The term undergoes [name resolution](Term::resolve()) and must be well-typed and be of
     /// sort [Core::Bool()](theories::Core::Bool()).
-    pub fn require(&mut self, term: impl Into<Term>) -> Result<()> {
-        let term = term.into().resolve(&self.env(), Role::Function)?;
+    pub fn require<T: ToTerm>(&mut self, term: T) -> Result<()> {
+        let term = self.resolve(&self.manager.term(term), Role::Function)?;
         self.backend.logic().check_term(&self.context(), &term)?;
-        let sort = Sort::of(&term)?;
+        let sort = Sort::of(&term, self.context())?;
 
         if !Sort::equal(&sort, &theories::Core::Bool()) {
             error!(

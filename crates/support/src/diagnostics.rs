@@ -27,7 +27,8 @@ use crate::*;
 use std::{
     cell::RefCell,
     fmt::{self, Debug, Display},
-    sync::Mutex,
+    ops::Deref,
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use thiserror::Error;
@@ -99,7 +100,7 @@ impl Display for DiagnosticEmitted {
 /// a sensible implementation of [Emit] for common error types one can implement [Diagnosable]
 /// instead. For an example see `formally::smt::backends::BackendError` type, and the documentation
 /// of [Diagnosable].
-pub trait Emit: Contextual {
+pub trait Emit {
     /// Emit the object as diagnostics using the current [Context] of the object as the [Emitter].
     fn emit(&self) -> DiagnosticEmitted;
 }
@@ -165,7 +166,7 @@ pub trait Emit: Contextual {
 ///    Ok(())
 /// }
 /// ```
-pub trait Diagnosable: Display + Located + Contextual {
+pub trait Diagnosable: Display + Located {
     /// The level at which the diagnostic has to be emitted.
     fn level(&self) -> Level {
         Level::Error
@@ -179,16 +180,14 @@ pub trait Diagnosable: Display + Located + Contextual {
 
 impl<T: Diagnosable> Emit for T {
     fn emit(&self) -> DiagnosticEmitted {
-        self.context()
-            .emit(self.level(), Diagnostic::new(self.span(), self));
+        Diagnostic::new(self.span(), self).emit(self.level());
         self.notes()
     }
 }
 
 impl<T: Emit> From<T> for DiagnosticEmitted {
     fn from(err: T) -> Self {
-        err.emit();
-        DiagnosticEmitted
+        err.emit()
     }
 }
 
@@ -201,7 +200,7 @@ impl<T: Emit> From<T> for DiagnosticEmitted {
 ///
 /// As the name says, when returning `Err(DiagnosticEmitted)` one should before emit a diagnostic
 /// (usually an error) through an [Emitter], usually with the [error!] macro.
-pub type Result<T> = std::result::Result<T, DiagnosticEmitted>;
+pub type Result<T, E = DiagnosticEmitted> = std::result::Result<T, E>;
 
 /// Trait to extend the standard [Result](std::result::Result) type with the
 /// [recover()](Recover::recover()) method.
@@ -209,11 +208,11 @@ pub type Result<T> = std::result::Result<T, DiagnosticEmitted>;
 /// This trait is implemented for any `Result<T, E>`.
 pub trait Recover<T, E> {
     /// Recover an erroneous [Result](std::result::Result) by replacing it with `Ok(value)`.
-    fn recover(self, value: T) -> std::result::Result<T, E>;
+    fn recover(self, value: T) -> Result<T, E>;
 }
 
-impl<T, E> Recover<T, E> for std::result::Result<T, E> {
-    fn recover(self, value: T) -> std::result::Result<T, E> {
+impl<T, E> Recover<T, E> for Result<T, E> {
+    fn recover(self, value: T) -> Result<T, E> {
         match self {
             Ok(ok) => Ok(ok),
             Err(_) => Ok(value),
@@ -260,6 +259,46 @@ pub trait Emitter {
     fn note(&self, kind: NoteKind, note: Diagnostic);
 }
 
+impl<E: Deref<Target: Emitter>> Emitter for Mutex<E> {
+    fn emit(&self, level: Level, diag: Diagnostic) {
+        self.lock().unwrap().emit(level, diag)
+    }
+
+    fn note(&self, kind: NoteKind, note: Diagnostic) {
+        self.lock().unwrap().note(kind, note)
+    }
+}
+
+pub struct DefaultGlobalEmitter;
+pub struct GlobalEmitter;
+
+impl Emitter for DefaultGlobalEmitter {
+    fn emit(&self, level: Level, diag: Diagnostic) {
+        DEFAULT_GLOBAL_EMITTER.emit(level, diag)
+    }
+
+    fn note(&self, kind: NoteKind, note: Diagnostic) {
+        DEFAULT_GLOBAL_EMITTER.note(kind, note)
+    }
+}
+
+impl Emitter for GlobalEmitter {
+    fn emit(&self, level: Level, diag: Diagnostic) {
+        GLOBAL_EMITTER.with_borrow(|e| e.emit(level, diag))
+    }
+
+    fn note(&self, kind: NoteKind, note: Diagnostic) {
+        GLOBAL_EMITTER.with_borrow(|e| e.note(kind, note))
+    }
+}
+
+static DEFAULT_GLOBAL_EMITTER: LazyLock<Mutex<Arc<dyn Send + Sync + Emitter>>> =
+    LazyLock::new(|| Mutex::new(Arc::new(StdErrEmitter::new())));
+
+thread_local! {
+    static GLOBAL_EMITTER: RefCell<Arc<dyn Emitter>> = RefCell::new(Arc::new(DefaultGlobalEmitter));
+}
+
 /// Information attached to a diagnostic.
 ///
 /// See the [Emitter] trait for general information on the error reporting strategy of `formally`.
@@ -280,11 +319,36 @@ impl Diagnostic {
             msg: format!("{msg}"),
         }
     }
-}
 
-enum Batched {
-    Diagnostic(Level, Diagnostic),
-    Note(NoteKind, Diagnostic),
+    pub fn default_global_emitter() -> Arc<dyn Emitter> {
+        DEFAULT_GLOBAL_EMITTER.lock().unwrap().clone()
+    }
+
+    pub fn set_default_global_emitter(emitter: Arc<dyn Send + Sync + Emitter>) {
+        *DEFAULT_GLOBAL_EMITTER.lock().unwrap() = emitter;
+    }
+
+    pub fn with<E, F, R>(emitter: E, f: F) -> R
+    where
+        E: 'static + Emitter,
+        F: std::panic::UnwindSafe + FnOnce() -> R,
+    {
+        let old = GLOBAL_EMITTER.with_borrow(|e| e.clone());
+        GLOBAL_EMITTER.set(Arc::new(emitter));
+
+        let result = std::panic::catch_unwind(f);
+
+        GLOBAL_EMITTER.set(old);
+
+        match result {
+            Ok(v) => v,
+            Err(e) => std::panic::resume_unwind(e),
+        }
+    }
+
+    pub fn emit(self, level: Level) {
+        GLOBAL_EMITTER.with_borrow(|e| e.emit(level, self))
+    }
 }
 
 /// [Emitter] that throws away any diagnostic.
@@ -312,6 +376,11 @@ impl Emitter for NullEmitter {
 pub struct BatchEmitter<'e> {
     emitter: &'e dyn Emitter,
     batched: RefCell<Vec<Batched>>,
+}
+
+enum Batched {
+    Diagnostic(Level, Diagnostic),
+    Note(NoteKind, Diagnostic),
 }
 
 impl<'e> BatchEmitter<'e> {
@@ -483,6 +552,9 @@ macro_rules! diagnose {
 /// note!(ctx, span, "it seems to be a number instead");
 #[macro_export]
 macro_rules! note {
+    ($($args:tt)+) => {
+        $crate::diagnose!(&GlobalEmitter, NoteKind::Note, $($args)*)
+    };
     ($emitter:expr, $($args:tt)+) => {
         $crate::diagnose!($emitter, NoteKind::Note, $($args)*)
     };
@@ -513,6 +585,9 @@ macro_rules! note {
 /// ```
 #[macro_export]
 macro_rules! trace {
+    ($($args:tt)+) => {
+        $crate::diagnose!(&GlobalEmitter, NoteKind::Trace, $($args)*)
+    };
     ($emitter:expr, $($args:tt)+) => {
         $crate::diagnose!($emitter, NoteKind::Trace, $($args)*)
     };
@@ -529,6 +604,9 @@ macro_rules! trace {
 /// ```
 #[macro_export]
 macro_rules! internal {
+    ($($args:tt)+) => {
+        $crate::diagnose!(&GlobalEmitter, Level::Internal, $($args)*)
+    };
     ($emitter:expr, $($args:tt)+) => {
         $crate::diagnose!($emitter, Level::Internal, $($args)*)
     };
@@ -546,6 +624,9 @@ macro_rules! internal {
 /// ```
 #[macro_export]
 macro_rules! error {
+    ($($args:tt)+) => {
+        $crate::diagnose!(&GlobalEmitter, Level::Error, $($args)*)
+    };
     ($emitter:expr, $($args:tt)+) => {
         $crate::diagnose!($emitter, Level::Error, $($args)*)
     };
@@ -566,6 +647,9 @@ macro_rules! error {
 /// ```
 #[macro_export]
 macro_rules! warning {
+    ($($args:tt)+) => {
+        $crate::diagnose!(&GlobalEmitter, Level::Warning, $($args)*)
+    };
     ($emitter:expr, $($args:tt)+) => {
         $crate::diagnose!($emitter, Level::Warning, $($args)*)
     };
@@ -587,6 +671,9 @@ macro_rules! warning {
 /// ```
 #[macro_export]
 macro_rules! debug {
+    ($($args:tt)+) => {
+        $crate::diagnose!(&GlobalEmitter, Level::Debug, $($args)*)
+    };
     ($emitter:expr, $($args:tt)+) => {
         $crate::diagnose!($emitter, Level::Debug, $($args)*)
     };

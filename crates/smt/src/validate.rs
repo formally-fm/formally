@@ -32,7 +32,7 @@ impl Term {
     /// The resolved term is returned.
     pub fn validated(self, env: &Env) -> Result<Self> {
         let resolved = self.resolve(env, Role::Function)?;
-        let _ = Sort::of(&resolved)?;
+        let _ = Sort::of(&resolved, env.context())?;
         Ok(resolved)
     }
 }
@@ -40,7 +40,7 @@ impl Term {
 impl Sort {
     /// Check the well-formedness of the sort.
     pub fn validate(&self, env: &Env) -> Result<()> {
-        let _ = Sort::evaluate(&Term::from(self.clone()), env.context())?;
+        let _ = Sort::evaluate(&TermKind::from(self), env.context())?;
         Ok(())
     }
 }
@@ -59,7 +59,7 @@ impl Declaration {
     }
 }
 
-impl Definition {
+impl Definition<Term> {
     /// Check the well-formedness of the sorts and the terms involved in the declaration.
     ///
     /// The terms involved in the given definition are [resolved](Term::resolve()) and the result
@@ -70,7 +70,7 @@ impl Definition {
         }
         self.body = self.body.validated(env)?;
 
-        let inferred = Sort::of(&self.body)?;
+        let inferred = Sort::of(&self.body, env.context())?;
         if !Sort::equal(&inferred, &self.range) {
             error!(&env.context(), self.span, "sort mismatch in definition");
             note!(

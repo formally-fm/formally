@@ -279,13 +279,13 @@ impl<'s> Source<'s> {
     /// 3. If the [Source] is [Source::Path], the file is open and read until the end.
     ///
     /// The [Emitter] is used to emit error diagnostics in case the file cannot be read.
-    pub fn content(self, emitter: &dyn Emitter) -> Result<Cow<'s, str>> {
+    pub fn content(self) -> Result<Cow<'s, str>> {
         let origin = self.origin();
         match self {
             Source::Path(path) => match fs::read_to_string(path) {
                 Ok(content) => Ok(Cow::from(content)),
                 Err(err) => {
-                    error!(emitter, Span::Whole(origin), "unable to read file: {err}");
+                    error!(Span::Whole(origin), "unable to read file: {err}");
                     Err(DiagnosticEmitted.into())
                 }
             },
@@ -294,7 +294,7 @@ impl<'s> Source<'s> {
                 match file.read_to_string(&mut data) {
                     Ok(_) => Ok(Cow::from(data)),
                     Err(err) => {
-                        error!(emitter, Span::Whole(origin), "unable to read file: {err}");
+                        error!(Span::Whole(origin), "unable to read file: {err}");
                         Err(DiagnosticEmitted.into())
                     }
                 }
@@ -498,11 +498,11 @@ pub struct State<'b, 'o, 'e, 'p> {
 
 impl<'b, 'o, 'e, 'p> State<'b, 'o, 'e, 'p> {
     /// Construct a new [State]. Calling this explicitly should never be necessary.
-    pub fn new(buffer: &'b str, origin: &'o Origin, emitter: &'e dyn Emitter) -> Self {
+    pub fn new(buffer: &'b str, origin: &'o Origin) -> State<'b, 'o, 'static, 'p> {
         State {
             origin,
             view: View::new(buffer),
-            emitter: BatchEmitter::new(emitter),
+            emitter: BatchEmitter::new(&*Diagnostic::emitter()),
             skip: ascii_whitespace().ignore(),
             parent: None,
         }
@@ -773,12 +773,12 @@ pub trait Parse<'c, Out>: 'c + Clone + Sized {
     ///
     /// This is the main entry point for using parsers. See the
     /// [module-level documentation](crate::parse) for details.
-    fn parse<'i>(&self, emitter: &dyn Emitter, source: impl Into<Source<'i>>) -> Result<Out> {
+    fn parse<'i>(&self, source: impl Into<Source<'i>>) -> Result<Out> {
         let source = source.into();
         let origin = source.origin();
-        let content = source.content(emitter)?;
+        let content = source.content()?;
 
-        let mut state = State::new(&content, &origin, emitter);
+        let mut state = State::new(&content, &origin);
         let result = self.parse_from(&mut state);
         state.commit();
 

@@ -27,74 +27,7 @@ use formally::support::*;
 
 use std::{collections::HashMap, iter::zip};
 
-impl BoundAtom {
-    fn resolve(&self, env: &Env) -> Result<BoundAtom> {
-        let domain = self.domain();
-
-        if domain.len() != self.arguments.len() {
-            error!(
-                &env.context(),
-                self.span(),
-                "applied {} arguments to a function of {} parameters",
-                self.arguments.len(),
-                domain.len(),
-            );
-            return Err(DiagnosticEmitted);
-        }
-
-        let mut resolved = Vec::new();
-        for (sort, arg) in zip(domain, &self.arguments) {
-            if Sort::equal(&sort, &Sort::sort()) {
-                resolved.push(arg.resolve(env, Role::Sort)?);
-            } else {
-                resolved.push(arg.resolve(env, Role::Function)?);
-            }
-        }
-
-        Ok(BoundAtom {
-            head: self.head.clone(),
-            arguments: resolved,
-            span: self.span.clone(),
-        })
-    }
-}
-
-impl UnboundAtom {
-    fn resolve(&self, env: &Env, role: Role) -> Result<BoundAtom> {
-        let head = Identifier::from(self.head.name()).over(self.head.span());
-
-        env.lookup(head.clone(), role)
-            .filter_map(move |f| {
-                let atom = BoundAtom {
-                    head: Reference {
-                        function: f.clone(),
-                        span: head.span(),
-                    },
-                    arguments: self.arguments.clone(),
-                    span: self.span(),
-                };
-                let silent = env.clone().with_emitter(NullEmitter);
-                let atom = atom.resolve(&silent).ok()?;
-
-                let mut arguments = Vec::new();
-                for arg in &atom.arguments {
-                    arguments.push(Sort::of(arg).ok()?);
-                }
-
-                let mut matches = HashMap::new();
-                for (sort, arg) in zip(atom.domain(), &arguments) {
-                    if !sort.matches_with(arg, &mut matches) {
-                        return None;
-                    }
-                }
-
-                Some(atom)
-            })
-            .one()
-    }
-}
-
-impl Term {
+impl Env {
     /// Perform *name resolution*.
     ///
     /// Name resolution is the process of replacing all the [unbound atoms][UnboundAtom] in a term
@@ -111,15 +44,78 @@ impl Term {
     /// before type checking, because type checking of unbound atoms is not possible. This seems
     /// to require double the calls to [Term::type_check()], but the latter caches its results in
     /// `env.context()`, so each subterm gets type-checked only once anyway.
-    pub fn resolve(&self, env: &Env, role: Role) -> Result<Term> {
-        Ok(match self.kind() {
-            TermKind::Constant(_) => self.clone(),
+    pub fn resolve(&self, term: &Term, role: Role, pool: &TermPool) -> Result<Term> {
+        Ok(match term.kind() {
+            TermKind::Constant(_) => term.clone(),
             TermKind::Atom(Atom::Bound(atom)) => {
-                pool.term(&TermKind::Atom(Atom::Bound(atom.resolve(env)?)))
+                pool.term(&TermKind::Atom(Atom::Bound(self.resolve_bound(atom, pool)?)))
             }
             TermKind::Atom(Atom::Unbound(unbound)) => {
-                pool.term(&TermKind::Atom(Atom::Bound(unbound.resolve(env, role)?)))
+                pool.term(&TermKind::Atom(Atom::Bound(self.resolve_unbound(unbound, role, pool)?)))
             }
         })
+    }
+
+    fn resolve_bound(&self, atom: &BoundAtom, pool: &TermPool) -> Result<BoundAtom> {
+        let domain = atom.domain();
+
+        if domain.len() != atom.arguments.len() {
+            error!(
+                &self.context(),
+                atom.span(),
+                "applied {} arguments to a function of {} parameters",
+                atom.arguments.len(),
+                domain.len(),
+            );
+            return Err(DiagnosticEmitted);
+        }
+
+        let mut resolved = Vec::new();
+        for (sort, arg) in zip(domain, &atom.arguments) {
+            if Sort::equal(&sort, &Sort::sort()) {
+                resolved.push(self.resolve(arg, Role::Sort, pool)?);
+            } else {
+                resolved.push(self.resolve(arg, Role::Function, pool)?);
+            }
+        }
+
+        Ok(BoundAtom {
+            head: atom.head.clone(),
+            arguments: resolved,
+            span: atom.span.clone(),
+        })
+    }
+
+    fn resolve_unbound(&self, unbound: &UnboundAtom, role: Role, pool: &TermPool) -> Result<BoundAtom> {
+        let head = Identifier::from(unbound.head.name()).over(unbound.head.span());
+
+        self.lookup(head.clone(), role)
+            .filter_map(move |f| {
+                let atom = BoundAtom {
+                    head: Reference {
+                        function: f.clone(),
+                        span: head.span(),
+                    },
+                    arguments: unbound.arguments.clone(),
+                    span: unbound.span(),
+                };
+                let silent = self.clone().with_emitter(NullEmitter);
+                let atom = silent.resolve_bound(&atom, pool).ok()?;
+
+                let mut arguments = Vec::new();
+                for arg in &atom.arguments {
+                    arguments.push(Sort::of(arg, self.context()).ok()?);
+                }
+
+                let mut matches = HashMap::new();
+                for (sort, arg) in zip(atom.domain(), &arguments) {
+                    if !sort.matches_with(arg, &mut matches) {
+                        return None;
+                    }
+                }
+
+                Some(atom)
+            })
+            .one()
     }
 }

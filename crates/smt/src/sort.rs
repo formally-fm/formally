@@ -147,8 +147,8 @@ impl Debug for Sort {
 
 impl Sort {
     /// Alias for `term.type_check(ctx)` which provide a slightly better notation.
-    pub fn of(term: &Term) -> Result<Sort> {
-        term.type_check()
+    pub fn of(term: &Term, ctx: Context) -> Result<Sort> {
+        term.type_check(ctx)
     }
 
     /// Compare two sorts semantically (i.e. excluding source spans).
@@ -165,12 +165,12 @@ impl Sort {
     ///
     /// The evaluation checks that all the functions used have range [Sort::sort()] and that the
     /// arguments are of the right kind (sort arguments or constants).
-    pub fn evaluate(termk: &Term, ctx: Context) -> Result<Sort> {
-        let sort = Sort::of(termk)?;
+    pub fn evaluate(term: &Term, ctx: Context) -> Result<Sort> {
+        let sort = Sort::of(term, ctx.clone())?;
         if !Sort::equal(&sort, &Sort::sort()) {
             error!(
                 &ctx,
-                termk.span(),
+                term.span(),
                 "expected sort, found term of sort `{}`",
                 sort
             );
@@ -179,9 +179,9 @@ impl Sort {
 
         let TermKind::Atom(Atom::Bound(BoundAtom {
             head, arguments, ..
-        })) = termk.kind()
+        })) = term.kind()
         else {
-            internal!(&ctx, termk.span(), "sort term does not evaluate to a sort");
+            internal!(&ctx, term.span(), "sort term does not evaluate to a sort");
             return Err(DiagnosticEmitted);
         };
 
@@ -203,7 +203,7 @@ impl Sort {
         Ok(Sort {
             head: head.function.clone(),
             arguments: evaluated,
-            span: termk.span(),
+            span: term.span(),
         })
     }
 
