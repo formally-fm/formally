@@ -47,22 +47,22 @@ impl Env {
     /// `env.context()`, so each subterm gets type-checked only once anyway.
     pub fn resolve<C>(&self, term: &Term, role: Role, ctor: C) -> Result<Term>
     where
-        C: Fn(TermKind) -> Term,
+        C: Clone + Fn(TermKind) -> Term,
     {
         Ok(match term.kind() {
             TermKind::Constant(_) => term.clone(),
             TermKind::Atom(Atom::Bound(atom)) => ctor(TermKind::Atom(Atom::Bound(
-                self.resolve_bound(atom, &ctor)?,
+                self.resolve_bound(atom, ctor.clone())?,
             ))),
             TermKind::Atom(Atom::Unbound(unbound)) => ctor(TermKind::Atom(Atom::Bound(
-                self.resolve_unbound(unbound, role, &ctor)?,
+                self.resolve_unbound(unbound, role, ctor.clone())?,
             ))),
         })
     }
 
-    fn resolve_bound<C>(&self, atom: &BoundAtom, ctor: &C) -> Result<BoundAtom>
+    fn resolve_bound<C>(&self, atom: &BoundAtom, ctor: C) -> Result<BoundAtom>
     where
-        C: Fn(TermKind) -> Term,
+        C: Clone + Fn(TermKind) -> Term,
     {
         let domain = atom.domain();
 
@@ -79,9 +79,9 @@ impl Env {
         let mut resolved = Vec::new();
         for (sort, arg) in zip(domain, &atom.arguments) {
             if Sort::equal(&sort, &Sort::sort()) {
-                resolved.push(self.resolve(arg, Role::Sort, ctor)?);
+                resolved.push(self.resolve(arg, Role::Sort, ctor.clone())?);
             } else {
-                resolved.push(self.resolve(arg, Role::Function, ctor)?);
+                resolved.push(self.resolve(arg, Role::Function, ctor.clone())?);
             }
         }
 
@@ -92,9 +92,9 @@ impl Env {
         })
     }
 
-    fn resolve_unbound<C>(&self, unbound: &UnboundAtom, role: Role, ctor: &C) -> Result<BoundAtom>
+    fn resolve_unbound<C>(&self, unbound: &UnboundAtom, role: Role, ctor: C) -> Result<BoundAtom>
     where
-        C: Fn(TermKind) -> Term,
+        C: Clone + Fn(TermKind) -> Term,
     {
         let head = Identifier::from(unbound.head.name()).over(unbound.head.span());
 
@@ -110,7 +110,7 @@ impl Env {
                 };
                 let atom = Diagnostic::with(
                     NullEmitter,
-                    AssertUnwindSafe(|| self.resolve_bound(&atom, ctor)),
+                    AssertUnwindSafe(|| self.resolve_bound(&atom, ctor.clone())),
                 )
                 .ok()?;
 

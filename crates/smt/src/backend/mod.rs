@@ -101,7 +101,7 @@
 //!         "MyBackend"
 //!     }
 //!     // ...
-//!     fn instance(&self, config: &Config) -> Result<Box<dyn Solver>, BackendError> {
+//!     fn instance(&self, config: &Config) -> Result<Box<dyn Solver>, Error> {
 //!         // ...
 //!         if let Some(logic) = &config.logic {
 //!             let logic = standard_logic(&logic, &MyBackendALL);
@@ -132,8 +132,8 @@
 //! In order to simplify the life of backend developers and provide a consistent experience to
 //! users of different backends, backends *do not* directly emit their errors as diagnostics (even
 //! though they technically *could*, because they have access the [Context]). Instead, the methods
-//! of [Solver] return a [Result] whose error type is [BackendError], which provides a
-//! non-exhaustive taxonomy of the possible errors that a backend may encounter. [BackendError] is
+//! of [Solver] return a [Result] whose error type is [Error], which provides a
+//! non-exhaustive taxonomy of the possible errors that a backend may encounter. [Error] is
 //! [Diagnosable], so users of the backend interface (e.g. [Solver]) can still easily emit those
 //! errors as diagnostics later.
 //!
@@ -151,9 +151,9 @@
 //!    boundary of the [Solver] methods. If the backend contains code that may panic or throw an
 //!    exception, that code must be wrapped either inside a [catch_unwind](std::panic::catch_unwind)
 //!    call in Rust or a `try { ... } catch { ... }` block in C++, and the error turned into a
-//!    [BackendError] of kind [BackendErrorKind::Internal].
-//! 3. a violated precondition *can* result either into a [BackendError] of kind
-//!    [BackendErrorKind::ViolatedPrecondition] or into a logical misbehaviour, i.e., wrong answers,
+//!    [Error] of kind [ErrorKind::Internal].
+//! 3. a violated precondition *can* result either into a [Error] of kind
+//!    [ErrorKind::ViolatedPrecondition] or into a logical misbehaviour, i.e., wrong answers,
 //!    deadlocks, etc.. In other words, backends are not *forced* to detect the violation of the
 //!    preconditions, and can have arbitrary (but *not* undefined) behavior in those cases.
 
@@ -164,7 +164,7 @@ use formally::{
     smt::{self, Config, Declared, Defined, ModelProvider, TermPool, logics},
     support::{Diagnosable, Identifier, Level, Located, Span},
 };
-use std::{error::Error, fmt::Debug, fmt::Formatter, io, rc::Rc};
+use std::{any::Any, fmt::Debug, fmt::Formatter, io, rc::Rc};
 
 use derive_more::Display;
 use thiserror::Error;
@@ -175,25 +175,25 @@ use thiserror::Error;
 /// [DiagnosticEmitted](formally::support::DiagnosticEmitted) (e.g. via the `?` operator).
 #[derive(Debug, Display, Error)]
 #[display("SMT backend `{backend}`: {kind}")]
-pub struct BackendError {
+pub struct Error {
     /// Which error occurred.
-    pub kind: Box<BackendErrorKind>,
+    pub kind: Box<ErrorKind>,
     /// The name of the backend that generated the error.
     pub backend: String,
 }
 
-impl BackendError {
-    pub fn new(backend: &str, kind: BackendErrorKind) -> BackendError {
-        BackendError {
+impl Error {
+    pub fn new(backend: &str, kind: ErrorKind) -> Error {
+        Error {
             kind: Box::new(kind),
             backend: backend.into(),
         }
     }
 }
 
-/// An enumeration of possible errors for [BackendError].
+/// An enumeration of possible errors for [Error].
 #[derive(Debug, Display)]
-pub enum BackendErrorKind {
+pub enum ErrorKind {
     /// Some request was unsupported.
     #[display("unsupported feature: {msg}")]
     Unsupported {
@@ -213,30 +213,30 @@ pub enum BackendErrorKind {
 
     /// An internal error occurred.
     #[display("{_0}")]
-    Internal(Box<dyn Error>),
+    Internal(Box<dyn std::error::Error>),
 
     /// An error of any kind occurred.
     #[display("{_0}")]
-    Other(Box<dyn Error>),
+    Other(Box<dyn std::error::Error>),
 
     /// An I/O error occurred.
     #[display("input/output error: {_0}")]
     IO(io::Error),
 }
 
-impl Located for BackendError {
+impl Located for Error {
     fn span(&self) -> Option<Span> {
         match &*self.kind {
-            BackendErrorKind::Unsupported { span, .. } => span.clone(),
+            ErrorKind::Unsupported { span, .. } => span.clone(),
             _ => None,
         }
     }
 }
 
-impl Diagnosable for BackendError {
+impl Diagnosable for Error {
     fn level(&self) -> Level {
         match *self.kind {
-            BackendErrorKind::Unsupported { .. } => Level::Error,
+            ErrorKind::Unsupported { .. } => Level::Error,
             _ => Level::Internal,
         }
     }
@@ -258,7 +258,7 @@ pub trait Backend {
         &self,
         config: &Config,
         manager: Rc<dyn Manager>,
-    ) -> Result<Box<dyn Solver>, BackendError>;
+    ) -> Result<Box<dyn Solver>, Error>;
 }
 
 impl Debug for dyn Backend {
@@ -267,18 +267,18 @@ impl Debug for dyn Backend {
     }
 }
 
-pub trait Term {}
+pub trait Term: Any {}
 
-pub trait Manager {
+pub trait Manager: Any {
     /// Return the backend this manager is an instance of.
     ///
     /// This is useful to obtain a new different instance of the same backend or the name of the
     /// backend.
     fn backend(&self) -> &dyn Backend;
 
-    fn import(&self, term: &smt::Term) -> Result<&dyn Term, BackendError>;
+    fn import(&self, term: &smt::Term) -> Result<&dyn Term, Error>;
 
-    fn export(&self, term: &dyn Term, pool: &TermPool) -> Result<smt::Term, BackendError>;
+    fn export(&self, term: &dyn Term, pool: &TermPool) -> Result<smt::Term, Error>;
 }
 
 /// The trait for instances of SMT backends.
@@ -308,7 +308,7 @@ pub trait Solver {
     ///
     /// This method *can assume* that the sorts mentioned by the [Declared] object have passed a
     /// [validate()](Sort::validate) call.
-    fn declare(&mut self, decl: Declared) -> Result<(), BackendError>;
+    fn declare(&mut self, decl: Declared) -> Result<(), Error>;
 
     /// Register a new [Defined] object in the backend instance.
     ///
@@ -319,16 +319,16 @@ pub trait Solver {
     /// [validate()](Sort::validate) call, and the terms mentioned have passed a
     /// [validated()](Term::validated()) call. In aprticular, terms are guaranteed to be fully
     /// [resolved](Term::resolve()).
-    fn define(&mut self, def: Defined) -> Result<(), BackendError>;
+    fn define(&mut self, def: Defined) -> Result<(), Error>;
 
     /// Push a frame on the assertions stack.
-    fn push(&mut self) -> Result<(), BackendError>;
+    fn push(&mut self) -> Result<(), Error>;
 
     /// Pop `n` frames on the assertions stack.
     ///
     /// If there are not enough pushed frames, this method *should not* return an error, but
     /// behave as if the maximum number of available frames had been specified.
-    fn pop_n(&mut self, n: usize) -> Result<(), BackendError>;
+    fn pop_n(&mut self, n: usize) -> Result<(), Error>;
 
     /// Asserts a term to the current frame of the assertions stack.
     ///
@@ -336,10 +336,10 @@ pub trait Solver {
     /// [validated()](Term::validated()), and to be Boolean. In particular, the term is guaranteed
     /// to be fully [resolved](Term::resolve()), and [Term::type_check()] is guaranteed to
     /// return [Core::Bool()](theories::Core::Bool()).
-    fn require(&mut self, term: &dyn Term) -> Result<(), BackendError>;
+    fn require(&mut self, term: &dyn Term) -> Result<(), Error>;
 
     /// Check the current frame on the assertions stack for satisfiability.
-    fn check(&mut self) -> Result<Option<bool>, BackendError>;
+    fn check(&mut self) -> Result<Option<bool>, Error>;
 
     /// Returns the current model.
     ///
@@ -347,5 +347,5 @@ pub trait Solver {
     /// [check()](Solver::check()) did *not* return `Ok(Answer::Yes)`, the method should return
     /// `Ok(None)`. An error should be returned only if extracting a model failed for some
     /// unexpected reason (i.e. an I/O error).
-    fn model(&self) -> Result<Option<Box<dyn '_ + ModelProvider>>, BackendError>;
+    fn model(&self) -> Result<Option<Box<dyn '_ + ModelProvider>>, Error>;
 }

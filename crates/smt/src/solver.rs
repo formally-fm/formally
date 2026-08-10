@@ -179,6 +179,13 @@ impl Debug for TermManager {
     }
 }
 
+impl Default for TermManager {
+    fn default() -> Self {
+        TermManager::new(&Z3)
+    }
+}
+
+
 impl TermManager {
     pub fn new(backend: &dyn Backend) -> TermManager {
         TermManager {
@@ -186,35 +193,9 @@ impl TermManager {
             pool: Rc::new(TermPool::new()),
         }
     }
-}
-
-impl Default for TermManager {
-    fn default() -> Self {
-        TermManager::new(&Z3)
-    }
-}
-
-// Problemi
-//
-// Non riesco a trovare l'architettura giusta per l'hash-consing dei termini
-// - dovrei fare in modo che `Term` conosca il proprio `TermPool` ?
-//   - in questo caso comunque non potrei fare `TermKind -> Term` in maniera univoca perché costanti
-//     e atomi senza argomenti non sanno lo stesso in che `TermPool` andare
-// - dovrei lasciare che i `Term` si possano costruire liberamente con hash-consing opzionale?
-//   - in questo caso come dovrebbe comportarsi `TermPool` davanti ad un `Term`?
-//     - deep hash-consing costa troppo ma si può implementare opzionale
-//     - shallow hash-consing lascia la possibilità di usare pool diverse per diverse parti di un
-//       `Term`. È utile? Forse per il reclaim della memoria?
-//     - nella costruzione da term!(...) siamo deep per tutta la macro fino a quando vengono inclusi
-//       `Term` esterni
-//   - come dovrebbero comportarsi funzioni come `resolve()` che costruiscono termini nuovi?
-//     - l'ideale sarebbe fare l'hash-consing incrementalmente
-//     - posso parametrizzare `resolve()` con una lambda `TermKind -> Term` che può essere triviale
-//       oppure `TermPool.term()` a seconda delle necessità.
-
-impl TermManager {
+    
     pub fn pool(&self) -> &TermPool {
-        &*self.pool
+        &self.pool
     }
 
     pub fn term(&self, term: impl ToTerm) -> Term {
