@@ -57,9 +57,11 @@ impl Interpreter {
 
     pub(crate) fn sort_to_smt(solver: &smt::Solver, sort: &ast::Sort) -> Result<smt::Sort> {
         let term = Interpreter::sort_to_smt_term(sort);
-        let term = term.resolve(&solver.env(), smt::Role::Sort)?;
+        let term = solver
+            .env()
+            .resolve(&term, smt::Role::Sort, smt::Term::from)?;
 
-        smt::Sort::evaluate(&term, solver.context())
+        smt::Sort::evaluate(&term)
     }
 
     fn constant_to_smt(cnst: ast::Constant) -> smt::Term {

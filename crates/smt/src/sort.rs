@@ -145,10 +145,40 @@ impl Debug for Sort {
     }
 }
 
+impl From<Sort> for Term {
+    fn from(sort: Sort) -> Self {
+        Term::from(TermKind::from(sort))
+    }
+}
+
+impl From<Sort> for TermKind {
+    /// Extract a [Term] representing the given sort.
+    ///
+    /// The resulting term can be turned into a sort again by [Sort::evaluate()].
+    fn from(sort: Sort) -> Self {
+        let arguments = sort
+            .arguments
+            .into_iter()
+            .map(|arg| match arg {
+                SortArgument::Value(c) => Term::from(c),
+                SortArgument::Sort(s) => Term::from(s),
+            })
+            .collect();
+        TermKind::Atom(Atom::Bound(BoundAtom {
+            head: Reference {
+                function: sort.head,
+                span: None,
+            },
+            arguments,
+            span: None,
+        }))
+    }
+}
+
 impl Sort {
     /// Alias for `term.type_check(ctx)` which provide a slightly better notation.
-    pub fn of(term: &Term, ctx: Context) -> Result<Sort> {
-        term.type_check(ctx)
+    pub fn of(term: &Term) -> Result<Sort> {
+        term.type_check()
     }
 
     /// Compare two sorts semantically (i.e. excluding source spans).
@@ -165,15 +195,10 @@ impl Sort {
     ///
     /// The evaluation checks that all the functions used have range [Sort::sort()] and that the
     /// arguments are of the right kind (sort arguments or constants).
-    pub fn evaluate(term: &Term, ctx: Context) -> Result<Sort> {
-        let sort = Sort::of(term, ctx.clone())?;
+    pub fn evaluate(term: &Term) -> Result<Sort> {
+        let sort = Sort::of(term)?;
         if !Sort::equal(&sort, &Sort::sort()) {
-            error!(
-                &ctx,
-                term.span(),
-                "expected sort, found term of sort `{}`",
-                sort
-            );
+            error!(term.span(), "expected sort, found term of sort `{}`", sort);
             return Err(DiagnosticEmitted);
         }
 
@@ -181,19 +206,19 @@ impl Sort {
             head, arguments, ..
         })) = term.kind()
         else {
-            internal!(&ctx, term.span(), "sort term does not evaluate to a sort");
+            internal!(term.span(), "sort term does not evaluate to a sort");
             return Err(DiagnosticEmitted);
         };
 
         let mut evaluated = Vec::new();
         for (sort, arg) in zip(head.function.domain(), arguments) {
             if Sort::equal(&sort, &Sort::sort()) {
-                evaluated.push(SortArgument::Sort(Sort::evaluate(arg, ctx.clone())?))
+                evaluated.push(SortArgument::Sort(Sort::evaluate(arg)?))
             } else {
                 match arg.kind() {
                     TermKind::Constant(c) => evaluated.push(SortArgument::Value(c.clone())),
                     TermKind::Atom(_) => {
-                        error!(&ctx, arg.span(), "sort arguments must be constant terms");
+                        error!(arg.span(), "sort arguments must be constant terms");
                         return Err(DiagnosticEmitted);
                     }
                 }
@@ -246,15 +271,10 @@ impl Sort {
         }
     }
 
-    pub(crate) fn instantiate(
-        &self,
-        matches: &HashMap<Parameter, Sort>,
-        ctx: Context,
-    ) -> Result<Sort> {
+    pub(crate) fn instantiate(&self, matches: &HashMap<Parameter, Sort>) -> Result<Sort> {
         if let Function::Parameter(parameter) = &self.head {
             return matches.get(parameter).cloned().ok_or_else(|| {
                 internal!(
-                    &ctx,
                     None,
                     "usage of unconstrained sort parameter: {}",
                     parameter.name()
@@ -268,7 +288,7 @@ impl Sort {
             match arg {
                 SortArgument::Value(term) => arguments.push(SortArgument::Value(term.clone())),
                 SortArgument::Sort(sort) => {
-                    arguments.push(SortArgument::Sort(sort.instantiate(matches, ctx.clone())?))
+                    arguments.push(SortArgument::Sort(sort.instantiate(matches)?))
                 }
             }
         }

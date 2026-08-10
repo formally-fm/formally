@@ -75,14 +75,13 @@ pub use emitter::*;
 /// error stream.
 #[allow(clippy::large_enum_variant)]
 #[allow(private_interfaces)]
-#[derive(Contextual)]
 pub enum Interpreter {
     #[doc(hidden)]
-    Start(#[contextual] Config),
+    Start(Config),
     #[doc(hidden)]
-    Started(#[contextual] State),
+    Started(State),
     #[doc(hidden)]
-    Exited(#[contextual] Config),
+    Exited(Config),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -92,18 +91,15 @@ enum Mode {
     Unsat,
 }
 
-#[derive(Contextual)]
 struct State {
     mode: Mode,
-    #[contextual]
     config: Config,
-    #[contextual]
     solver: smt::Solver,
 }
 
 impl Default for Interpreter {
     fn default() -> Self {
-        Interpreter::Start(Config::default().with_emitter(SMTLibEmitter::new()))
+        Interpreter::Start(Config::default())
     }
 }
 
@@ -201,7 +197,6 @@ impl Interpreter {
 
     fn exited(&self, command: ast::Command) -> Result<()> {
         error!(
-            &self.context(),
             command.span(),
             "command `{}` is not available because the solver has exited",
             command.name()
@@ -211,7 +206,6 @@ impl Interpreter {
 
     fn fail(config: &Config, mode: RequiredMode, command: ast::Command) -> Result<()> {
         error!(
-            &config.context,
             command.span(),
             "the `{}` command is only available {}",
             command.name(),
@@ -229,7 +223,7 @@ impl Interpreter {
         match response.println(&mut io::stdout()) {
             Ok(_) => Ok(()),
             Err(err) => {
-                error!(&config.context, None, "input/output error: {err}");
+                error!(None, "input/output error: {err}");
                 Err(DiagnosticEmitted)
             }
         }
@@ -352,8 +346,8 @@ impl Interpreter {
     fn declare_sort(state: &mut State, decl: ast::DeclareSort) -> Result<()> {
         if decl.arity.value > 0 {
             error!(
-                &state.solver,
-                decl.arity.span, "parametric uninterpreted sorts are not supported yet"
+                decl.arity.span,
+                "parametric uninterpreted sorts are not supported yet"
             );
             return Err(DiagnosticEmitted);
         }
@@ -449,10 +443,8 @@ impl Interpreter {
                                     ))
                                 } else {
                                     error!(
-                                        &state.config.context,
                                         symbol.span(),
-                                        "no value for symbol `{}` in the model",
-                                        symbol
+                                        "no value for symbol `{}` in the model", symbol
                                     );
                                     return Err(DiagnosticEmitted);
                                 }
@@ -470,7 +462,7 @@ impl Interpreter {
                 Ok(())
             }
             None => {
-                error!(&state.config.context, cmd.span, "model not available");
+                error!(cmd.span, "model not available");
                 Err(DiagnosticEmitted)
             }
         }

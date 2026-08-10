@@ -31,6 +31,7 @@ use formally::{
     support::*,
 };
 
+use crate::type_check::TypeCheck;
 use derive_more::From;
 use std::{
     borrow::Cow,
@@ -67,13 +68,8 @@ use std::{
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Contextual)]
+#[derive(Debug)]
 pub struct Config {
-    /// The context of the new solver.
-    ///
-    /// By default, this is a newly constructed default [Context].
-    pub context: Context,
-
     /// The name of the logic to instantiate the solver for.
     ///
     /// A [None] value is the default, which means a logic is not selected and the solver will
@@ -88,7 +84,6 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            context: Context::new(),
             logic: None,
             produce_models: false,
         }
@@ -124,12 +119,9 @@ impl Config {
 /// It is therefore common, especially in backends, to keep around two `Scope<Function>` objects
 /// keeping track of the two namespaces. [Env] is a small utility to keep two scopes together and
 /// perform lookups in the right one as needed.
-#[derive(Default, Clone, Contextual)]
+#[derive(Default, Clone)]
 pub struct Env {
-    #[contextual]
     pub functions: Scope<Function>,
-
-    #[contextual]
     pub sorts: Scope<Function>,
 }
 
@@ -202,6 +194,24 @@ impl Default for TermManager {
     }
 }
 
+// Problemi
+//
+// Non riesco a trovare l'architettura giusta per l'hash-consing dei termini
+// - dovrei fare in modo che `Term` conosca il proprio `TermPool` ?
+//   - in questo caso comunque non potrei fare `TermKind -> Term` in maniera univoca perché costanti
+//     e atomi senza argomenti non sanno lo stesso in che `TermPool` andare
+// - dovrei lasciare che i `Term` si possano costruire liberamente con hash-consing opzionale?
+//   - in questo caso come dovrebbe comportarsi `TermPool` davanti ad un `Term`?
+//     - deep hash-consing costa troppo ma si può implementare opzionale
+//     - shallow hash-consing lascia la possibilità di usare pool diverse per diverse parti di un
+//       `Term`. È utile? Forse per il reclaim della memoria?
+//     - nella costruzione da term!(...) siamo deep per tutta la macro fino a quando vengono inclusi
+//       `Term` esterni
+//   - come dovrebbero comportarsi funzioni come `resolve()` che costruiscono termini nuovi?
+//     - l'ideale sarebbe fare l'hash-consing incrementalmente
+//     - posso parametrizzare `resolve()` con una lambda `TermKind -> Term` che può essere triviale
+//       oppure `TermPool.term()` a seconda delle necessità.
+
 impl TermManager {
     pub fn pool(&self) -> &TermPool {
         &*self.pool
@@ -240,14 +250,9 @@ impl TermManager {
 /// burden of keeping track of the names of the used entities.
 ///
 /// [Solver] implements [Stack] to provide the usual incremental interface of most SAT/SMT solvers.
-#[derive(Contextual)]
 pub struct Solver {
-    #[contextual]
     backend: Box<dyn backend::Solver>,
-
-    #[contextual]
     env: Env,
-
     manager: Rc<TermManager>,
 }
 
@@ -298,7 +303,8 @@ impl Solver {
     }
 
     pub fn resolve(&self, term: &Term, role: Role) -> Result<Term> {
-        self.env.resolve(&term, role, self.manager.pool())
+        self.env
+            .resolve(&term, role, |k| self.manager.pool().term(k))
     }
 
     /// Declare a function (or a constant, or a sort).
@@ -313,10 +319,9 @@ impl Solver {
     /// the special sort [Sort::sort()]. See also [Declaration::function()],
     /// [Declaration::constant()], and [Declaration::sort()] for details.
     pub fn declare(&mut self, decl: Declaration) -> Result<Declared> {
-        let decl = Declared::new(decl.validated(&self.env())?);
-        self.backend
-            .logic()
-            .check_function(&self.context(), &decl.clone().into())?;
+        decl.type_check()?;
+        let decl = Declared::new(decl);
+        self.backend.logic().check_function(&decl.clone().into())?;
 
         if Sort::equal(&decl.range, &Sort::sort()) {
             self.env.sorts.add(&decl.name, decl.clone().into());
@@ -340,17 +345,21 @@ impl Solver {
     /// the special sort [Sort::sort()]. See also [Definition::function()],
     /// [Definition::constant()], and [Definition::sort()] for details.
     pub fn define<T: ToTerm>(&mut self, def: Definition<T>) -> Result<Defined> {
+        let mut def = self.manager.definition(def);
+        
         let mut nested = Env::new().with_parent(self.env());
         for param in &def.domain {
+            param.sort().type_check()?;
             nested
                 .functions
                 .add(param.name(), Function::Parameter(param.clone()));
         }
+        
+        def.body = nested.resolve(&def.body, Role::Function, |k| self.manager.pool().term(k))?;
+        def.body.type_check()?;
 
-        let def = Defined::new(self.manager.definition(def).validated(&nested)?);
-        self.backend
-            .logic()
-            .check_function(&self.context(), &def.clone().into())?;
+        let def = Defined::new(def);
+        self.backend.logic().check_function(&def.clone().into())?;
 
         if Sort::equal(&def.range, &Sort::sort()) {
             self.env.sorts.add(&def.name, def.clone().into());
@@ -368,25 +377,16 @@ impl Solver {
     /// sort [Core::Bool()](theories::Core::Bool()).
     pub fn require<T: ToTerm>(&mut self, term: T) -> Result<()> {
         let term = self.resolve(&self.manager.term(term), Role::Function)?;
-        self.backend.logic().check_term(&self.context(), &term)?;
-        let sort = Sort::of(&term, self.context())?;
+        self.backend.logic().check_term(&term)?;
+        let sort = Sort::of(&term)?;
 
         if !Sort::equal(&sort, &theories::Core::Bool()) {
-            error!(
-                &self.context(),
-                term.span(),
-                "can only assert Boolean terms"
-            );
-            note!(
-                &self.context(),
-                term.span(),
-                "asserted term is of sort `{}`",
-                sort
-            );
+            error!(term.span(), "can only assert Boolean terms");
+            note!(term.span(), "asserted term is of sort `{}`", sort);
             return Err(DiagnosticEmitted);
         }
 
-        let term = self.manager.manager.import(&term, self.context())?;
+        let term = self.manager.manager.import(&term)?;
 
         self.backend.require(term)?;
 

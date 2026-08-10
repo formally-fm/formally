@@ -180,7 +180,7 @@ pub trait Diagnosable: Display + Located {
 
 impl<T: Diagnosable> Emit for T {
     fn emit(&self) -> DiagnosticEmitted {
-        Diagnostic::new(self.span(), self).emit(self.level());
+        Diagnostic::emitter().emit(self.level(), Diagnostic::new(self.span(), self));
         self.notes()
     }
 }
@@ -269,8 +269,8 @@ impl<E: Deref<Target: Emitter>> Emitter for Mutex<E> {
     }
 }
 
-pub struct DefaultGlobalEmitter;
-pub struct GlobalEmitter;
+struct DefaultGlobalEmitter;
+struct GlobalEmitter;
 
 impl Emitter for DefaultGlobalEmitter {
     fn emit(&self, level: Level, diag: Diagnostic) {
@@ -320,12 +320,16 @@ impl Diagnostic {
         }
     }
 
-    pub fn default_global_emitter() -> Arc<dyn Emitter> {
-        DEFAULT_GLOBAL_EMITTER.lock().unwrap().clone()
+    pub fn default_global_emitter() -> &'static dyn Emitter {
+        &DefaultGlobalEmitter
     }
 
-    pub fn set_default_global_emitter(emitter: Arc<dyn Send + Sync + Emitter>) {
-        *DEFAULT_GLOBAL_EMITTER.lock().unwrap() = emitter;
+    pub fn set_default_global_emitter(emitter: impl 'static + Send + Sync + Emitter) {
+        *DEFAULT_GLOBAL_EMITTER.lock().unwrap() = Arc::new(emitter);
+    }
+
+    pub fn emitter() -> &'static dyn Emitter {
+        &GlobalEmitter
     }
 
     pub fn with<E, F, R>(emitter: E, f: F) -> R
@@ -344,10 +348,6 @@ impl Diagnostic {
             Ok(v) => v,
             Err(e) => std::panic::resume_unwind(e),
         }
-    }
-
-    pub fn emit(self, level: Level) {
-        GLOBAL_EMITTER.with_borrow(|e| e.emit(level, self))
     }
 }
 
@@ -489,44 +489,29 @@ impl Emitter for StdErrEmitter {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! diagnose {
-    ($emitter:expr, $ty:ident::$level:ident, $arg:literal) => {
+    ($ty:ident::$level:ident, $emitter:expr, $span:expr, $arg:literal) => {
         $crate::diagnose!(
-            impl $emitter, $ty, $level, None, format!($arg)
+            impl $ty, $level, $emitter, $span.clone().into(), format!($arg)
         )
     };
-    ($emitter:expr, $ty:ident::$level:ident, $arg:expr) => {
+    ($ty:ident::$level:ident, $emitter:expr, $span:expr, $arg:expr) => {
         $crate::diagnose!(
-            impl $emitter, $ty, $level, None, $arg
+            impl $ty, $level, $emitter, $span.clone().into(), $arg
         )
     };
-    ($emitter:expr, $ty:ident::$level:ident, $span:expr, $arg:literal) => {
+    ($ty:ident::$level:ident, $emitter:expr, $span:expr, $($args:tt)+) => {
         $crate::diagnose!(
-            impl $emitter, $ty, $level, $span.clone().into(), format!($arg)
+            impl $ty, $level, $emitter, $span.clone().into(), format!($($args)*)
         )
     };
-    ($emitter:expr, $ty:ident::$level:ident, $span:expr, $arg:expr) => {
-        $crate::diagnose!(
-            impl $emitter, $ty, $level, $span.clone().into(), $arg
-        )
-    };
-    ($emitter:expr, $ty:ident::$level:ident, $span:expr, $($args:tt)+) => {
-        $crate::diagnose!(
-            impl $emitter, $ty, $level, $span.clone().into(), format!($($args)*)
-        )
-    };
-    ($emitter:expr, $ty:ident::$level:ident, $($args:tt)+) => {
-        $crate::diagnose!(
-            impl $emitter, $ty, $level, None, format!($($args)*)
-        )
-    };
-    (impl $emitter:expr, NoteKind, $level:ident, $span:expr, $arg:expr) => {
+    (impl NoteKind, $level:ident, $emitter:expr, $span:expr, $arg:expr) => {
         $crate::Emitter::note(
             $emitter,
             $crate::NoteKind::$level,
             $crate::Diagnostic::new($span, $arg),
         )
     };
-    (impl $emitter:expr, Level, $level:ident, $span:expr, $arg:expr) => {
+    (impl Level, $level:ident, $emitter:expr, $span:expr, $arg:expr) => {
         $crate::Emitter::emit(
             $emitter,
             $crate::Level::$level,
@@ -553,10 +538,7 @@ macro_rules! diagnose {
 #[macro_export]
 macro_rules! note {
     ($($args:tt)+) => {
-        $crate::diagnose!(&GlobalEmitter, NoteKind::Note, $($args)*)
-    };
-    ($emitter:expr, $($args:tt)+) => {
-        $crate::diagnose!($emitter, NoteKind::Note, $($args)*)
+        $crate::diagnose!(NoteKind::Note, $crate::Diagnostic::emitter(), $($args)*)
     };
 }
 
@@ -586,10 +568,7 @@ macro_rules! note {
 #[macro_export]
 macro_rules! trace {
     ($($args:tt)+) => {
-        $crate::diagnose!(&GlobalEmitter, NoteKind::Trace, $($args)*)
-    };
-    ($emitter:expr, $($args:tt)+) => {
-        $crate::diagnose!($emitter, NoteKind::Trace, $($args)*)
+        $crate::diagnose!(NoteKind::Trace, $crate::Diagnostic::emitter(), $($args)*)
     };
 }
 
@@ -605,10 +584,7 @@ macro_rules! trace {
 #[macro_export]
 macro_rules! internal {
     ($($args:tt)+) => {
-        $crate::diagnose!(&GlobalEmitter, Level::Internal, $($args)*)
-    };
-    ($emitter:expr, $($args:tt)+) => {
-        $crate::diagnose!($emitter, Level::Internal, $($args)*)
+        $crate::diagnose!(Level::Internal, $crate::Diagnostic::emitter(), $($args)*)
     };
 }
 
@@ -625,10 +601,7 @@ macro_rules! internal {
 #[macro_export]
 macro_rules! error {
     ($($args:tt)+) => {
-        $crate::diagnose!(&GlobalEmitter, Level::Error, $($args)*)
-    };
-    ($emitter:expr, $($args:tt)+) => {
-        $crate::diagnose!($emitter, Level::Error, $($args)*)
+        $crate::diagnose!(Level::Error, $crate::Diagnostic::emitter(), $($args)*)
     };
 }
 
@@ -648,10 +621,7 @@ macro_rules! error {
 #[macro_export]
 macro_rules! warning {
     ($($args:tt)+) => {
-        $crate::diagnose!(&GlobalEmitter, Level::Warning, $($args)*)
-    };
-    ($emitter:expr, $($args:tt)+) => {
-        $crate::diagnose!($emitter, Level::Warning, $($args)*)
+        $crate::diagnose!(Level::Warning, $crate::Diagnostic::emitter(), $($args)*)
     };
 }
 
@@ -672,9 +642,6 @@ macro_rules! warning {
 #[macro_export]
 macro_rules! debug {
     ($($args:tt)+) => {
-        $crate::diagnose!(&GlobalEmitter, Level::Debug, $($args)*)
-    };
-    ($emitter:expr, $($args:tt)+) => {
-        $crate::diagnose!($emitter, Level::Debug, $($args)*)
+        $crate::diagnose!(Level::Debug, $crate::Diagnostic::emitter(), $($args)*)
     };
 }

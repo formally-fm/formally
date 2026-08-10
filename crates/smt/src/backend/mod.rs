@@ -162,7 +162,7 @@ pub mod z3;
 use crate::formally;
 use formally::{
     smt::{self, Config, Declared, Defined, ModelProvider, TermPool, logics},
-    support::{Context, Contextual, Diagnosable, Identifier, Level, Located, Span},
+    support::{Diagnosable, Identifier, Level, Located, Span},
 };
 use std::{error::Error, fmt::Debug, fmt::Formatter, io, rc::Rc};
 
@@ -173,11 +173,9 @@ use thiserror::Error;
 ///
 /// This error type is [Diagnosable] so it is emitted as a diagnostic when converted to
 /// [DiagnosticEmitted](formally::support::DiagnosticEmitted) (e.g. via the `?` operator).
-#[derive(Debug, Display, Error, Contextual)]
+#[derive(Debug, Display, Error)]
 #[display("SMT backend `{backend}`: {kind}")]
 pub struct BackendError {
-    /// The context.
-    pub context: Context,
     /// Which error occurred.
     pub kind: Box<BackendErrorKind>,
     /// The name of the backend that generated the error.
@@ -185,11 +183,10 @@ pub struct BackendError {
 }
 
 impl BackendError {
-    pub fn new(instance: &dyn Solver, kind: BackendErrorKind) -> BackendError {
+    pub fn new(backend: &str, kind: BackendErrorKind) -> BackendError {
         BackendError {
-            context: instance.context(),
             kind: Box::new(kind),
-            backend: instance.backend().name().to_string(),
+            backend: backend.into(),
         }
     }
 }
@@ -279,14 +276,9 @@ pub trait Manager {
     /// backend.
     fn backend(&self) -> &dyn Backend;
 
-    fn import(&self, term: &smt::Term, ctx: Context) -> Result<&dyn Term, BackendError>;
+    fn import(&self, term: &smt::Term) -> Result<&dyn Term, BackendError>;
 
-    fn export(
-        &self,
-        term: &dyn Term,
-        pool: &TermPool,
-        ctx: Context,
-    ) -> Result<smt::Term, BackendError>;
+    fn export(&self, term: &dyn Term, pool: &TermPool) -> Result<smt::Term, BackendError>;
 }
 
 /// The trait for instances of SMT backends.
@@ -297,7 +289,7 @@ pub trait Manager {
 /// the method can assume to hold when the backend is used through a [Solver].
 ///
 /// However, please read before the documentation on [how to write a new backend](backend).
-pub trait Solver: Contextual {
+pub trait Solver {
     fn manager(&self) -> &dyn Manager;
 
     /// Return the backend this instance is an instance of.

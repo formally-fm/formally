@@ -23,12 +23,10 @@
 //
 
 use derive_more::From;
-use std::rc::Rc;
 use std::{
     fmt::{Debug, Formatter},
     hash::{Hash, Hasher},
     ops::Deref,
-    rc, sync,
 };
 
 /// Smart pointer wrapper for identity-based equality comparisons and hashing
@@ -91,67 +89,8 @@ impl<T> Deref for Nominal<T> {
     }
 }
 
-#[derive(Clone)]
-pub struct Comparable<T>(pub T);
-
-impl<T: Debug> Debug for Nominal<Comparable<rc::Weak<T>>> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self.0.0.upgrade() {
-            Some(rc) => Debug::fmt(&rc, f),
-            None => write!(f, "(expired weak pointer)"),
-        }
-    }
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub enum MaybeNominal<T: Deref> {
+    Structural(T),
+    Nominal(Nominal<T>),
 }
-
-impl<T> Hash for Nominal<Comparable<rc::Weak<T>>> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        if let Some(rc) = self.0.0.upgrade() {
-            Nominal(rc).hash(state)
-        } else {
-            0.hash(state)
-        }
-    }
-}
-
-impl<T> PartialEq for Nominal<Comparable<rc::Weak<T>>> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self.0.0.upgrade(), other.0.0.upgrade()) {
-            (Some(rc1), Some(rc2)) => Nominal(rc1) == Nominal(rc2),
-            (None, None) => true,
-            _ => false,
-        }
-    }
-}
-
-impl<T> Eq for Nominal<Comparable<rc::Weak<T>>> {}
-
-impl<T: Debug> Debug for Nominal<Comparable<sync::Weak<T>>> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self.0.0.upgrade() {
-            Some(arc) => Debug::fmt(&arc, f),
-            None => write!(f, "(expired weak pointer)"),
-        }
-    }
-}
-
-impl<T> Hash for Nominal<Comparable<sync::Weak<T>>> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        if let Some(arc) = self.0.0.upgrade() {
-            Nominal(arc).hash(state)
-        } else {
-            0.hash(state)
-        }
-    }
-}
-
-impl<T> PartialEq for Nominal<Comparable<sync::Weak<T>>> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self.0.0.upgrade(), other.0.0.upgrade()) {
-            (Some(arc1), Some(arc2)) => Nominal(arc1) == Nominal(arc2),
-            (None, None) => true,
-            _ => false,
-        }
-    }
-}
-
-impl<T> Eq for Nominal<Comparable<sync::Weak<T>>> {}

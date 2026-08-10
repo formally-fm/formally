@@ -502,7 +502,7 @@ impl<'b, 'o, 'e, 'p> State<'b, 'o, 'e, 'p> {
         State {
             origin,
             view: View::new(buffer),
-            emitter: BatchEmitter::new(&*Diagnostic::emitter()),
+            emitter: BatchEmitter::new(Diagnostic::emitter()),
             skip: ascii_whitespace().ignore(),
             parent: None,
         }

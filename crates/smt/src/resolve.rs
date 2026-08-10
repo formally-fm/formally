@@ -25,6 +25,7 @@
 use crate::*;
 use formally::support::*;
 
+use std::panic::AssertUnwindSafe;
 use std::{collections::HashMap, iter::zip};
 
 impl Env {
@@ -44,24 +45,29 @@ impl Env {
     /// before type checking, because type checking of unbound atoms is not possible. This seems
     /// to require double the calls to [Term::type_check()], but the latter caches its results in
     /// `env.context()`, so each subterm gets type-checked only once anyway.
-    pub fn resolve(&self, term: &Term, role: Role, pool: &TermPool) -> Result<Term> {
+    pub fn resolve<C>(&self, term: &Term, role: Role, ctor: C) -> Result<Term>
+    where
+        C: Fn(TermKind) -> Term,
+    {
         Ok(match term.kind() {
             TermKind::Constant(_) => term.clone(),
-            TermKind::Atom(Atom::Bound(atom)) => {
-                pool.term(&TermKind::Atom(Atom::Bound(self.resolve_bound(atom, pool)?)))
-            }
-            TermKind::Atom(Atom::Unbound(unbound)) => {
-                pool.term(&TermKind::Atom(Atom::Bound(self.resolve_unbound(unbound, role, pool)?)))
-            }
+            TermKind::Atom(Atom::Bound(atom)) => ctor(TermKind::Atom(Atom::Bound(
+                self.resolve_bound(atom, &ctor)?,
+            ))),
+            TermKind::Atom(Atom::Unbound(unbound)) => ctor(TermKind::Atom(Atom::Bound(
+                self.resolve_unbound(unbound, role, &ctor)?,
+            ))),
         })
     }
 
-    fn resolve_bound(&self, atom: &BoundAtom, pool: &TermPool) -> Result<BoundAtom> {
+    fn resolve_bound<C>(&self, atom: &BoundAtom, ctor: &C) -> Result<BoundAtom>
+    where
+        C: Fn(TermKind) -> Term,
+    {
         let domain = atom.domain();
 
         if domain.len() != atom.arguments.len() {
             error!(
-                &self.context(),
                 atom.span(),
                 "applied {} arguments to a function of {} parameters",
                 atom.arguments.len(),
@@ -73,9 +79,9 @@ impl Env {
         let mut resolved = Vec::new();
         for (sort, arg) in zip(domain, &atom.arguments) {
             if Sort::equal(&sort, &Sort::sort()) {
-                resolved.push(self.resolve(arg, Role::Sort, pool)?);
+                resolved.push(self.resolve(arg, Role::Sort, ctor)?);
             } else {
-                resolved.push(self.resolve(arg, Role::Function, pool)?);
+                resolved.push(self.resolve(arg, Role::Function, ctor)?);
             }
         }
 
@@ -86,7 +92,10 @@ impl Env {
         })
     }
 
-    fn resolve_unbound(&self, unbound: &UnboundAtom, role: Role, pool: &TermPool) -> Result<BoundAtom> {
+    fn resolve_unbound<C>(&self, unbound: &UnboundAtom, role: Role, ctor: &C) -> Result<BoundAtom>
+    where
+        C: Fn(TermKind) -> Term,
+    {
         let head = Identifier::from(unbound.head.name()).over(unbound.head.span());
 
         self.lookup(head.clone(), role)
@@ -99,12 +108,15 @@ impl Env {
                     arguments: unbound.arguments.clone(),
                     span: unbound.span(),
                 };
-                let silent = self.clone().with_emitter(NullEmitter);
-                let atom = silent.resolve_bound(&atom, pool).ok()?;
+                let atom = Diagnostic::with(
+                    NullEmitter,
+                    AssertUnwindSafe(|| self.resolve_bound(&atom, ctor)),
+                )
+                .ok()?;
 
                 let mut arguments = Vec::new();
                 for arg in &atom.arguments {
-                    arguments.push(Sort::of(arg, self.context()).ok()?);
+                    arguments.push(Sort::of(arg).ok()?);
                 }
 
                 let mut matches = HashMap::new();

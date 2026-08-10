@@ -28,7 +28,7 @@ use formally::{
         Config,
         smtlib::{ast, interpreter::*},
     },
-    support::{Contextual, DiagnosticEmitted},
+    support::{Diagnostic, DiagnosticEmitted},
 };
 
 use std::{path::*, process::ExitCode};
@@ -64,23 +64,22 @@ fn main() -> ExitCode {
 }
 
 fn solve(filename: PathBuf) -> Result<(), DiagnosticEmitted> {
-    let emitter = SMTLibEmitter::new();
+    Diagnostic::with(SMTLibEmitter::new(), || {
+        let ast::Script { commands, .. } = match ast::Script::parser().parse(filename) {
+            Ok(script) => script,
+            Err(_) => return Err(DiagnosticEmitted),
+        };
 
-    let ast::Script { commands, .. } = match ast::Script::parser().parse(&emitter, filename) {
-        Ok(script) => script,
-        Err(_) => return Err(DiagnosticEmitted),
-    };
+        let mut interpreter = Interpreter::new(Config::default());
 
-    let config = Config::new().with_emitter(emitter);
-    let mut interpreter = Interpreter::new(config);
+        for cmd in commands {
+            interpreter.command(cmd).ok();
 
-    for cmd in commands {
-        interpreter.command(cmd).ok();
-
-        if interpreter.has_exited() {
-            break;
+            if interpreter.has_exited() {
+                break;
+            }
         }
-    }
 
-    Ok(())
+        Ok(())    
+    })    
 }

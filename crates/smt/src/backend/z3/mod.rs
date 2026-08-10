@@ -31,10 +31,7 @@ mod bindings;
 use bindings as z3;
 
 use crate::formally;
-use formally::{
-    smt::{backend::*, logics::*, theories::SortConstructor},
-    support::{Context, Contextual},
-};
+use formally::smt::{backend::*, logics::*, theories::SortConstructor, *};
 
 use itertools::Itertools;
 use std::{collections::HashMap, iter::zip, rc::Rc, sync::LazyLock};
@@ -47,9 +44,7 @@ use z3_sys::AstKind;
 #[derive(Clone, Copy, Default)]
 pub struct Z3;
 
-#[derive(Contextual)]
 struct Z3Instance {
-    context: Context,
     logic: &'static dyn Logic,
     z3context: Rc<z3::Context>,
     z3solver: z3::Solver,

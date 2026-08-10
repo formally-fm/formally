@@ -23,13 +23,11 @@
 //
 
 use crate::formally;
-use formally::{
-    smt::*,
-    support::{Comparable, Context, Contextual, Nominal},
-};
-use std::sync::{Arc, Mutex};
+use formally::{smt::*, support::Nominal};
+use std::sync::Arc;
 
 use dashmap::DashSet;
+use formally_support::MaybeNominal;
 
 #[derive(Debug, Default)]
 pub struct TermPool {
@@ -41,7 +39,7 @@ impl TermPool {
         TermPool::default()
     }
 
-    pub fn term(self: &TermPool, t: impl ToTerm) -> Term {
+    pub fn term(&self, t: impl ToTerm) -> Term {
         t.to_term(self)
     }
 }
@@ -51,24 +49,30 @@ pub trait ToTerm {
 }
 
 impl ToTerm for Term {
-    fn to_term(self, _: &TermPool) -> Term {
-        self
+    fn to_term(self, pool: &TermPool) -> Term {
+        match self.0 {
+            MaybeNominal::Structural(k) => pool.term(&*k),
+            MaybeNominal::Nominal(_) => self,
+        }
     }
 }
 
 impl ToTerm for &Term {
-    fn to_term(self, _: &TermPool) -> Term {
-        self.clone()
+    fn to_term(self, pool: &TermPool) -> Term {
+        match &self.0 {
+            MaybeNominal::Structural(k) => pool.term(&**k),
+            MaybeNominal::Nominal(_) => self.clone(),
+        }
     }
 }
 
 impl ToTerm for &TermKind {
     fn to_term(self, pool: &TermPool) -> Term {
         if let Some(kind) = pool.terms.get(self) {
-            Term(Nominal(kind.clone()))
+            Term(MaybeNominal::Nominal(Nominal(kind.clone())))
         } else {
             let arc = Arc::new(self.clone());
-            let term = Term(Nominal(arc.clone()));
+            let term = Term(MaybeNominal::Nominal(Nominal(arc.clone())));
             pool.terms.insert(arc);
 
             term
@@ -79,10 +83,10 @@ impl ToTerm for &TermKind {
 impl ToTerm for TermKind {
     fn to_term(self, pool: &TermPool) -> Term {
         if let Some(kind) = pool.terms.get(&self) {
-            Term(Nominal(kind.clone()))
+            Term(MaybeNominal::Nominal(Nominal(kind.clone())))
         } else {
             let arc = Arc::new(self);
-            let term = Term(Nominal(arc.clone()));
+            let term = Term(MaybeNominal::Nominal(Nominal(arc.clone())));
             pool.terms.insert(arc);
 
             term

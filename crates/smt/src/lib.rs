@@ -329,7 +329,6 @@ mod solver;
 mod sort;
 mod term;
 mod type_check;
-mod validate;
 
 #[doc(hidden)]
 pub mod macros;
@@ -344,3 +343,4 @@ pub use pool::*;
 pub use solver::*;
 pub use sort::*;
 pub use term::*;
+pub use type_check::*;

@@ -27,14 +27,11 @@ use formally::support::*;
 
 use std::{collections::HashMap, iter::zip};
 
-struct TypeCheckCacheTag {}
-
-impl CacheTag for TypeCheckCacheTag {
-    type Key = Term;
-    type Value = Sort;
+pub trait TypeCheck {
+    fn type_check(&self) -> Result<Sort>;
 }
 
-impl Term {
+impl TypeCheck for Term {
     /// Deduce the sort of a term.
     ///
     /// Typing rules are straightforward:
@@ -58,25 +55,29 @@ impl Term {
     /// As advised in the documentation of [Term], caching is done by hashing the terms *nominally*,
     /// so two terms that compare equal but point to [TermKind] objects with different memory
     /// addresses will not share the cached result.
-    pub fn type_check(&self, ctx: Context) -> Result<Sort> {
-        let cache = ctx.cache::<TypeCheckCacheTag>();
-        if let Some(sort) = cache.get(self) {
-            return Ok(sort.clone());
-        }
-
+    fn type_check(&self) -> Result<Sort> {
         let sort = match self.kind() {
-            TermKind::Constant(cnst) => cnst.type_check(ctx.clone())?,
-            TermKind::Atom(atom) => atom.type_check(ctx.clone())?,
+            TermKind::Constant(cnst) => cnst.type_check()?,
+            TermKind::Atom(atom) => atom.type_check()?,
         };
-
-        cache.insert(self.clone(), sort.clone());
 
         Ok(sort)
     }
 }
 
-impl Constant {
-    fn type_check(&self, _ctx: Context) -> Result<Sort> {
+impl TypeCheck for TermKind {
+    fn type_check(&self) -> Result<Sort> {
+        let sort = match self {
+            TermKind::Constant(cnst) => cnst.type_check()?,
+            TermKind::Atom(atom) => atom.type_check()?,
+        };
+
+        Ok(sort)
+    }
+}
+
+impl TypeCheck for Constant {
+    fn type_check(&self) -> Result<Sort> {
         match self {
             Constant::Integer { .. } => Ok(theories::Ints::Int()),
             Constant::Rational { .. } => Ok(theories::Reals::Real()),
@@ -84,13 +85,12 @@ impl Constant {
     }
 }
 
-impl BoundAtom {
-    fn type_check(&self, ctx: Context) -> Result<Sort> {
+impl TypeCheck for BoundAtom {
+    fn type_check(&self) -> Result<Sort> {
         let domain = self.domain();
 
         if domain.len() != self.arguments.len() {
             error!(
-                &ctx,
                 self.head.span(),
                 "applied {} arguments to a function of {} parameters",
                 self.arguments.len(),
@@ -101,39 +101,20 @@ impl BoundAtom {
 
         let mut matches = HashMap::new();
         for (sort, arg) in zip(domain, &self.arguments) {
-            let argsort = Sort::of(arg, ctx.clone())?;
+            let argsort = Sort::of(arg)?;
 
             if !sort.matches_with(&argsort, &mut matches) {
                 error!(
-                    &ctx,
                     arg.span(),
-                    "argument of sort `{}` given to parameter of sort `{}`",
-                    argsort,
-                    sort
+                    "argument of sort `{}` given to parameter of sort `{}`", argsort, sort
                 );
                 return Err(DiagnosticEmitted);
             }
         }
 
-        let range = self.head.function.range().instantiate(&matches, ctx)?;
+        let range = self.head.function.range().instantiate(&matches)?;
 
         Ok(range)
-    }
-}
-
-impl UnboundAtom {
-    fn type_check(&self, ctx: Context) -> Result<Sort> {
-        internal!(&ctx, self.head.span(), "unresolved symbol `{}`", self.head);
-        Err(DiagnosticEmitted)
-    }
-}
-
-impl Atom {
-    fn type_check(&self, ctx: Context) -> Result<Sort> {
-        match self {
-            Atom::Bound(bound) => bound.type_check(ctx),
-            Atom::Unbound(unbound) => unbound.type_check(ctx),
-        }
     }
 }
 
@@ -155,5 +136,59 @@ impl BoundAtom {
             }
             _ => domain,
         }
+    }
+}
+
+impl TypeCheck for UnboundAtom {
+    fn type_check(&self) -> Result<Sort> {
+        internal!(self.head.span(), "unresolved symbol `{}`", self.head);
+        Err(DiagnosticEmitted)
+    }
+}
+
+impl TypeCheck for Atom {
+    fn type_check(&self) -> Result<Sort> {
+        match self {
+            Atom::Bound(bound) => bound.type_check(),
+            Atom::Unbound(unbound) => unbound.type_check(),
+        }
+    }
+}
+
+impl TypeCheck for Declaration {
+    /// Check the well-formedness of the sorts involved in the declaration.
+    ///
+    /// The returned [Declaration] is equal to `self`.
+    fn type_check(&self) -> Result<Sort> {
+        for sort in &self.domain {
+            sort.type_check()?;
+        }
+        self.range.type_check()?;
+
+        Ok(self.range.clone())
+    }
+}
+
+impl TypeCheck for Sort {
+    /// Check the well-formedness of the sort.
+    fn type_check(&self) -> Result<Sort> {
+        if !Sort::equal(self.head.range(), &Sort::sort()) {
+            error!(
+                self.head.span(),
+                "expected sort, found term of sort `{}`",
+                self.head.range()
+            );
+        }
+
+        for arg in &self.arguments {
+            match arg {
+                SortArgument::Value(_) => {}
+                SortArgument::Sort(s) => {
+                    s.type_check()?;
+                }
+            }
+        }
+
+        Ok(self.clone())
     }
 }

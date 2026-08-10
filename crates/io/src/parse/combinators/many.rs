@@ -136,7 +136,8 @@ pub trait Many<'c, Out: 'c>: Parse<'c, Out> {
             }
 
             if found < min {
-                error!(
+                diagnose!(
+                    Level::Error,
                     state,
                     elapsed,
                     SyntaxIssue::ManyButNotEnough {

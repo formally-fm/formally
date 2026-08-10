@@ -37,7 +37,6 @@
 
 extern crate proc_macro;
 
-mod contextual;
 mod locatable;
 mod located;
 
@@ -97,33 +96,4 @@ pub fn derive_located(item: TokenStream) -> TokenStream {
 #[proc_macro_derive(Locatable)]
 pub fn derive_locatable(item: TokenStream) -> TokenStream {
     locatable::derive(item)
-}
-
-/// Procedural macro to derive the `Contextual` trait.
-///
-/// To derive `Contextual`, a `struct` must contain at least one field of type `Context`
-/// called `context` (or marked by the attribute `#[context]` in tuple structs), or one or more
-/// fields of a type implementing `Contextual` and marked by the attribute `#[contextual]`. The
-/// implementation of `context()` will be extracted from `context`, if present, or from the first
-/// `#[contextual]` field. The implementation of `set_context()` will set the context both to
-/// `context`, if present, and to all the `#[contextual]` fields.
-///
-/// In an `enum`, the same applies to each variant.
-///
-/// Example:
-/// ```
-/// # mod formally {
-/// #     pub use formally_support as support;
-/// # }
-/// # use formally::support::*;
-/// #
-/// #[derive(Contextual)]
-/// enum Tree {
-///     Leaf(i32, #[context] Context),
-///     Node(#[contextual] Box<Tree>, #[contextual] Box<Tree>)
-/// }
-/// ```
-#[proc_macro_derive(Contextual, attributes(context, contextual))]
-pub fn derive_contextual(item: TokenStream) -> TokenStream {
-    contextual::derive(item)
 }

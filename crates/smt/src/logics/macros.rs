@@ -114,27 +114,19 @@ macro_rules! logic_impl {
             }
 
             #[allow(unused_variables)]
-            fn check_term(
-                &self,
-                context: &formally::support::Context,
-                term: &$crate::Term
-            ) -> formally::support::Result<()> {
-                $( $reqs::check_term(self, context, term)?; )*
+            fn check_term(&self, term: &$crate::Term) -> formally::support::Result<()> {
+                $( $reqs::check_term(self, term)?; )*
 
                 Ok(())
             }
 
             #[allow(unused_variables)]
-            fn check_function(
-                &self,
-                context: &formally::support::Context,
-                func: &$crate::UserFunction
-            ) -> formally::support::Result<()> {
-                $( $reqs::check_function(self, context, func)?; )*
+            fn check_function(&self, func: &$crate::UserFunction) -> formally::support::Result<()> {
+                $( $reqs::check_function(self, func)?; )*
 
                 match func {
                     $crate::UserFunction::Defined(def) => {
-                        self.check_term(context, &def.body)
+                        self.check_term(&def.body)
                     }
                     _ => Ok(()),
                 }

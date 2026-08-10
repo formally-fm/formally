@@ -49,7 +49,8 @@ pub mod requirements;
 
 pub use standard::*;
 
-use crate::*;
+use crate::formally;
+use formally::smt::*;
 use formally::support::*;
 
 use linkme::distributed_slice;
@@ -66,10 +67,10 @@ pub trait Logic {
     fn theory(&self) -> &dyn theories::Theory;
 
     /// Check the syntactic requirements of this logic on terms.
-    fn check_term(&self, context: &Context, term: &Term) -> Result<()>;
+    fn check_term(&self, term: &Term) -> Result<()>;
 
     /// Check the requirements of this logic on the functions added to the current signature.
-    fn check_function(&self, context: &Context, func: &UserFunction) -> Result<()>;
+    fn check_function(&self, func: &UserFunction) -> Result<()>;
 }
 
 #[distributed_slice]
