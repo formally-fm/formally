@@ -136,6 +136,42 @@ impl ToTerm for Sort {
     }
 }
 
+impl ToTerm for Declared {
+    fn to_term(self, pool: &TermPool) -> Term {
+        pool.term(TermKind::from(self))
+    }
+}
+
+impl ToTerm for &Declared {
+    fn to_term(self, pool: &TermPool) -> Term {
+        pool.term(TermKind::from(self.clone()))
+    }
+}
+
+impl ToTerm for Defined {
+    fn to_term(self, pool: &TermPool) -> Term {
+        pool.term(TermKind::from(self))
+    }
+}
+
+impl ToTerm for &Defined {
+    fn to_term(self, pool: &TermPool) -> Term {
+        pool.term(TermKind::from(self.clone()))
+    }
+}
+
+impl ToTerm for Primitive {
+    fn to_term(self, pool: &TermPool) -> Term {
+        pool.term(TermKind::from(self))
+    }
+}
+
+impl ToTerm for &Primitive {
+    fn to_term(self, pool: &TermPool) -> Term {
+        pool.term(TermKind::from(self.clone()))
+    }
+}
+
 impl ToTerm for &macros::Term<'_> {
     fn to_term(self, pool: &TermPool) -> Term {
         match self {
