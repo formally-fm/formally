@@ -67,6 +67,54 @@ theory! {
     }
 }
 
+theories! {
+    /// The core SMT-LIBv2 theory, with basic Boolean connectives.
+    ///
+    /// See [the official specification](https://smt-lib.org/theories-Core.shtml).
+    pub Core2 {
+        /// The sort of Boolean terms.
+        type Bool;
+
+        /// The true constant.
+        const True: Core::Bool();
+
+        /// The false constant.
+        const False: Core::Bool();
+
+        /// Logical negation.
+        fn not(Core::Bool()) -> Core::Bool();
+
+        /// Logical implication.
+        #[name = "=>"]
+        #[right_assoc]
+        fn implies(Core::Bool(), Core::Bool()) -> Core::Bool();
+
+        /// Logical conjunction.
+        #[left_assoc]
+        fn and(Core::Bool(), Core::Bool()) -> Core::Bool();
+
+        /// Logical disjunction.
+        #[left_assoc]
+        fn or(Core::Bool(), Core::Bool()) -> Core::Bool();
+
+        /// Logical exclusive disjunction.
+        #[left_assoc]
+        fn xor(Core::Bool(), Core::Bool()) -> Core::Bool();
+
+        /// Equality.
+        #[name = "="]
+        #[chainable]
+        fn equals<A>(A, A) -> Core::Bool();
+
+        /// Disequality.
+        #[pairwise]
+        fn distinct<A>(A, A) -> Core::Bool();
+
+        /// If-then-else choice construct.
+        fn ite<A>(Core::Bool(), A, A) -> A;
+    }
+}
+
 theory! {
     /// The theory of reals.
     ///
