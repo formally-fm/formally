@@ -47,13 +47,13 @@ pub enum AtomHead {
     Unbound(UnboundHead),
 }
 
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Atom<'t> {
     pub head: AtomHead,
-    pub arguments: &'t mut [Term<'t>],
+    pub arguments: &'t [Term<'t>],
 }
 
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum Term<'t> {
     Term(term::Term),
     Constant(Constant),

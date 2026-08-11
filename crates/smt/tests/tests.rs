@@ -34,7 +34,8 @@ use formally::{
 
 #[test]
 fn term_macro() -> Result<()> {
-    let mut solver = Solver::new(&Config::new().backend(Z3))?;
+    let manager = TermManager::new(Z3);
+    let mut solver = Solver::new_with_manager(&Config::new(), manager)?;
 
     let p = solver.declare(Declaration::constant("p", theories::Core::Bool()))?;
     solver.declare(Declaration::constant("q", theories::Core::Bool()))?;

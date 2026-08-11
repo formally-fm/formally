@@ -230,6 +230,11 @@ pub enum TermKind {
 #[transitive(from(Atom, TermKind))]
 #[transitive(from(BoundAtom, Atom, TermKind))]
 #[transitive(from(UnboundAtom, Atom, TermKind))]
+#[transitive(from(Identifier<'_>, TermKind, Term))]
+#[transitive(from(Function, TermKind, Term))]
+#[transitive(from(Primitive, TermKind, Term))]
+#[transitive(from(Declared, TermKind, Term))]
+#[transitive(from(Defined, TermKind, Term))]
 pub struct Term(pub(crate) MaybeNominal<Arc<TermKind>>);
 
 impl Term {

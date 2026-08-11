@@ -68,7 +68,7 @@ use std::{
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Config {
     /// The name of the logic to instantiate the solver for.
     ///
@@ -79,15 +79,6 @@ pub struct Config {
     /// Whether the solver has to activate the machinery for generating models for satisfiable
     /// instances.
     pub produce_models: bool,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            logic: None,
-            produce_models: false,
-        }
-    }
 }
 
 impl Config {
@@ -181,13 +172,13 @@ impl Debug for TermManager {
 
 impl Default for TermManager {
     fn default() -> Self {
-        TermManager::new(&Z3)
+        TermManager::new(Z3)
     }
 }
 
 
 impl TermManager {
-    pub fn new(backend: &dyn Backend) -> TermManager {
+    pub fn new(backend: impl Backend) -> TermManager {
         TermManager {
             manager: Rc::from(backend.manager()),
             pool: Rc::new(TermPool::new()),
@@ -254,7 +245,7 @@ impl Solver {
         })
     }
 
-    pub fn new_with_backend(config: &Config, backend: &dyn Backend) -> Result<Solver> {
+    pub fn new_with_backend(config: &Config, backend: impl Backend) -> Result<Solver> {
         Solver::new_with_manager(config, TermManager::new(backend))
     }
 

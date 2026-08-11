@@ -136,14 +136,14 @@ impl ToTerm for Sort {
     }
 }
 
-impl ToTerm for &mut macros::Term<'_> {
+impl ToTerm for &macros::Term<'_> {
     fn to_term(self, pool: &TermPool) -> Term {
-        match std::mem::take(self) {
-            macros::Term::Term(t) => t,
+        match self {
+            macros::Term::Term(t) => t.clone(),
             macros::Term::Constant(c) => {
                 let c = match c {
                     macros::Constant::Integer { value } => Constant::Integer {
-                        value: Integer::from(value),
+                        value: Integer::from(*value),
                         span: None,
                     },
                     macros::Constant::Rational { value } => Constant::Rational {
@@ -153,21 +153,21 @@ impl ToTerm for &mut macros::Term<'_> {
                 };
                 pool.term(TermKind::Constant(c))
             }
-            macros::Term::Atom(a) => match a.head {
+            macros::Term::Atom(a) => match &a.head {
                 macros::AtomHead::Bound(macros::BoundHead { function }) => {
                     pool.term(TermKind::Atom(Atom::Bound(BoundAtom {
                         head: Reference {
-                            function,
+                            function: function.clone(),
                             span: None,
                         },
-                        arguments: a.arguments.into_iter().map(|t| pool.term(t)).collect(),
+                        arguments: a.arguments.iter().map(|t| pool.term(t)).collect(),
                         span: None,
                     })))
                 }
                 macros::AtomHead::Unbound(macros::UnboundHead { name }) => {
                     pool.term(TermKind::Atom(Atom::Unbound(UnboundAtom {
-                        head: name,
-                        arguments: a.arguments.into_iter().map(|t| pool.term(t)).collect(),
+                        head: name.clone(),
+                        arguments: a.arguments.iter().map(|t| pool.term(t)).collect(),
                         span: None,
                     })))
                 }
