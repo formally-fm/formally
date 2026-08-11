@@ -54,7 +54,6 @@
 use crate::*;
 use formally::support::*;
 
-mod macros;
 mod standard;
 
 pub use standard::*;

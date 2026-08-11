@@ -39,13 +39,13 @@ struct Theory {
     visibility: syn::Visibility,
     ident: syn::Ident,
     extended: ExtendedTheoriesClause,
-    brace_token: syn::token::Brace,
+    _brace_token: syn::token::Brace,
     decls: Vec<Attributed<Decl>>,
 }
 
 #[derive(Default)]
 struct ExtendedTheoriesClause {
-    colon_token: Option<Token![:]>,
+    _colon_token: Option<Token![:]>,
     extended: Punctuated<syn::Type, Token![,]>,
 }
 
@@ -72,42 +72,44 @@ enum Decl {
 
 #[derive(Clone)]
 struct Sort {
-    type_token: Token![type],
+    _type_token: Token![type],
     ident: syn::Ident,
-    semi_token: Token![;],
+    paren: Option<syn::token::Paren>,
+    params: Punctuated<SortParam, Token![,]>,
+    _semi_token: Token![;],
+}
+
+#[derive(Clone)]
+struct SortParam {
+    name: syn::Ident,
+    _colon_token: Token![:],
+    sort: syn::Expr,
 }
 
 struct Const {
-    const_token: Token![const],
+    _const_token: Token![const],
     ident: syn::Ident,
-    colon_token: Token![:],
+    _colon_token: Token![:],
     sort: syn::Expr,
-    semi_token: Token![;],
-}
-
-enum Associativity {
-    RightAssoc,
-    LeftAssoc,
-    Chainable,
-    Pairwise,
+    _semi_token: Token![;],
 }
 
 struct Function {
-    fn_token: Token![fn],
+    _fn_token: Token![fn],
     ident: syn::Ident,
     params: ParamClause,
-    paren_token: syn::token::Paren,
+    _paren_token: syn::token::Paren,
     args: Punctuated<syn::Expr, Token![,]>,
-    arrow_token: Token![->],
+    _arrow_token: Token![->],
     range: syn::Expr,
-    semi_token: Token![;],
+    _semi_token: Token![;],
 }
 
 #[derive(Default)]
 struct ParamClause {
     open_token: Option<Token![<]>,
     params: Punctuated<syn::Ident, Token![,]>,
-    close_token: Option<Token![>]>,
+    _close_token: Option<Token![>]>,
 }
 
 impl Parse for Root {
@@ -128,7 +130,7 @@ impl Parse for Theory {
             visibility: input.parse()?,
             ident: input.parse()?,
             extended: input.parse()?,
-            brace_token: braced!(content in input),
+            _brace_token: braced!(content in input),
             decls: {
                 let mut decls = Vec::new();
                 while !content.is_empty() {
@@ -147,8 +149,8 @@ impl Parse for ExtendedTheoriesClause {
         }
 
         Ok(ExtendedTheoriesClause {
-            colon_token: input.parse()?,
-            extended: Punctuated::parse_terminated(input)?,
+            _colon_token: input.parse()?,
+            extended: Punctuated::parse_separated_nonempty(input)?,
         })
     }
 }
@@ -162,12 +164,37 @@ impl<T: Parse> Parse for Attributed<T> {
     }
 }
 
+impl Parse for SortParam {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(SortParam {
+            name: input.parse()?,
+            _colon_token: input.parse()?,
+            sort: input.parse()?,
+        })
+    }
+}
+
 impl Parse for Sort {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let params;
         Ok(Sort {
-            type_token: input.parse()?,
+            _type_token: input.parse()?,
             ident: input.parse()?,
-            semi_token: input.parse()?,
+            paren: {
+                let paren;
+                let content;
+                if input.peek(syn::token::Paren) {
+                    paren = Some(parenthesized!(content in input));
+                    params = Punctuated::parse_terminated(&content)?;
+                } else {
+                    paren = None;
+                    params = Punctuated::new();
+                }
+
+                paren
+            },
+            params,
+            _semi_token: input.parse()?,
         })
     }
 }
@@ -175,11 +202,11 @@ impl Parse for Sort {
 impl Parse for Const {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Const {
-            const_token: input.parse()?,
+            _const_token: input.parse()?,
             ident: input.parse()?,
-            colon_token: input.parse()?,
+            _colon_token: input.parse()?,
             sort: input.parse()?,
-            semi_token: input.parse()?,
+            _semi_token: input.parse()?,
         })
     }
 }
@@ -193,7 +220,7 @@ impl Parse for ParamClause {
         Ok(ParamClause {
             open_token: input.parse()?,
             params: Punctuated::parse_separated_nonempty(input)?,
-            close_token: input.parse()?,
+            _close_token: input.parse()?,
         })
     }
 }
@@ -202,14 +229,14 @@ impl Parse for Function {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let args;
         Ok(Function {
-            fn_token: input.parse()?,
+            _fn_token: input.parse()?,
             ident: input.parse()?,
             params: input.parse()?,
-            paren_token: parenthesized!(args in input),
+            _paren_token: parenthesized!(args in input),
             args: Punctuated::parse_terminated(&args)?,
-            arrow_token: input.parse()?,
+            _arrow_token: input.parse()?,
             range: input.parse()?,
-            semi_token: input.parse()?,
+            _semi_token: input.parse()?,
         })
     }
 }
@@ -352,14 +379,14 @@ impl ToTokens for Attributed<&Function> {
 impl ToTokens for Attributed<&Sort> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         self.replace(&Function {
-            fn_token: Default::default(),
+            _fn_token: Default::default(),
             ident: self.node.ident.clone(),
             params: Default::default(),
-            paren_token: Default::default(),
-            args: Default::default(),
-            arrow_token: Default::default(),
+            _paren_token: Default::default(),
+            args: self.node.params.iter().map(|p| p.sort.clone()).collect(),
+            _arrow_token: Default::default(),
             range: parse_quote!(formally::smt::Sort::sort()),
-            semi_token: Default::default(),
+            _semi_token: Default::default(),
         })
         .to_tokens(tokens)
     }
@@ -375,20 +402,182 @@ impl ToTokens for Attributed<Decl> {
     }
 }
 
+fn is_custom_attr(attr: &syn::Attribute) -> bool {
+    get_name_from_attr(attr).is_some() || get_flag_from_attr(attr).is_some()
+}
+
+impl ToTokens for SortParam {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let name = &self.name;
+        let sort = &self.sort;
+
+        tokens.extend(quote!(#name: #sort))
+    }
+}
+
+fn sort_syntax(sort: &Attributed<&Sort>) -> TokenStream {
+    let attrs = sort.attrs.iter().filter(|a| is_custom_attr(a));
+    let ident = &sort.node.ident;
+    let params = sort
+        .node
+        .paren
+        .map(|_| sort.node.params.iter())
+        .map(|p| quote!((#(#p),*)));
+    quote! {
+        #(#attrs)*
+        type #ident #params;
+    }
+}
+
+fn const_syntax(cnst: &Attributed<&Const>) -> TokenStream {
+    let attrs = cnst.attrs.iter().filter(|a| is_custom_attr(a));
+    let ident = &cnst.node.ident;
+    let sort = &cnst.node.sort;
+
+    quote! {
+        #(#attrs)*
+        const #ident: #sort;
+    }
+}
+
+fn func_syntax(func: &Attributed<&Function>) -> TokenStream {
+    let attrs = func.attrs.iter().filter(|a| is_custom_attr(a));
+    let ident = &func.node.ident;
+    let params = &func
+        .node
+        .params
+        .open_token
+        .map(|_| func.node.params.params.iter())
+        .map(|p| quote!(<#(#p),*>));
+    let args = func.node.args.iter();
+    let range = &func.node.range;
+
+    quote! {
+        #(#attrs)*
+        fn #ident #params(#(#args),*) -> #range;
+    }
+}
+
 impl ToTokens for Attributed<Theory> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let attrs = &self.attrs;
         let vis = &self.node.visibility;
-        let ident = &self.node.ident;
+        let theory = &self.node.ident;
         let decls = &self.node.decls;
-        let module = syn::Ident::new(&format!("{}__details", ident), ident.span());
+        let extended: Vec<_> = self.node.extended.extended.iter().collect();
+        let module = syn::Ident::new(&format!("{}__details", theory), theory.span());
+        let extendoc = if !extended.is_empty() {
+            quote! {
+                ///
+                /// This theory [extends](formally::smt::theory) the following other theories:
+                #(#[doc=concat!("* [", concat!(stringify!(#extended), "]"))])*
+            }
+        } else {
+            quote! {}
+        };
+
+        let mut sorts = Vec::new();
+        let mut consts = Vec::new();
+        let mut funcs = Vec::new();
+        let mut sortnames = Vec::new();
+        let mut constnames = Vec::new();
+        let mut funcnames = Vec::new();
+
+        for decl in &self.node.decls {
+            match &decl.node {
+                Decl::Sort(sort) => {
+                    sorts.push(decl.replace(sort));
+                    sortnames.push(&sort.ident)
+                }
+                Decl::Const(cnst) => {
+                    consts.push(decl.replace(cnst));
+                    constnames.push(&cnst.ident)
+                }
+                Decl::Function(func) => {
+                    funcs.push(decl.replace(func));
+                    funcnames.push(&func.ident)
+                }
+            }
+        }
+
+        let mut sortitems = Vec::new();
+        for sort in &sorts {
+            let attrs = &sort.attrs;
+            let ident = &sort.node.ident;
+            let params: Vec<_> = sort.node.params.iter().map(|p| &p.name).collect();
+            let syntax = sort_syntax(sort);
+
+            sortitems.push(quote! {
+                #[allow(nonstandard_style)]
+                #[allow(clippy::style)]
+                #(#attrs)*
+                ///
+                /// Declaration in the syntax of the [theory] macro:
+                ///
+                /// ```text
+                #[doc=stringify!(#syntax)]
+                /// ```
+                pub fn #ident(#(#params: &(impl Clone + Into<formally::smt::SortArgument>)),*) -> formally::smt::Sort {
+                    formally::smt::Sort {
+                        head: formally::smt::Function::Primitive(#module::#ident.clone()),
+                        arguments: vec![#(#params.clone().into()),*],
+                        span: None
+                    }
+                }
+            })
+        }
+
+        let mut constitems = Vec::new();
+        for cnst in &consts {
+            let attrs = cnst.attrs.iter().filter(|a| !is_custom_attr(a));
+            let ident = &cnst.node.ident;
+            let syntax = const_syntax(cnst);
+
+            constitems.push(quote! {
+                #[allow(nonstandard_style)]
+                #[allow(clippy::style)]
+                #(#attrs)*
+                ///
+                /// Declaration in the syntax of the [theory] macro:
+                ///
+                /// ```text
+                #[doc=stringify!(#syntax)]
+                /// ```
+                pub fn #ident() -> formally::smt::Primitive {
+                    #module::#ident.clone()
+                }
+            })
+        }
+
+        let mut funcitems = Vec::new();
+        for func in &funcs {
+            let attrs = func.attrs.iter().filter(|a| !is_custom_attr(a));
+            let ident = &func.node.ident;
+            let syntax = func_syntax(func);
+
+            funcitems.push(quote! {
+                #[allow(nonstandard_style)]
+                #[allow(clippy::style)]
+                #(#attrs)*
+                ///
+                /// Declaration in the syntax of the [theory] macro:
+                ///
+                /// ```text
+                #[doc=stringify!(#syntax)]
+                /// ```
+                pub fn #ident() -> formally::smt::Primitive {
+                    #module::#ident.clone()
+                }
+            })
+        }
 
         tokens.extend(quote! {
             #[derive(Default, Clone, Copy, Hash, PartialEq, Eq)]
             #[allow(nonstandard_style)]
             #[allow(clippy::style)]
             #(#attrs)*
-            #vis struct #ident;
+            #extendoc
+            #vis struct #theory;
 
             #[allow(nonstandard_style)]
             #[allow(clippy::style)]
@@ -398,6 +587,46 @@ impl ToTokens for Attributed<Theory> {
                 use super::*;
 
                 #(#decls)*
+
+                pub static FUNCS: std::sync::LazyLock<formally::support::Scope<formally::smt::Function>> = std::sync::LazyLock::new(|| {
+                    let mut scope = formally::support::Scope::new();
+
+                    #( scope.merge(&formally::smt::theories::Theory::functions(&#extended)); )*
+
+                    #( scope.add(&#module::#funcnames.name(), formally::smt::Function::from(#module::#funcnames.clone())); )*
+
+                    #( scope.add(&#module::#constnames.name(), formally::smt::Function::from(#module::#constnames.clone())); )*
+
+                    scope
+                });
+
+                pub static SORTS: std::sync::LazyLock<formally::support::Scope<formally::smt::Function>> = std::sync::LazyLock::new(|| {
+                    let mut scope = formally::support::Scope::new();
+
+                    #( scope.merge(&formally::smt::theories::Theory::functions(&#extended)); )*
+
+                    #( scope.add(&#module::#sortnames.name(), formally::smt::Function::from(#module::#sortnames.clone())); )*
+
+                    scope
+                });
+            }
+
+            impl #theory {
+                #(#sortitems)*
+
+                #(#constitems)*
+
+                #(#funcitems)*
+            }
+
+            impl formally::smt::theories::Theory for #theory {
+                fn functions(&self) -> formally::support::Scope<formally::smt::Function> {
+                    #module::FUNCS.clone()
+                }
+
+                fn sorts(&self) -> formally::support::Scope<formally::smt::Function> {
+                    #module::SORTS.clone()
+                }
             }
         })
     }
