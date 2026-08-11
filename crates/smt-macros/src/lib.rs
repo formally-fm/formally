@@ -36,12 +36,11 @@
 #![doc = ""]
 
 mod term;
+mod theories;
 
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse_macro_input;
-
-use term::*;
 
 /// Construct a term from a subset of the SMT-LIBv2 syntax for terms.
 ///
@@ -85,7 +84,14 @@ use term::*;
 /// Expansion of repetitions from iterators, as in the `quote` macro, is not supported *yet*.
 #[proc_macro]
 pub fn term(input: TokenStream) -> TokenStream {
-    let term = parse_macro_input!(input as Root);
+    let term = parse_macro_input!(input as term::Root);
 
     quote!(#term).into()
+}
+
+#[proc_macro]
+pub fn theories(input: TokenStream) -> TokenStream {
+    let root = parse_macro_input!(input as theories::Root);
+
+    quote!(#root).into()
 }
