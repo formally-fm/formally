@@ -73,7 +73,7 @@ pub trait Logic {
 }
 
 pub trait LogicEx {
-    type Atom: Into<BoundAtom> + TryFrom<BoundAtom, Error = BoundAtom>;
+    type Atom<'t>: Into<BoundAtom> + TryFrom<&'t BoundAtom, Error = &'t BoundAtom>;
 }
 
 #[distributed_slice]

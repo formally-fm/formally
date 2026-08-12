@@ -128,21 +128,21 @@ impl ToTokens for Root {
 
         let mut cases = Vec::new();
         let mut into = Vec::new();
-        let mut try_into = Vec::new();
+        let mut try_from = Vec::new();
         for theory in &theories {
             let name = &theory.segments.last().unwrap().ident;
 
             cases.push(quote! {
                 #[allow(nonstandard_style)]
-                #name(<#theory as formally::smt::theories::TheoryEx>::Atom)
+                #name(<#theory as formally::smt::theories::TheoryEx>::Atom<'t>)
             });
             into.push(quote! {
                 #atom::#name(atom) => atom.into()
             });
-            try_into.push(quote! {
-                match <<#theory as formally::smt::theories::TheoryEx>::Atom as TryFrom<formally::smt::BoundAtom>>::try_from(atom) {
+            try_from.push(quote! {
+                match <<#theory as formally::smt::theories::TheoryEx>::Atom<'t> as TryFrom<&'t formally::smt::BoundAtom>>::try_from(atom) {
                     Ok(atom) => return Ok(#atom::#name(atom)),
-                    Err(err) => atom = err,
+                    Err(_) => {},
                 }
             })
         }
@@ -198,11 +198,11 @@ impl ToTokens for Root {
 
             #standard
 
-            pub enum #atom {
+            pub enum #atom<'t> {
                 #(#cases),*
             }
 
-            impl Into<formally::smt::BoundAtom> for #atom {
+            impl<'t> Into<formally::smt::BoundAtom> for #atom<'t> {
                 fn into(self) -> formally::smt::BoundAtom {
                     match self {
                         #(#into),*
@@ -210,14 +210,18 @@ impl ToTokens for Root {
                 }
             }
 
-            impl TryFrom<formally::smt::BoundAtom> for #atom {
-                type Error = formally::smt::BoundAtom;
+            impl<'t> TryFrom<&'t formally::smt::BoundAtom> for #atom<'t> {
+                type Error = &'t formally::smt::BoundAtom;
 
-                fn try_from(mut atom: formally::smt::BoundAtom) -> Result<Self, Self::Error> {
-                    #(#try_into)*
+                fn try_from(atom: &'t formally::smt::BoundAtom) -> Result<Self, Self::Error> {
+                    #(#try_from)*
 
                     return Err(atom)
                 }
+            }
+
+            impl formally::smt::logics::LogicEx for #name {
+                type Atom<'t> = #atom<'t>;
             }
         })
     }

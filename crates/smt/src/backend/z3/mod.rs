@@ -46,7 +46,13 @@ pub struct Z3;
 
 logic! {
     name: Z3ALL,
-    theories: [ smt::theories::Core, smt::theories::Reals_Ints, smt::theories::Arrays ],
+    theories: [
+        smt::theories::Core,
+        smt::theories::Ints,
+        smt::theories::Reals,
+        smt::theories::Reals_Ints,
+        smt::theories::Arrays
+    ],
     requirements: [ ]
 }
 

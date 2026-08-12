@@ -584,7 +584,7 @@ impl ToTokens for Attributed<Theory> {
 
         let mut cases = Vec::new();
         let mut into = Vec::new();
-        let mut try_into = Vec::new();
+        let mut try_from = Vec::new();
         for cnst in &consts {
             let ident = &cnst.node.ident;
             let cap = capitalize(ident);
@@ -599,7 +599,7 @@ impl ToTokens for Attributed<Theory> {
                 }
             });
 
-            try_into.push(quote! {
+            try_from.push(quote! {
                 else if atom.head.function == #module::#ident.clone().into() {
                     Ok(#atom::#cap)
                 }
@@ -607,21 +607,21 @@ impl ToTokens for Attributed<Theory> {
         }
         for func in &funcs {
             let ident = &func.node.ident;
-            let cap = capitalize(&ident);
+            let cap = capitalize(ident);
             let mut args = Vec::new();
             if get_flag_from_attrs(&func.attrs).is_some() {
-                cases.push(quote!(#cap(Vec<formally::smt::Term>)));
+                cases.push(quote!(#cap(&'t [formally::smt::Term])));
                 into.push(quote! {
                     #atom::#cap(arguments) => formally::smt::BoundAtom {
                         head: #module::#ident.clone().into(),
-                        arguments,
+                        arguments: arguments.to_vec(),
                         span: None
                     }
                 });
 
-                try_into.push(quote! {
+                try_from.push(quote! {
                     else if atom.head.function == #module::#ident.clone().into() {
-                        Ok(#atom::#cap(atom.arguments))
+                        Ok(#atom::#cap(atom.arguments.as_slice()))
                     }
                 })
             } else {
@@ -629,21 +629,21 @@ impl ToTokens for Attributed<Theory> {
                 let mut argnames = Vec::new();
                 let mut argsvec = Vec::new();
                 for i in 0..argslen {
-                    args.push(quote!(formally::smt::Term));
+                    args.push(quote!(&'t formally::smt::Term));
                     argnames.push(syn::Ident::new(&format!("arg{i}"), Span::call_site()));
-                    argsvec.push(quote!(atom.arguments[#i].clone()));
+                    argsvec.push(quote!(&atom.arguments[#i]));
                 }
                 cases.push(quote!(#cap(#(#args),*)));
 
                 into.push(quote! {
                     #atom::#cap(#(#argnames),*) => formally::smt::BoundAtom {
                         head: #module::#ident.clone().into(),
-                        arguments: vec![#(#argnames),*],
+                        arguments: vec![#(#argnames.clone()),*],
                         span: None
                     }
                 });
 
-                try_into.push(quote! {
+                try_from.push(quote! {
                     else if atom.head.function == #module::#ident.clone().into() {
                         if atom.arguments.len() == #argslen {
                             Ok(#atom::#cap(#(#argsvec),*))
@@ -713,11 +713,11 @@ impl ToTokens for Attributed<Theory> {
                 }
             }
 
-            pub enum #atom {
+            pub enum #atom<'t> {
                 #(#cases),*
             }
 
-            impl Into<formally::smt::BoundAtom> for #atom {
+            impl Into<formally::smt::BoundAtom> for #atom<'_> {
                 fn into(self) -> formally::smt::BoundAtom {
                     match self {
                         #(#into),*
@@ -725,19 +725,19 @@ impl ToTokens for Attributed<Theory> {
                 }
             }
 
-            impl TryFrom<formally::smt::BoundAtom> for #atom {
-                type Error = formally::smt::BoundAtom;
+            impl<'t> TryFrom<&'t formally::smt::BoundAtom> for #atom<'t> {
+                type Error = &'t formally::smt::BoundAtom;
 
-                fn try_from(atom: formally::smt::BoundAtom) -> Result<#atom, Self::Error> {
+                fn try_from(atom: &'t formally::smt::BoundAtom) -> Result<#atom, Self::Error> {
                     if false { unreachable!() }
-                    #(#try_into)* else {
+                    #(#try_from)* else {
                         Err(atom)
                     }
                 }
             }
 
             impl formally::smt::theories::TheoryEx for #theory {
-                type Atom = #atom;
+                type Atom<'t> = #atom<'t>;
             }
         })
     }

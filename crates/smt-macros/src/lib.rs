@@ -337,6 +337,50 @@ pub fn theories(input: TokenStream) -> TokenStream {
     quote!(#root).into()
 }
 
+/// Declare an SMT-LIBv2 logic.
+///
+/// This macro helps the proper declaration of types implementing the [Logic](crate::logics::Logic)
+/// trait. Logic types obtained by this macro are unit structs (e.g. declared as `pub struct LIA;`,
+/// and therefore instantiated as `LIA`, not as `LIA {}`) providing a suitable implementation of
+/// the trait.
+///
+/// A logic combines a set of theories and a set of *requirements*, which are types implementing
+/// [LogicRequirement](crate::logics::requirements::LogicRequirement). Both are specified as
+/// follows.
+///
+/// Let us look at the concrete example of the declaration of the [QF_LIA](crate::logics::QF_LIA)
+/// logic.
+///
+/// ```text
+/// logic! {
+///     /// Quantifier-Free Linear Integer Arithmetic.
+///     name: pub QF_LIA,
+///     theories: [ Core, Ints ],
+///     requirements: [ Linear, QuantifierFree, NoUF ]
+/// }
+/// ```
+///
+/// We can observe a few details in this declaration:
+/// 1. The `name:` parameter specifies the name of the logic, which is both the Rust name of the
+///    corresponding type, and the name to be used as a string when setting the
+///    [logic](crate::Config::logic) field of [Config](crate::Config) when instantiating a
+///    [Solver](crate::Solver).
+/// 2. The `pub` keyword before the name is the visibility specifier that will be attached to the
+///    declared type (it can be absent for private types, or `pub`, `pub(crate)`, etc.).
+/// 3. An optional *doc comment* can be place above the `name:` parameter and will document the
+///    resulting type. The documentation of the type will contain automatically the list of theories
+///    and requirements (see how the above example is rendered in the documentation of
+///    [QF_LIA](crate::logics::QF_LIA)).
+/// 4. The `theories:` parameter accepts a comma-separated list of theories enclosed in brackets.
+///    The names specified here are paths of any type currently in scope implementing the
+///    [Theory](crate::theories::Theory) trait.
+/// 5. The `requirements:` parameter accepts a comma-separated list of requirements enclosed in
+///    brackets. The names specified here are paths of any type currently in scope implementing the
+///    [LogicRequirement](crate::logics::requirements::LogicRequirement) trait.
+///
+/// Standard SMT-LIBv2 theories are declared in the [theories](crate::theories) module and some
+/// logic requirements commonly needed in standard SMT-LIBv2 logics are declared in the
+/// [logics::requirements](crate::logics::requirements) module.
 #[proc_macro]
 pub fn logic(input: TokenStream) -> TokenStream {
     let root = parse_macro_input!(input as logic::Root);
