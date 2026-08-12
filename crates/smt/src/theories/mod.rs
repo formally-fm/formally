@@ -80,6 +80,10 @@ pub trait Theory {
     }
 }
 
+pub trait TheoryEx: Theory {
+    type Atom: Into<BoundAtom> + TryFrom<BoundAtom, Error = BoundAtom>;
+}
+
 /// An instance of [Theory] combining multiple theories together.
 pub struct CombinedTheory {
     functions: Scope<Function>,
