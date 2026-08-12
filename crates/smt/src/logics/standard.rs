@@ -31,7 +31,7 @@ logic! {
     name: pub UFLIA,
     theories: [ Core, Ints ],
     requirements: [ Linear ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -39,7 +39,7 @@ logic! {
     name: pub UFLRA,
     theories: [ Core, Reals ],
     requirements: [ Linear ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -47,7 +47,7 @@ logic! {
     name: pub LIA,
     theories: [ Core, Ints ],
     requirements: [ Linear, NoUF ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -55,7 +55,7 @@ logic! {
     name: pub LRA,
     theories: [ Core, Reals ],
     requirements: [ Linear, NoUF ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -63,7 +63,7 @@ logic! {
     name: pub LIRA,
     theories: [ Core, Reals_Ints ],
     requirements: [ Linear, NoUF ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -71,7 +71,7 @@ logic! {
     name: pub NIA,
     theories: [ Core, Ints ],
     requirements: [ NoUF ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -79,7 +79,7 @@ logic! {
     name: pub NRA,
     theories: [ Core, Reals ],
     requirements: [ NoUF ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -87,7 +87,7 @@ logic! {
     name: pub QF_UFLIA,
     theories: [ Core, Ints ],
     requirements: [ Linear, QuantifierFree ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -95,7 +95,7 @@ logic! {
     name: pub QF_UFLRA,
     theories: [ Core, Reals ],
     requirements: [ Linear, QuantifierFree ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -103,7 +103,7 @@ logic! {
     name: pub QF_UFNIA,
     theories: [ Core, Ints ],
     requirements: [ QuantifierFree ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -111,7 +111,7 @@ logic! {
     name: pub QF_UFNRA,
     theories: [ Core, Reals ],
     requirements: [ QuantifierFree ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -119,7 +119,7 @@ logic! {
     name: pub QF_LIA,
     theories: [ Core, Ints ],
     requirements: [ Linear, QuantifierFree, NoUF ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -127,7 +127,7 @@ logic! {
     name: pub QF_LRA,
     theories: [ Core, Reals ],
     requirements: [ Linear, QuantifierFree, NoUF ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -135,7 +135,7 @@ logic! {
     name: pub QF_NIA,
     theories: [ Core, Ints ],
     requirements: [ QuantifierFree, NoUF ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -143,7 +143,7 @@ logic! {
     name: pub QF_NRA,
     theories: [ Core, Reals ],
     requirements: [ QuantifierFree, NoUF ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -151,7 +151,7 @@ logic! {
     name: pub QF_LIRA,
     theories: [ Core, Reals_Ints ],
     requirements: [ Linear, QuantifierFree, NoUF ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -159,7 +159,7 @@ logic! {
     name: pub ALIA,
     theories: [ Core, Ints, Arrays ],
     requirements: [ Linear, NoUF ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -167,7 +167,7 @@ logic! {
     name: pub QF_ALIA,
     theories: [ Core, Ints, Arrays ],
     requirements: [ Linear, QuantifierFree, NoUF ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -175,7 +175,7 @@ logic! {
     name: pub UFALIA,
     theories: [ Core, Ints, Arrays ],
     requirements: [ Linear ],
-    standard: True
+    standard: true
 }
 
 logic! {
@@ -183,5 +183,5 @@ logic! {
     name: pub QF_UFALIA,
     theories: [ Core, Ints, Arrays ],
     requirements: [ Linear, QuantifierFree ],
-    standard: True
+    standard: true
 }

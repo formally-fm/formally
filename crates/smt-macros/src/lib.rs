@@ -37,6 +37,7 @@
 
 mod term;
 mod theories;
+mod logic;
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -332,6 +333,13 @@ pub fn term(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn theories(input: TokenStream) -> TokenStream {
     let root = parse_macro_input!(input as theories::Root);
+
+    quote!(#root).into()
+}
+
+#[proc_macro]
+pub fn logic(input: TokenStream) -> TokenStream {
+    let root = parse_macro_input!(input as logic::Root);
 
     quote!(#root).into()
 }

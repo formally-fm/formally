@@ -42,7 +42,6 @@
 
 #![allow(non_camel_case_types)]
 
-mod macros;
 mod standard;
 
 pub mod requirements;
@@ -71,6 +70,10 @@ pub trait Logic {
 
     /// Check the requirements of this logic on the functions added to the current signature.
     fn check_function(&self, func: &UserFunction) -> Result<()>;
+}
+
+pub trait LogicEx {
+    type Atom: Into<BoundAtom> + TryFrom<BoundAtom, Error = BoundAtom>;
 }
 
 #[distributed_slice]
