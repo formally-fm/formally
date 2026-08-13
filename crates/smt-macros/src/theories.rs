@@ -713,7 +713,6 @@ impl ToTokens for Attributed<Theory> {
                     }
                 })
             }
-
         }
 
         let sort_lf = if hasparams { quote!(<'t>) } else { quote!() };
@@ -776,6 +775,7 @@ impl ToTokens for Attributed<Theory> {
                 }
             }
 
+            #[allow(nonstandard_style)]
             pub enum #atomenum<'t> {
                 #(#atom_cases),*
             }
@@ -799,10 +799,12 @@ impl ToTokens for Attributed<Theory> {
                 }
             }
 
+            #[allow(nonstandard_style)]
             pub enum #sortenum #sort_lf {
                 #(#sort_cases),*
             }
 
+            #[allow(non_snake_case)]
             impl #sort_lf Into<formally::smt::Sort> for #sortenum #sort_lf {
                 fn into(self) -> formally::smt::Sort {
                     match self {

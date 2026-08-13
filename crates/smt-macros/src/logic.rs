@@ -25,9 +25,8 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use syn::{
-    Meta, Token, braced, bracketed, parenthesized,
+    Token, bracketed,
     parse::{Parse, ParseStream},
-    parse_quote,
     punctuated::Punctuated,
 };
 

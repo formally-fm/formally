@@ -25,7 +25,7 @@
 use crate::formally;
 use formally::smt::{
     backend::{
-        self, Backend as _,
+        self,
         z3::{Z3, Z3ALL, bindings as z3, manager::Z3Manager},
     },
     logics::{Logic, standard_logic},
@@ -44,16 +44,12 @@ pub struct Z3Solver {
 
 impl Z3Solver {
     pub fn new(config: &Config, manager: Rc<Z3Manager>) -> Result<Z3Solver, backend::Error> {
-        let z3config = z3::Config::new();
-
-        let z3context = z3::Context::new(&z3config);
-
         let z3solver;
         let logic: &dyn Logic;
         match &config.logic {
             Some(name) => match standard_logic(name, &Z3ALL) {
                 Some(found) => {
-                    z3solver = z3::Solver::new_for_logic(z3context.clone(), name);
+                    z3solver = z3::Solver::new_for_logic(manager.z3context.clone(), name);
                     logic = found;
                 }
                 None => {
@@ -66,7 +62,7 @@ impl Z3Solver {
                 }
             },
             None => {
-                z3solver = z3::Solver::new(z3context.clone());
+                z3solver = z3::Solver::new(manager.z3context.clone());
                 logic = &Z3ALL;
             }
         }
@@ -94,27 +90,43 @@ impl backend::Solver for Z3Solver {
     }
 
     fn declare(&mut self, decl: Declared) -> Result<(), Error> {
-        todo!()
+        self.manager.declare(decl)
     }
 
     fn define(&mut self, def: Defined) -> Result<(), Error> {
-        todo!()
+        self.manager.define(def)
     }
 
     fn push(&mut self) -> Result<(), Error> {
-        todo!()
+        self.z3solver.push();
+
+        Ok(())
     }
 
     fn pop_n(&mut self, n: usize) -> Result<(), Error> {
-        todo!()
+        self.z3solver.pop(n);
+
+        Ok(())
     }
 
-    fn require(&mut self, term: &dyn backend::Term) -> Result<(), Error> {
-        todo!()
+    fn require(&mut self, term: &Term) -> Result<(), Error> {
+        let ast = self.manager.term_to_z3(term)?;
+
+        self.z3solver.assert(&ast);
+
+        Ok(())
     }
 
     fn check(&mut self) -> Result<Option<bool>, Error> {
-        todo!()
+        let result = self.z3solver.check();
+
+        self.result = match result {
+            z3::Z3_L_TRUE => Some(true),
+            z3::Z3_L_FALSE => Some(false),
+            _ => None,
+        };
+
+        Ok(self.result)
     }
 
     fn model(&self) -> Result<Option<Box<dyn '_ + ModelProvider>>, Error> {

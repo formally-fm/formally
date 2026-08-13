@@ -34,7 +34,6 @@ use formally::{
 use crate::type_check::TypeCheck;
 use derive_more::From;
 use std::{
-    borrow::Cow,
     fmt::{Debug, Formatter},
     rc::Rc,
 };
@@ -176,7 +175,6 @@ impl Default for TermManager {
     }
 }
 
-
 impl TermManager {
     pub fn new(backend: impl Backend) -> TermManager {
         TermManager {
@@ -184,7 +182,7 @@ impl TermManager {
             pool: Rc::new(TermPool::new()),
         }
     }
-    
+
     pub fn pool(&self) -> &TermPool {
         &self.pool
     }
@@ -358,9 +356,7 @@ impl Solver {
             return Err(DiagnosticEmitted);
         }
 
-        let term = self.manager.manager.import(&term)?;
-
-        self.backend.require(term)?;
+        self.backend.require(&term)?;
 
         Ok(())
     }

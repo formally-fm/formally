@@ -25,16 +25,16 @@
 use z3_sys::*;
 
 use itertools::Itertools;
+use std::fmt::Formatter;
 use std::{
     ffi::*,
+    fmt::Debug,
     hash::{Hash, Hasher},
     rc::{Rc, Weak},
 };
-
+pub use z3_sys::ErrorCode;
 pub use z3_sys::Z3_L_FALSE;
 pub use z3_sys::Z3_L_TRUE;
-
-pub use z3_sys::AstKind;
 
 #[repr(transparent)]
 pub struct Config {
@@ -67,6 +67,7 @@ pub struct Sort {
     pub sort: Z3_sort,
 }
 
+#[expect(unused)]
 pub struct Model {
     pub ctx: Rc<Context>,
     pub model: Z3_model,
@@ -102,6 +103,17 @@ impl Context {
             this: weak.clone(),
             ctx: unsafe { Z3_mk_context_rc(config.config).unwrap() },
         })
+    }
+
+    pub fn get_error_code(&self) -> ErrorCode {
+        unsafe { Z3_get_error_code(self.ctx) }
+    }
+
+    pub fn get_error_msg(&self, code: ErrorCode) -> String {
+        unsafe {
+            let string = Z3_get_error_msg(self.ctx, code);
+            CString::from(CStr::from_ptr(string)).into_string().unwrap()
+        }
     }
 
     pub fn mk_uninterpreted_sort(&self, name: &str) -> Sort {
@@ -398,8 +410,20 @@ impl Solver {
         answer
     }
 
+    #[expect(unused)]
     pub fn get_model(&self) -> Option<Model> {
         self.model.map(|m| Model::new(self.ctx.clone(), m))
+    }
+}
+
+impl Clone for Solver {
+    fn clone(&self) -> Self {
+        unsafe { Z3_solver_inc_ref(self.ctx.ctx, self.slv) }
+        Solver {
+            ctx: self.ctx.clone(),
+            slv: self.slv,
+            model: self.model,
+        }
     }
 }
 
@@ -409,6 +433,7 @@ impl Drop for Solver {
     }
 }
 
+#[expect(unused)]
 impl Model {
     pub fn new(ctx: Rc<Context>, model: Z3_model) -> Model {
         unsafe {
@@ -455,6 +480,16 @@ impl Ast {
             let string = Z3_get_numeral_string(self.ctx.ctx, self.ast);
             CString::from(CStr::from_ptr(string)).into_string().unwrap()
         }
+    }
+}
+
+impl Debug for Ast {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let string = unsafe {
+            let string = Z3_ast_to_string(self.ctx.ctx, self.ast);
+            CString::from(CStr::from_ptr(string)).into_string().unwrap()
+        };
+        write!(f, "{string}")
     }
 }
 

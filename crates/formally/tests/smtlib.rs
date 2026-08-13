@@ -22,10 +22,7 @@
 // SOFTWARE.
 //
 
-use formally::{
-    io::{parse::*, print::Print},
-    support::*,
-};
+use formally::io::{parse::*, print::Print};
 
 use formally::smt::smtlib;
 use rstest::*;

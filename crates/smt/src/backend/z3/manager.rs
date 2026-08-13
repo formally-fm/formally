@@ -42,15 +42,13 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 type Result<T, E = backend::Error> = std::result::Result<T, E>;
 
 pub struct Z3Manager {
-    z3context: Rc<z3::Context>,
+    pub z3context: Rc<z3::Context>,
     decls: RefCell<HashMap<smt::Declared, z3::FuncDecl>>,
     defs: RefCell<HashMap<smt::Defined, z3::FuncDecl>>,
     sorts: RefCell<HashMap<smt::Declared, z3::Sort>>,
     terms: RefCell<HashMap<smt::Term, z3::Ast>>,
     bindings: RefCell<HashMap<smt::Binding, z3::Ast>>,
 }
-
-impl backend::Term for z3::Ast {}
 
 impl Z3Manager {
     pub fn new() -> Z3Manager {
@@ -75,18 +73,10 @@ impl backend::Manager for Z3Manager {
     fn backend(&self) -> &dyn backend::Backend {
         &Z3
     }
-
-    fn import(&self, term: &smt::Term) -> Result<&dyn backend::Term> {
-        todo!()
-    }
-
-    fn export(&self, term: &dyn backend::Term, pool: &smt::TermPool) -> Result<smt::Term> {
-        todo!()
-    }
 }
 
 impl Z3Manager {
-    fn sort_to_z3(&self, sort: &smt::Sort) -> Result<z3::Sort> {
+    pub fn sort_to_z3(&self, sort: &smt::Sort) -> Result<z3::Sort> {
         match Z3ALLSort::try_from(sort) {
             Ok(sort) => self.z3sort_to_z3(sort),
             Err(_) => Err(backend::Error::new(
@@ -99,7 +89,7 @@ impl Z3Manager {
         }
     }
 
-    fn term_to_z3(&self, term: &smt::Term) -> Result<z3::Ast> {
+    pub fn term_to_z3(&self, term: &smt::Term) -> Result<z3::Ast> {
         if let Some(ast) = self.terms.borrow().get(term) {
             return Ok(ast.clone());
         }
@@ -112,6 +102,54 @@ impl Z3Manager {
         self.terms.borrow_mut().insert(term.clone(), ast.clone());
 
         Ok(ast)
+    }
+
+    pub fn declare(&self, decl: smt::Declared) -> Result<()> {
+        if smt::Sort::equal(&decl.range, &smt::Sort::sort()) {
+            self.declare_sort(decl)
+        } else {
+            self.declare_fun(decl)
+        }
+    }
+
+    fn declare_sort(&self, decl: smt::Declared) -> Result<()> {
+        if self.sorts.borrow().contains_key(&decl) {
+            return Ok(());
+        }
+
+        let sort = if decl.domain.is_empty() {
+            self.z3context.mk_uninterpreted_sort(decl.name.name())
+        } else {
+            todo!()
+        };
+
+        self.sorts.borrow_mut().insert(decl, sort);
+
+        Ok(())
+    }
+
+    fn declare_fun(&self, decl: smt::Declared) -> Result<()> {
+        if self.decls.borrow().contains_key(&decl) {
+            return Ok(());
+        }
+
+        let range = self.sort_to_z3(&decl.range)?;
+        let mut sorts = Vec::new();
+        for sort in &decl.domain {
+            sorts.push(self.sort_to_z3(sort)?);
+        }
+
+        let z3decl = self
+            .z3context
+            .mk_func_decl(decl.name.name(), &sorts, &range);
+
+        self.decls.borrow_mut().insert(decl, z3decl);
+
+        Ok(())
+    }
+
+    pub fn define(&self, _def: smt::Defined) -> Result<()> {
+        todo!()
     }
 
     fn terms_to_z3(&self, terms: &[smt::Term]) -> Result<Vec<z3::Ast>> {

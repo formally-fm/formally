@@ -204,7 +204,7 @@ impl Interpreter {
         Err(DiagnosticEmitted)
     }
 
-    fn fail(config: &Config, mode: RequiredMode, command: ast::Command) -> Result<()> {
+    fn fail(_config: &Config, mode: RequiredMode, command: ast::Command) -> Result<()> {
         error!(
             command.span(),
             "the `{}` command is only available {}",
@@ -219,7 +219,7 @@ impl Interpreter {
     }
 
     // TODO: supporting setting the output stream through the `Config`
-    fn response(config: &Config, response: impl Print) -> Result<()> {
+    fn response(_config: &Config, response: impl Print) -> Result<()> {
         match response.println(&mut io::stdout()) {
             Ok(_) => Ok(()),
             Err(err) => {

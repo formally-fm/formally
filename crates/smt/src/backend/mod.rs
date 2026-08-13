@@ -161,7 +161,7 @@ pub mod z3;
 
 use crate::formally;
 use formally::{
-    smt::{self, Config, Declared, Defined, ModelProvider, TermPool, logics},
+    smt::{self, Config, Declared, Defined, ModelProvider, logics},
     support::{Diagnosable, Identifier, Level, Located, Span},
 };
 use std::{any::Any, fmt::Debug, fmt::Formatter, io, rc::Rc};
@@ -267,18 +267,12 @@ impl Debug for dyn Backend {
     }
 }
 
-pub trait Term: Any {}
-
 pub trait Manager: Any {
     /// Return the backend this manager is an instance of.
     ///
     /// This is useful to obtain a new different instance of the same backend or the name of the
     /// backend.
     fn backend(&self) -> &dyn Backend;
-
-    fn import(&self, term: &smt::Term) -> Result<&dyn Term, Error>;
-
-    fn export(&self, term: &dyn Term, pool: &TermPool) -> Result<smt::Term, Error>;
 }
 
 /// The trait for instances of SMT backends.
@@ -336,7 +330,7 @@ pub trait Solver {
     /// [validated()](Term::validated()), and to be Boolean. In particular, the term is guaranteed
     /// to be fully [resolved](Term::resolve()), and [Term::type_check()] is guaranteed to
     /// return [Core::Bool()](theories::Core::Bool()).
-    fn require(&mut self, term: &dyn Term) -> Result<(), Error>;
+    fn require(&mut self, term: &smt::Term) -> Result<(), Error>;
 
     /// Check the current frame on the assertions stack for satisfiability.
     fn check(&mut self) -> Result<Option<bool>, Error>;
