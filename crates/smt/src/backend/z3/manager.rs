@@ -27,10 +27,12 @@ use formally::smt::{
     self,
     backend::{
         self, Backend as _,
-        z3::{Z3, Z3ALL, Z3ALLAtom, bindings as z3},
+        z3::{Z3, Z3ALLAtom, Z3ALLSort, bindings as z3},
     },
-    logics::LogicEx,
-    theories::{ArraysAtom, CoreAtom, IntsAtom, Reals_IntsAtom, RealsAtom, TheoryEx as _},
+    theories::{
+        ArraysAtom, ArraysSort, CoreAtom, CoreSort, IntsAtom, IntsSort, Reals_IntsAtom, RealsAtom,
+        RealsSort,
+    },
 };
 
 use itertools::*;
@@ -83,11 +85,18 @@ impl backend::Manager for Z3Manager {
     }
 }
 
-type BindMap = rpds::HashTrieMap<smt::Binding, z3::Ast>;
-
 impl Z3Manager {
     fn sort_to_z3(&self, sort: &smt::Sort) -> Result<z3::Sort> {
-        todo!()
+        match Z3ALLSort::try_from(sort) {
+            Ok(sort) => self.z3sort_to_z3(sort),
+            Err(_) => Err(backend::Error::new(
+                Z3.name(),
+                backend::ErrorKind::ViolatedPrecondition(format!(
+                    "unknown primitive sort or mismatching arguments: `{}`",
+                    sort.head.name()
+                )),
+            )),
+        }
     }
 
     fn term_to_z3(&self, term: &smt::Term) -> Result<z3::Ast> {
@@ -211,6 +220,39 @@ impl Z3Manager {
                 def.name
             )),
         ))
+    }
+
+    fn sort_argument_to_sort<'s>(&self, arg: &'s smt::SortArgument) -> Result<&'s smt::Sort> {
+        match arg {
+            smt::SortArgument::Sort(sort) => Ok(sort),
+            smt::SortArgument::Value(_) => Err(backend::Error::new(
+                Z3.name(),
+                backend::ErrorKind::ViolatedPrecondition("expected sort, found a value".into()),
+            )),
+        }
+    }
+
+    fn z3sort_to_z3(&self, sort: Z3ALLSort) -> Result<z3::Sort> {
+        Ok(match sort {
+            Z3ALLSort::Core(sort) => match sort {
+                CoreSort::Bool => self.z3context.mk_bool_sort(),
+            },
+            Z3ALLSort::Ints(sort) => match sort {
+                IntsSort::Int => self.z3context.mk_int_sort(),
+            },
+            Z3ALLSort::Reals(sort) => match sort {
+                RealsSort::Real => self.z3context.mk_real_sort(),
+            },
+            Z3ALLSort::Reals_Ints(_) => unreachable!(),
+            Z3ALLSort::Arrays(sort) => match sort {
+                ArraysSort::Array(index, range) => {
+                    let index = self.sort_to_z3(self.sort_argument_to_sort(index)?)?;
+                    let range = self.sort_to_z3(self.sort_argument_to_sort(range)?)?;
+
+                    self.z3context.mk_array_sort(&[index], &range)
+                }
+            },
+        })
     }
 
     fn z3atom_to_z3(&self, atom: &Z3ALLAtom) -> Result<z3::Ast> {

@@ -124,24 +124,42 @@ impl ToTokens for Root {
             quote!()
         };
 
-        let atom = syn::Ident::new(&format!("{name}Atom"), name.span());
+        let atomenum = syn::Ident::new(&format!("{name}Atom"), name.span());
+        let sortenum = syn::Ident::new(&format!("{name}Sort"), name.span());
 
-        let mut cases = Vec::new();
-        let mut into = Vec::new();
-        let mut try_from = Vec::new();
+        let mut atom_cases = Vec::new();
+        let mut atom_into = Vec::new();
+        let mut atom_try_from = Vec::new();
+        let mut sort_cases = Vec::new();
+        let mut sort_into = Vec::new();
+        let mut sort_try_from = Vec::new();
         for theory in &theories {
             let name = &theory.segments.last().unwrap().ident;
 
-            cases.push(quote! {
+            atom_cases.push(quote! {
                 #[allow(nonstandard_style)]
                 #name(<#theory as formally::smt::theories::TheoryEx>::Atom<'t>)
             });
-            into.push(quote! {
-                #atom::#name(atom) => atom.into()
+            atom_into.push(quote! {
+                #atomenum::#name(atom) => atom.into()
             });
-            try_from.push(quote! {
+            atom_try_from.push(quote! {
                 match <<#theory as formally::smt::theories::TheoryEx>::Atom<'t> as TryFrom<&'t formally::smt::BoundAtom>>::try_from(atom) {
-                    Ok(atom) => return Ok(#atom::#name(atom)),
+                    Ok(atom) => return Ok(#atomenum::#name(atom)),
+                    Err(_) => {},
+                }
+            });
+
+            sort_cases.push(quote! {
+                #[allow(nonstandard_style)]
+                #name(<#theory as formally::smt::theories::TheoryEx>::Sort<'t>)
+            });
+            sort_into.push(quote! {
+                #sortenum::#name(sort) => sort.into()
+            });
+            sort_try_from.push(quote! {
+                match <<#theory as formally::smt::theories::TheoryEx>::Sort<'t> as TryFrom<&'t formally::smt::Sort>>::try_from(sort) {
+                    Ok(sort) => return Ok(#sortenum::#name(sort)),
                     Err(_) => {},
                 }
             })
@@ -198,30 +216,53 @@ impl ToTokens for Root {
 
             #standard
 
-            pub enum #atom<'t> {
-                #(#cases),*
+            pub enum #atomenum<'t> {
+                #(#atom_cases),*
             }
 
-            impl<'t> Into<formally::smt::BoundAtom> for #atom<'t> {
+            impl<'t> Into<formally::smt::BoundAtom> for #atomenum<'t> {
                 fn into(self) -> formally::smt::BoundAtom {
                     match self {
-                        #(#into),*
+                        #(#atom_into),*
                     }
                 }
             }
 
-            impl<'t> TryFrom<&'t formally::smt::BoundAtom> for #atom<'t> {
+            impl<'t> TryFrom<&'t formally::smt::BoundAtom> for #atomenum<'t> {
                 type Error = &'t formally::smt::BoundAtom;
 
                 fn try_from(atom: &'t formally::smt::BoundAtom) -> Result<Self, Self::Error> {
-                    #(#try_from)*
+                    #(#atom_try_from)*
 
                     return Err(atom)
                 }
             }
 
+            pub enum #sortenum<'t> {
+                #(#sort_cases),*
+            }
+
+            impl<'t> Into<formally::smt::Sort> for #sortenum<'t> {
+                fn into(self) -> formally::smt::Sort {
+                    match self {
+                        #(#sort_into),*
+                    }
+                }
+            }
+
+            impl<'t> TryFrom<&'t formally::smt::Sort> for #sortenum<'t> {
+                type Error = &'t formally::smt::Sort;
+
+                fn try_from(sort: &'t formally::smt::Sort) -> Result<Self, Self::Error> {
+                    #(#sort_try_from)*
+
+                    return Err(sort)
+                }
+            }
+
             impl formally::smt::logics::LogicEx for #name {
-                type Atom<'t> = #atom<'t>;
+                type Atom<'t> = #atomenum<'t>;
+                type Sort<'t> = #sortenum<'t>;
             }
         })
     }

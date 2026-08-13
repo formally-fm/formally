@@ -82,6 +82,7 @@ pub trait Theory {
 
 pub trait TheoryEx: Theory {
     type Atom<'t>: Into<BoundAtom> + TryFrom<&'t BoundAtom, Error = &'t BoundAtom>;
+    type Sort<'t>: Into<Sort> + TryFrom<&'t Sort, Error = &'t Sort>;
 }
 
 /// An instance of [Theory] combining multiple theories together.

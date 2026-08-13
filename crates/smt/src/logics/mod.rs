@@ -74,6 +74,7 @@ pub trait Logic {
 
 pub trait LogicEx {
     type Atom<'t>: Into<BoundAtom> + TryFrom<&'t BoundAtom, Error = &'t BoundAtom>;
+    type Sort<'t>: Into<Sort> + TryFrom<&'t Sort, Error = &'t Sort>;
 }
 
 #[distributed_slice]

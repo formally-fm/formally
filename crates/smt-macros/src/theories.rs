@@ -580,28 +580,28 @@ impl ToTokens for Attributed<Theory> {
             })
         }
 
-        let atom = syn::Ident::new(&format!("{theory}Atom"), theory.span());
+        let atomenum = syn::Ident::new(&format!("{theory}Atom"), theory.span());
 
-        let mut cases = Vec::new();
-        let mut into = Vec::new();
-        let mut try_from = Vec::new();
+        let mut atom_cases = Vec::new();
+        let mut atom_into = Vec::new();
+        let mut atom_try_from = Vec::new();
         for cnst in &consts {
             let ident = &cnst.node.ident;
             let cap = capitalize(ident);
 
-            cases.push(quote!(#cap));
+            atom_cases.push(quote!(#cap));
 
-            into.push(quote! {
-                #atom::#cap => formally::smt::BoundAtom {
+            atom_into.push(quote! {
+                #atomenum::#cap => formally::smt::BoundAtom {
                     head: #module::#ident.clone().into(),
                     arguments: vec![],
                     span: None
                 }
             });
 
-            try_from.push(quote! {
+            atom_try_from.push(quote! {
                 else if atom.head.function == #module::#ident.clone().into() {
-                    Ok(#atom::#cap)
+                    Ok(#atomenum::#cap)
                 }
             })
         }
@@ -610,18 +610,18 @@ impl ToTokens for Attributed<Theory> {
             let cap = capitalize(ident);
             let mut args = Vec::new();
             if get_flag_from_attrs(&func.attrs).is_some() {
-                cases.push(quote!(#cap(&'t [formally::smt::Term])));
-                into.push(quote! {
-                    #atom::#cap(arguments) => formally::smt::BoundAtom {
+                atom_cases.push(quote!(#cap(&'t [formally::smt::Term])));
+                atom_into.push(quote! {
+                    #atomenum::#cap(arguments) => formally::smt::BoundAtom {
                         head: #module::#ident.clone().into(),
                         arguments: arguments.to_vec(),
                         span: None
                     }
                 });
 
-                try_from.push(quote! {
+                atom_try_from.push(quote! {
                     else if atom.head.function == #module::#ident.clone().into() {
-                        Ok(#atom::#cap(atom.arguments.as_slice()))
+                        Ok(#atomenum::#cap(atom.arguments.as_slice()))
                     }
                 })
             } else {
@@ -633,20 +633,20 @@ impl ToTokens for Attributed<Theory> {
                     argnames.push(syn::Ident::new(&format!("arg{i}"), Span::call_site()));
                     argsvec.push(quote!(&atom.arguments[#i]));
                 }
-                cases.push(quote!(#cap(#(#args),*)));
+                atom_cases.push(quote!(#cap(#(#args),*)));
 
-                into.push(quote! {
-                    #atom::#cap(#(#argnames),*) => formally::smt::BoundAtom {
+                atom_into.push(quote! {
+                    #atomenum::#cap(#(#argnames),*) => formally::smt::BoundAtom {
                         head: #module::#ident.clone().into(),
                         arguments: vec![#(#argnames.clone()),*],
                         span: None
                     }
                 });
 
-                try_from.push(quote! {
+                atom_try_from.push(quote! {
                     else if atom.head.function == #module::#ident.clone().into() {
                         if atom.arguments.len() == #argslen {
-                            Ok(#atom::#cap(#(#argsvec),*))
+                            Ok(#atomenum::#cap(#(#argsvec),*))
                         } else {
                             Err(atom)
                         }
@@ -654,6 +654,69 @@ impl ToTokens for Attributed<Theory> {
                 })
             }
         }
+
+        let sortenum = syn::Ident::new(&format!("{theory}Sort"), theory.span());
+
+        let mut hasparams = false;
+        let mut sort_cases = Vec::new();
+        let mut sort_into = Vec::new();
+        let mut sort_try_from = Vec::new();
+        for sort in &sorts {
+            let ident = &sort.node.ident;
+            let mut params = Vec::new();
+            let mut paramnames = Vec::new();
+            let mut paramsvec = Vec::new();
+            let paramslen = sort.node.params.len();
+            if paramslen > 0 {
+                hasparams = true;
+            }
+            for i in 0..paramslen {
+                params.push(quote!(&'t formally::smt::SortArgument));
+                paramnames.push(sort.node.params[i].name.clone());
+                paramsvec.push(quote!(&sort.arguments[#i]));
+            }
+
+            if params.is_empty() {
+                sort_cases.push(quote!(#ident));
+                sort_into.push(quote! {
+                    #sortenum::#ident => formally::smt::Sort {
+                        head: #module::#ident.clone().into(),
+                        arguments: vec![],
+                        span: None
+                    }
+                });
+                sort_try_from.push(quote! {
+                    else if sort.head == #module::#ident.clone().into() {
+                        if sort.arguments.len() == 0 {
+                            Ok(#sortenum::#ident)
+                        } else {
+                            Err(sort)
+                        }
+                    }
+                })
+            } else {
+                sort_cases.push(quote!(#ident(#(#params),*)));
+                sort_into.push(quote! {
+                    #sortenum::#ident(#(#paramnames),*) => formally::smt::Sort {
+                        head: #module::#ident.clone().into(),
+                        arguments: vec![#(#paramnames.clone()),*],
+                        span: None
+                    }
+                });
+                sort_try_from.push(quote! {
+                    else if sort.head == #module::#ident.clone().into() {
+                        if sort.arguments.len() == #paramslen {
+                            Ok(#sortenum::#ident(#(#paramsvec),*))
+                        } else {
+                            Err(sort)
+                        }
+                    }
+                })
+            }
+
+        }
+
+        let sort_lf = if hasparams { quote!(<'t>) } else { quote!() };
 
         tokens.extend(quote! {
             #[derive(Default, Clone, Copy, Hash, PartialEq, Eq)]
@@ -713,31 +776,55 @@ impl ToTokens for Attributed<Theory> {
                 }
             }
 
-            pub enum #atom<'t> {
-                #(#cases),*
+            pub enum #atomenum<'t> {
+                #(#atom_cases),*
             }
 
-            impl Into<formally::smt::BoundAtom> for #atom<'_> {
+            impl Into<formally::smt::BoundAtom> for #atomenum<'_> {
                 fn into(self) -> formally::smt::BoundAtom {
                     match self {
-                        #(#into),*
+                        #(#atom_into),*
                     }
                 }
             }
 
-            impl<'t> TryFrom<&'t formally::smt::BoundAtom> for #atom<'t> {
+            impl<'t> TryFrom<&'t formally::smt::BoundAtom> for #atomenum<'t> {
                 type Error = &'t formally::smt::BoundAtom;
 
-                fn try_from(atom: &'t formally::smt::BoundAtom) -> Result<#atom, Self::Error> {
+                fn try_from(atom: &'t formally::smt::BoundAtom) -> Result<#atomenum<'t>, Self::Error> {
                     if false { unreachable!() }
-                    #(#try_from)* else {
+                    #(#atom_try_from)* else {
                         Err(atom)
                     }
                 }
             }
 
+            pub enum #sortenum #sort_lf {
+                #(#sort_cases),*
+            }
+
+            impl #sort_lf Into<formally::smt::Sort> for #sortenum #sort_lf {
+                fn into(self) -> formally::smt::Sort {
+                    match self {
+                        #(#sort_into),*
+                    }
+                }
+            }
+
+            impl<'t> TryFrom<&'t formally::smt::Sort> for #sortenum #sort_lf {
+                type Error = &'t formally::smt::Sort;
+
+                fn try_from(sort: &'t formally::smt::Sort) -> Result<#sortenum #sort_lf, Self::Error> {
+                    if false { unreachable!() }
+                    #(#sort_try_from)* else {
+                        Err(sort)
+                    }
+                }
+            }
+
             impl formally::smt::theories::TheoryEx for #theory {
-                type Atom<'t> = #atom<'t>;
+                type Atom<'t> = #atomenum<'t>;
+                type Sort<'t> = #sortenum #sort_lf;
             }
         })
     }
