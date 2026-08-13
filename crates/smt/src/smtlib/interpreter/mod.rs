@@ -379,7 +379,7 @@ impl Interpreter {
     fn define_fun(state: &mut State, def: ast::FunctionDef) -> Result<()> {
         let mut domain = Vec::new();
         for arg in def.domain {
-            domain.push(smt::Parameter::new(
+            domain.push(smt::Binding::new(
                 Identifier::from(arg.name.inner()).over(arg.name.span()),
                 Interpreter::sort_to_smt(&state.solver, &arg.sort)?,
                 arg.span.clone(),
@@ -429,7 +429,7 @@ impl Interpreter {
                                 let functions = state.solver.functions();
                                 let function = functions.lookup(symbol.clone()).one()?;
                                 let value = match function {
-                                    smt::Function::Parameter(_) => todo!(),
+                                    smt::Function::Binding(_) => todo!(),
                                     smt::Function::Primitive(_) => todo!(),
                                     smt::Function::User(smt::UserFunction::Declared(decl)) => {
                                         model.value(decl)

@@ -318,15 +318,15 @@ impl Solver {
     /// [Definition::constant()], and [Definition::sort()] for details.
     pub fn define<T: ToTerm>(&mut self, def: Definition<T>) -> Result<Defined> {
         let mut def = self.manager.definition(def);
-        
+
         let mut nested = Env::new().with_parent(self.env());
-        for param in &def.domain {
-            param.sort().type_check()?;
+        for bind in &def.domain {
+            bind.sort().type_check()?;
             nested
                 .functions
-                .add(param.name(), Function::Parameter(param.clone()));
+                .add(bind.name(), Function::Binding(bind.clone()));
         }
-        
+
         def.body = nested.resolve(&def.body, Role::Function, |k| self.manager.pool().term(k))?;
         def.body.type_check()?;
 

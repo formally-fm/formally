@@ -29,13 +29,7 @@ use derive_more::From;
 use transitive::Transitive;
 
 pub use rug::{Integer, Rational};
-use std::hash::Hasher;
-use std::{
-    cell::RefCell,
-    hash::Hash,
-    ops::Deref,
-    sync::{Arc, Weak},
-};
+use std::{hash::Hash, ops::Deref, sync::Arc};
 
 /// A constant term.
 ///

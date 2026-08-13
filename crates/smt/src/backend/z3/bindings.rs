@@ -135,6 +135,19 @@ impl Context {
         })
     }
 
+    pub fn mk_const(&self, name: &str, sort: Sort) -> Ast {
+        let name = CString::new(name.as_bytes()).unwrap();
+
+        Ast::new(self, unsafe {
+            Z3_mk_const(
+                self.ctx,
+                Z3_mk_string_symbol(self.ctx, name.as_ptr()).unwrap(),
+                sort.sort,
+            )
+            .unwrap()
+        })
+    }
+
     pub fn mk_true(&self) -> Ast {
         Ast::new(self, unsafe { Z3_mk_true(self.ctx).unwrap() })
     }

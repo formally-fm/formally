@@ -358,7 +358,7 @@ fn func_static(func: Attributed<&Function>) -> TokenStream {
                 #name;
 
                 #(
-                    let #params = &formally::smt::Parameter::new(#sparams, formally::smt::Sort::sort(), None);
+                    let #params = &formally::smt::Binding::new(#sparams, formally::smt::Sort::sort(), None);
                 )*
 
                 formally::smt::Primitive::new(

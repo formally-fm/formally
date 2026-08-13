@@ -64,7 +64,7 @@ impl SortArgument {
     pub(crate) fn matches_with(
         &self,
         instance: &SortArgument,
-        matches: &mut HashMap<Parameter, Sort>,
+        matches: &mut HashMap<Binding, Sort>,
     ) -> bool {
         match (self, instance) {
             (SortArgument::Value(this), SortArgument::Value(inst)) => this == inst,
@@ -235,10 +235,10 @@ impl Sort {
     pub(crate) fn matches_with(
         &self,
         argument: &Sort,
-        matches: &mut HashMap<Parameter, Sort>,
+        matches: &mut HashMap<Binding, Sort>,
     ) -> bool {
         match (&self.head, &argument.head) {
-            (Function::Parameter(this), _) => {
+            (Function::Binding(this), _) => {
                 if let Some(this) = matches.get(this).cloned() {
                     this.head == argument.head
                         && this.arguments.len() == argument.arguments.len()
@@ -271,13 +271,13 @@ impl Sort {
         }
     }
 
-    pub(crate) fn instantiate(&self, matches: &HashMap<Parameter, Sort>) -> Result<Sort> {
-        if let Function::Parameter(parameter) = &self.head {
-            return matches.get(parameter).cloned().ok_or_else(|| {
+    pub(crate) fn instantiate(&self, matches: &HashMap<Binding, Sort>) -> Result<Sort> {
+        if let Function::Binding(bind) = &self.head {
+            return matches.get(bind).cloned().ok_or_else(|| {
                 internal!(
                     None,
                     "usage of unconstrained sort parameter: {}",
-                    parameter.name()
+                    bind.name()
                 );
                 DiagnosticEmitted
             });

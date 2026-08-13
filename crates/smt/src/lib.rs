@@ -76,7 +76,7 @@
 //!
 //! Terms are built on top of [Function] objects which can be either:
 //! 1. [Primitive] entities such as the ones defined by a theory, e.g. [theories::Ints::plus()].
-//! 2. [Parameter] entities used in function definitions to represent function parameters.
+//! 2. [Binding] entities used in function definitions to represent function parameters.
 //! 3. [Declared] entities, which are the unknowns of the SMT problem, which the solver has to find
 //!    values of.
 //! 2. [Defined] entities, which have a known definition and are mostly just shortcuts to repeat
