@@ -64,11 +64,14 @@ pub enum Head {
 pub enum Term {
     Int(syn::LitInt),
     Real(syn::LitFloat),
-    App { head: Head, args: Vec<Term> },
+    App { head: Head, args: Vec<TermArgument> },
 }
 
 #[derive(Clone)]
-pub struct Root(Term);
+pub enum TermArgument {
+    Term(Term),
+    Seq(syn::Ident),
+}
 
 fn peek_punct(input: ParseStream) -> bool {
     matches!(input.cursor().token_tree(), Some((TokenTree::Punct(punct), _)) if punct.as_char() != '#')
@@ -131,6 +134,23 @@ impl Parse for Head {
     }
 }
 
+impl Parse for TermArgument {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if input.peek(Token![#]) && input.peek2(syn::token::Paren) {
+            input.parse::<Token![#]>()?;
+            let content;
+            parenthesized!(content in input);
+            content.parse::<Token![#]>()?;
+            let ident = content.parse()?;
+            input.parse::<Token![*]>()?;
+
+            Ok(TermArgument::Seq(ident))
+        } else {
+            Ok(TermArgument::Term(input.parse()?))
+        }
+    }
+}
+
 impl Parse for Term {
     fn parse(input: ParseStream) -> Result<Self> {
         if input.peek(syn::LitInt) {
@@ -156,16 +176,20 @@ impl Parse for Term {
     }
 }
 
-impl Parse for Root {
-    fn parse(input: ParseStream) -> Result<Self> {
-        Ok(Root(input.parse()?))
-    }
-}
-
-impl ToTokens for Root {
+impl ToTokens for TermArgument {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let Root(term) = self;
-        tokens.append_all(quote!(& #term));
+        match self {
+            TermArgument::Term(term) => tokens.extend(quote! {
+                formally::smt::support::TermArgument::Term(
+                    formally::smt::support::Term::from((#term).clone())
+                )
+            }),
+            TermArgument::Seq(ident) => tokens.extend(quote! {
+                formally::smt::support::TermArgument::Seq(
+                    (#ident).clone().into_iter().map(|t| formally::smt::support::Term::from(t)).collect()
+                )
+            }),
+        }
     }
 }
 
@@ -175,7 +199,8 @@ impl ToTokens for Term {
             Term::Int(lit) => tokens.append_all(quote! {
                 formally::smt::support::Term::Integer(
                     formally::smt::support::Constant::Integer {
-                        value: #lit
+                        value: #lit,
+                        span: None
                     }
                 )
             }),
@@ -193,7 +218,8 @@ impl ToTokens for Term {
                     tokens.append_all(quote! {
                         formally::smt::support::Term::Atom(formally::smt::support::Atom {
                             head: formally::smt::support::AtomHead::from(formally::support::Identifier::from(#head.to_string())),
-                            arguments: &[#(#args),*]
+                            arguments: &[#(#args),*],
+                            span: None
                         })
                     })
                 }
@@ -206,7 +232,8 @@ impl ToTokens for Term {
                         tokens.append_all(quote! {
                             formally::smt::support::Term::Atom(formally::smt::support::Atom {
                                 head: formally::smt::support::AtomHead::from((#head).clone()),
-                                arguments: &[#(#args),*]
+                                arguments: &[#(#args),*],
+                                span: None
                             })
                         })
                     }

@@ -153,7 +153,7 @@ fn derive_enum(ident: Ident, generics: Generics, input: DataEnum) -> Result<Toke
 
     Ok(quote! {
         impl #impl_generics formally::support::Locatable for #ident #ty_generics #where_clause {
-            type Located = #ident;
+            type Located = Self;
 
             #[allow(clippy::needless_update)]
             fn over(self, span: impl ::std::convert::Into<::std::option::Option<formally::support::Span>>) -> Self {

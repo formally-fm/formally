@@ -36,7 +36,7 @@ impl Interpreter {
     fn sort_to_smt_term(sort: &ast::Sort, solver: &smt::Solver) -> smt::Term {
         match sort {
             ast::Sort::Simple(ast::Identifier::Symbol(name)) => {
-                let head = Identifier::from(name.inner().to_string()).over(name.span());
+                let head = Identifier::from(name.inner()).over(name.span());
                 solver.term(term!(#head))
             }
             ast::Sort::Application(ast::SortApplication {
@@ -44,15 +44,14 @@ impl Interpreter {
                 args,
                 span,
             }) => {
-                let head = Identifier::from(head.inner()).over(head.span());
-                solver.term(smt::TermKind::Atom(smt::Atom::Unbound(smt::UnboundAtom {
-                    head: head.into_owned(),
-                    arguments: args
-                        .iter()
-                        .map(|s| Interpreter::sort_to_smt_term(s, solver))
-                        .collect(),
-                    span: span.clone(),
-                })))
+                let head = Identifier::from(head.inner())
+                    .into_owned()
+                    .over(head.span());
+                let args = args
+                    .iter()
+                    .map(|s| Interpreter::sort_to_smt_term(s, solver));
+                
+                solver.term(term!(#head #(#args)*).over(span.clone()))
             }
             _ => todo!(),
         }

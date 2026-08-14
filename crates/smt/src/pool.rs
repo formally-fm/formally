@@ -137,41 +137,55 @@ impl ToTerm for Sort {
 
 impl ToTerm for &support::Term<'_> {
     fn to_term<P: TermPool>(self, pool: &P) -> Term {
+        self.clone().to_term(pool)
+    }
+}
+
+impl ToTerm for support::Term<'_> {
+    fn to_term<P: TermPool>(self, pool: &P) -> Term {
         match self {
             support::Term::Term(t) => t.clone(),
             support::Term::TermKind(k) => pool.shared(k.clone()),
             support::Term::Constant(c) => {
                 let c = match c {
-                    support::Constant::Integer { value } => Constant::Integer {
-                        value: Integer::from(*value),
-                        span: None,
+                    support::Constant::Integer { value, span } => Constant::Integer {
+                        value: Integer::from(value),
+                        span,
                     },
-                    support::Constant::Rational { value } => Constant::Rational {
+                    support::Constant::Rational { value, span } => Constant::Rational {
                         value: Rational::from_str_radix(value, 10).unwrap(),
-                        span: None,
+                        span,
                     },
                 };
                 pool.term(TermKind::Constant(c))
             }
-            support::Term::Atom(a) => match &a.head {
-                support::AtomHead::Bound(support::BoundHead { function }) => {
-                    pool.term(TermKind::Atom(Atom::Bound(BoundAtom {
-                        head: Reference {
-                            function: function.clone(),
-                            span: None,
-                        },
-                        arguments: a.arguments.iter().map(|t| pool.term(t)).collect(),
-                        span: None,
-                    })))
+            support::Term::Atom(a) => {
+                let mut arguments = Vec::new();
+                for arg in a.arguments {
+                    match arg {
+                        support::TermArgument::Term(t) => arguments.push(pool.term(t)),
+                        support::TermArgument::Seq(seq) => {
+                            arguments.extend(seq.iter().map(|arg| pool.term(arg)))
+                        }
+                    }
                 }
-                support::AtomHead::Unbound(support::UnboundHead { name }) => {
-                    pool.term(TermKind::Atom(Atom::Unbound(UnboundAtom {
-                        head: name.clone(),
-                        arguments: a.arguments.iter().map(|t| pool.term(t)).collect(),
-                        span: None,
-                    })))
+                match a.head {
+                    support::AtomHead::Bound(support::BoundHead { function }) => {
+                        pool.term(TermKind::Atom(Atom::Bound(BoundAtom {
+                            head: Reference::from(function),
+                            arguments,
+                            span: a.span,
+                        })))
+                    }
+                    support::AtomHead::Unbound(support::UnboundHead { name }) => {
+                        pool.term(TermKind::Atom(Atom::Unbound(UnboundAtom {
+                            head: name.clone(),
+                            arguments,
+                            span: a.span,
+                        })))
+                    }
                 }
-            },
+            }
         }
     }
 }

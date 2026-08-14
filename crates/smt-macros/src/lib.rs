@@ -85,7 +85,7 @@ use syn::parse_macro_input;
 /// Expansion of repetitions from iterators, as in the `quote` macro, is not supported *yet*.
 #[proc_macro]
 pub fn term(input: TokenStream) -> TokenStream {
-    let term = parse_macro_input!(input as term::Root);
+    let term = parse_macro_input!(input as term::Term);
 
     quote!(#term).into()
 }

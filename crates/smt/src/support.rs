@@ -23,12 +23,18 @@
 //
 
 use crate::*;
-use formally::support::Identifier;
+use formally::support::{Identifier, Locatable, Located, Span};
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub enum Constant {
-    Integer { value: u64 },
-    Rational { value: &'static str },
+    Integer {
+        value: u64,
+        span: Option<Span>,
+    },
+    Rational {
+        value: &'static str,
+        span: Option<Span>,
+    },
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -48,12 +54,19 @@ pub enum AtomHead {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct Atom<'t> {
-    pub head: AtomHead,
-    pub arguments: &'t [Term<'t>],
+pub enum TermArgument<'t> {
+    Term(Term<'t>),
+    Seq(Vec<Term<'t>>),
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
+pub struct Atom<'t> {
+    pub head: AtomHead,
+    pub arguments: &'t [TermArgument<'t>],
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located)]
 pub enum Term<'t> {
     Term(term::Term),
     TermKind(TermKind),
@@ -61,9 +74,25 @@ pub enum Term<'t> {
     Atom(Atom<'t>),
 }
 
+impl<'t> Locatable for Term<'t> {
+    type Located = Term<'t>;
+
+    fn over(self, span: impl Into<Option<Span>>) -> Term<'t> {
+        match self {
+            Term::Term(term) => Term::TermKind(term.kind().clone().over(span)),
+            Term::TermKind(kind) => Term::TermKind(kind.over(span)),
+            Term::Constant(cnst) => Term::Constant(cnst.over(span)),
+            Term::Atom(atom) => Term::Atom(atom.over(span)),
+        }
+    }
+}
+
 impl Default for Term<'_> {
     fn default() -> Self {
-        Term::Constant(Constant::Integer { value: 0 })
+        Term::Constant(Constant::Integer {
+            value: 0,
+            span: None,
+        })
     }
 }
 
