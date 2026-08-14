@@ -331,7 +331,7 @@ mod term;
 mod type_check;
 
 #[doc(hidden)]
-pub mod macros;
+pub mod support;
 
 pub mod backend;
 pub mod logics;

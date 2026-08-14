@@ -76,7 +76,7 @@ impl Interpreter {
         }
         .over(span);
 
-        solver.term(smt::TermKind::from(cnst))
+        solver.term(term!(#cnst))
     }
 
     fn app_to_smt(

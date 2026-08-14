@@ -135,26 +135,26 @@ impl ToTerm for Sort {
     }
 }
 
-impl ToTerm for &macros::Term<'_> {
+impl ToTerm for &support::Term<'_> {
     fn to_term<P: TermPool>(self, pool: &P) -> Term {
         match self {
-            macros::Term::Term(t) => t.clone(),
-            macros::Term::TermKind(k) => pool.shared(k.clone()),
-            macros::Term::Constant(c) => {
+            support::Term::Term(t) => t.clone(),
+            support::Term::TermKind(k) => pool.shared(k.clone()),
+            support::Term::Constant(c) => {
                 let c = match c {
-                    macros::Constant::Integer { value } => Constant::Integer {
+                    support::Constant::Integer { value } => Constant::Integer {
                         value: Integer::from(*value),
                         span: None,
                     },
-                    macros::Constant::Rational { value } => Constant::Rational {
+                    support::Constant::Rational { value } => Constant::Rational {
                         value: Rational::from_str_radix(value, 10).unwrap(),
                         span: None,
                     },
                 };
                 pool.term(TermKind::Constant(c))
             }
-            macros::Term::Atom(a) => match &a.head {
-                macros::AtomHead::Bound(macros::BoundHead { function }) => {
+            support::Term::Atom(a) => match &a.head {
+                support::AtomHead::Bound(support::BoundHead { function }) => {
                     pool.term(TermKind::Atom(Atom::Bound(BoundAtom {
                         head: Reference {
                             function: function.clone(),
@@ -164,7 +164,7 @@ impl ToTerm for &macros::Term<'_> {
                         span: None,
                     })))
                 }
-                macros::AtomHead::Unbound(macros::UnboundHead { name }) => {
+                support::AtomHead::Unbound(support::UnboundHead { name }) => {
                     pool.term(TermKind::Atom(Atom::Unbound(UnboundAtom {
                         head: name.clone(),
                         arguments: a.arguments.iter().map(|t| pool.term(t)).collect(),

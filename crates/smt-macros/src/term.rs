@@ -26,8 +26,7 @@ use proc_macro2::{Punct, Spacing, TokenStream, TokenTree};
 
 use syn::{
     Token, parenthesized,
-    parse::{Parse, ParseStream},
-    token,
+    parse::{Parse, ParseStream, Result},
 };
 
 use quote::{ToTokens, TokenStreamExt, quote};
@@ -63,56 +62,19 @@ pub enum Head {
 
 #[derive(Clone)]
 pub enum Term {
-    Int(String),
-    Real(String),
-    Ref(syn::Ident),
+    Int(syn::LitInt),
+    Real(syn::LitFloat),
     App { head: Head, args: Vec<Term> },
 }
 
-pub struct Root {
-    pub head: Head,
-    pub args: Vec<Term>,
-}
-
-impl Parse for Head {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let lh = input.lookahead1();
-        if lh.peek(syn::Ident) {
-            Ok(Head::Unbound(Name::Ident(input.parse()?)))
-        } else if let Ok(puncts) = parse_punct_sequence(input) {
-            Ok(Head::Unbound(Name::Punct(puncts)))
-        } else if lh.peek(Token![#]) {
-            input.step(|cursor| {
-                let (_sharp, tail) = cursor.token_tree().unwrap();
-
-                match tail.token_tree() {
-                    Some((TokenTree::Ident(ident), tail)) => Ok((Head::Bound(ident), tail)),
-                    _ => Err(cursor.error("after a '#' we expect an identifier to expand")),
-                }
-            })
-        } else {
-            Err(lh.error())
-        }
-    }
-}
-
-impl Parse for Root {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let head = input.parse()?;
-        let mut args = Vec::new();
-        while !input.is_empty() {
-            args.push(input.parse()?);
-        }
-
-        Ok(Root { head, args })
-    }
-}
+#[derive(Clone)]
+pub struct Root(Term);
 
 fn peek_punct(input: ParseStream) -> bool {
     matches!(input.cursor().token_tree(), Some((TokenTree::Punct(punct), _)) if punct.as_char() != '#')
 }
 
-fn parse_punct_sequence(input: ParseStream) -> syn::Result<Vec<Punct>> {
+fn parse_punct_sequence(input: ParseStream) -> Result<Vec<Punct>> {
     input.step(|cursor| {
         let mut tail = *cursor;
         let mut puncts = Vec::new();
@@ -133,58 +95,77 @@ fn parse_punct_sequence(input: ParseStream) -> syn::Result<Vec<Punct>> {
         if found {
             Ok((puncts, tail))
         } else {
-            Err(cursor.error("punctuation not found"))
+            Err(cursor.error("expected punctuation"))
         }
     })
 }
 
-impl Parse for Term {
-    fn parse(input: ParseStream) -> syn::Result<Term> {
-        let lh = input.lookahead1();
-        if lh.peek(syn::Ident) || peek_punct(input) {
-            Ok(Term::App {
-                head: input.parse()?,
-                args: Vec::new(),
-            })
-        } else if lh.peek(syn::LitInt) {
-            let lit: syn::LitInt = input.parse()?;
-            Ok(Term::Int(lit.base10_digits().to_string()))
-        } else if lh.peek(syn::LitFloat) {
-            let lit: syn::LitFloat = input.parse()?;
-            Ok(Term::Real(lit.base10_digits().to_string()))
-        } else if lh.peek(Token![#]) {
-            input.step(|cursor| {
-                let (_sharp, tail) = cursor.token_tree().unwrap();
+impl Parse for Name {
+    fn parse(input: ParseStream) -> Result<Name> {
+        if input.peek(syn::Ident) {
+            Ok(Name::Ident(input.parse()?))
+        } else if peek_punct(input) {
+            Ok(Name::Punct(parse_punct_sequence(input)?))
+        } else {
+            Err(syn::Error::new(
+                input.span(),
+                "expected SMT-LIBv2 identifier",
+            ))
+        }
+    }
+}
 
-                match tail.token_tree() {
-                    Some((TokenTree::Ident(ident), tail)) => Ok((Term::Ref(ident), tail)),
-                    _ => Err(cursor.error("after a '#' we expect an identifier to expand")),
-                }
-            })
-        } else if lh.peek(token::Paren) {
-            let sexpr;
-            parenthesized!(sexpr in input);
-            let head = sexpr.parse()?;
+impl Parse for Head {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if input.peek(Token![#]) {
+            input.parse::<Token![#]>()?;
+            Ok(Head::Bound(input.parse()?))
+        } else if input.peek(syn::Ident) || peek_punct(input) {
+            Ok(Head::Unbound(input.parse()?))
+        } else {
+            Err(syn::Error::new(
+                input.span(),
+                "expected SMT-LIBv2 identifier or #expansion",
+            ))
+        }
+    }
+}
+
+impl Parse for Term {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if input.peek(syn::LitInt) {
+            Ok(Term::Int(input.parse()?))
+        } else if input.peek(syn::LitFloat) {
+            Ok(Term::Real(input.parse()?))
+        } else if input.peek(syn::Ident) || input.peek(Token![#]) || peek_punct(input) {
+            let head = input.parse()?;
             let mut args = Vec::new();
-            while !sexpr.is_empty() {
-                args.push(sexpr.parse()?)
+
+            while !input.is_empty() {
+                args.push(input.parse()?);
             }
 
             Ok(Term::App { head, args })
+        } else if input.peek(syn::token::Paren) {
+            let content;
+            parenthesized!(content in input);
+            Ok(content.parse()?)
         } else {
-            Err(lh.error())
+            Err(syn::Error::new(input.span(), "expected SMT-LIBv2 term"))
         }
+    }
+}
+
+impl Parse for Root {
+    fn parse(input: ParseStream) -> Result<Self> {
+        Ok(Root(input.parse()?))
     }
 }
 
 impl ToTokens for Root {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.append_all(quote!(&));
-        Term::App {
-            head: self.head.clone(),
-            args: self.args.clone(),
-        }
-        .to_tokens(tokens);
+        let Root(term) = self;
+        tokens.append_all(quote!(& #term));
     }
 }
 
@@ -192,8 +173,8 @@ impl ToTokens for Term {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Term::Int(lit) => tokens.append_all(quote! {
-                formally::smt::macros::Term::Integer(
-                    formally::smt::macros::Constant::Integer {
+                formally::smt::support::Term::Integer(
+                    formally::smt::support::Constant::Integer {
                         value: #lit
                     }
                 )
@@ -206,25 +187,30 @@ impl ToTokens for Term {
                     }
                 )
             }),
-            Term::Ref(ident) => tokens.append_all(quote! {
-                formally::smt::macros::Term::from(#ident.clone())
-            }),
             Term::App { head, args } => match head {
                 Head::Unbound(head) => {
                     let head = head.to_string();
                     tokens.append_all(quote! {
-                        formally::smt::macros::Term::Atom(formally::smt::macros::Atom {
-                            head: formally::smt::macros::AtomHead::from(formally::support::Identifier::from(#head.to_string())),
+                        formally::smt::support::Term::Atom(formally::smt::support::Atom {
+                            head: formally::smt::support::AtomHead::from(formally::support::Identifier::from(#head.to_string())),
                             arguments: &[#(#args),*]
                         })
                     })
                 }
-                Head::Bound(head) => tokens.append_all(quote! {
-                    formally::smt::macros::Term::Atom(formally::smt::macros::Atom {
-                        head: formally::smt::macros::AtomHead::from((#head).clone()),
-                        arguments: &[#(#args),*]
-                    })
-                }),
+                Head::Bound(head) => {
+                    if args.is_empty() {
+                        tokens.append_all(quote! {
+                            formally::smt::support::Term::from((#head).clone())
+                        })
+                    } else {
+                        tokens.append_all(quote! {
+                            formally::smt::support::Term::Atom(formally::smt::support::Atom {
+                                head: formally::smt::support::AtomHead::from((#head).clone()),
+                                arguments: &[#(#args),*]
+                            })
+                        })
+                    }
+                }
             },
         }
     }
