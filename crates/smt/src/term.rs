@@ -218,37 +218,12 @@ pub enum TermKind {
 /// assert_ne!(Nominal::new(ponens1), Nominal::new(ponens2));
 /// ```
 #[allow(clippy::duplicated_attributes)]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Transitive)]
-#[transitive(from(bool, TermKind))]
-#[transitive(from(Constant, TermKind))]
-#[transitive(from(Atom, TermKind))]
-#[transitive(from(BoundAtom, Atom, TermKind))]
-#[transitive(from(UnboundAtom, Atom, TermKind))]
-#[transitive(from(Identifier<'_>, TermKind, Term))]
-#[transitive(from(Function, TermKind, Term))]
-#[transitive(from(Primitive, TermKind, Term))]
-#[transitive(from(Declared, TermKind, Term))]
-#[transitive(from(Defined, TermKind, Term))]
-pub struct Term(pub(crate) MaybeNominal<Arc<TermKind>>);
-
-impl Term {
-    pub fn new(kind: TermKind) -> Term {
-        Term(MaybeNominal::Structural(Arc::new(kind)))
-    }
-}
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct Term(pub(crate) Nominal<Arc<TermKind>>);
 
 impl Located for Term {
     fn span(&self) -> Option<Span> {
-        match &self.0 {
-            MaybeNominal::Structural(v) => v.span(),
-            MaybeNominal::Nominal(n) => n.span(),
-        }
-    }
-}
-
-impl From<TermKind> for Term {
-    fn from(kind: TermKind) -> Term {
-        Term::new(kind)
+        self.0.span()
     }
 }
 
@@ -277,14 +252,11 @@ impl From<Identifier<'_>> for Atom {
 impl Term {
     /// Get this term's [TermKind].
     pub fn kind(&self) -> &TermKind {
-        match &self.0 {
-            MaybeNominal::Structural(v) => &*v,
-            MaybeNominal::Nominal(n) => &*n,
-        }
+        &self.0
     }
 }
 
-impl<'p> Deref for Term {
+impl Deref for Term {
     type Target = TermKind;
 
     fn deref(&self) -> &TermKind {

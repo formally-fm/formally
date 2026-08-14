@@ -464,8 +464,9 @@ fn capitalize(ident: &syn::Ident) -> syn::Ident {
     if string.is_empty() {
         ident.clone()
     } else {
-        let upper = string.chars().nth(0).unwrap().to_ascii_uppercase();
-        let rest: String = string.chars().skip(1).collect();
+        let mut chars = string.chars();
+        let upper = chars.next().unwrap().to_ascii_uppercase();
+        let rest: String = chars.collect();
         syn::Ident::new(&format!("{upper}{rest}"), ident.span())
     }
 }

@@ -145,36 +145,6 @@ impl Debug for Sort {
     }
 }
 
-impl From<Sort> for Term {
-    fn from(sort: Sort) -> Self {
-        Term::from(TermKind::from(sort))
-    }
-}
-
-impl From<Sort> for TermKind {
-    /// Extract a [Term] representing the given sort.
-    ///
-    /// The resulting term can be turned into a sort again by [Sort::evaluate()].
-    fn from(sort: Sort) -> Self {
-        let arguments = sort
-            .arguments
-            .into_iter()
-            .map(|arg| match arg {
-                SortArgument::Value(c) => Term::from(c),
-                SortArgument::Sort(s) => Term::from(s),
-            })
-            .collect();
-        TermKind::Atom(Atom::Bound(BoundAtom {
-            head: Reference {
-                function: sort.head,
-                span: None,
-            },
-            arguments,
-            span: None,
-        }))
-    }
-}
-
 impl Sort {
     /// Alias for `term.type_check(ctx)` which provide a slightly better notation.
     pub fn of(term: &Term) -> Result<Sort> {

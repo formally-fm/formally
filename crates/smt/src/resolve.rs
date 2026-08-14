@@ -45,24 +45,20 @@ impl Env {
     /// before type checking, because type checking of unbound atoms is not possible. This seems
     /// to require double the calls to [Term::type_check()], but the latter caches its results in
     /// `env.context()`, so each subterm gets type-checked only once anyway.
-    pub fn resolve<C>(&self, term: &Term, role: Role, ctor: C) -> Result<Term>
-    where
-        C: Clone + Fn(TermKind) -> Term,
+    pub fn resolve<P: TermPool>(&self, term: &Term, role: Role, pool: &P) -> Result<Term>
     {
         Ok(match term.kind() {
             TermKind::Constant(_) => term.clone(),
-            TermKind::Atom(Atom::Bound(atom)) => ctor(TermKind::Atom(Atom::Bound(
-                self.resolve_bound(atom, ctor.clone())?,
+            TermKind::Atom(Atom::Bound(atom)) => pool.term(TermKind::Atom(Atom::Bound(
+                self.resolve_bound(atom, pool)?,
             ))),
-            TermKind::Atom(Atom::Unbound(unbound)) => ctor(TermKind::Atom(Atom::Bound(
-                self.resolve_unbound(unbound, role, ctor.clone())?,
+            TermKind::Atom(Atom::Unbound(unbound)) => pool.term(TermKind::Atom(Atom::Bound(
+                self.resolve_unbound(unbound, role, pool)?,
             ))),
         })
     }
 
-    fn resolve_bound<C>(&self, atom: &BoundAtom, ctor: C) -> Result<BoundAtom>
-    where
-        C: Clone + Fn(TermKind) -> Term,
+    fn resolve_bound<P: TermPool>(&self, atom: &BoundAtom, pool: &P) -> Result<BoundAtom>
     {
         let domain = atom.domain();
 
@@ -79,9 +75,9 @@ impl Env {
         let mut resolved = Vec::new();
         for (sort, arg) in zip(domain, &atom.arguments) {
             if Sort::equal(&sort, &Sort::sort()) {
-                resolved.push(self.resolve(arg, Role::Sort, ctor.clone())?);
+                resolved.push(self.resolve(arg, Role::Sort, pool)?);
             } else {
-                resolved.push(self.resolve(arg, Role::Function, ctor.clone())?);
+                resolved.push(self.resolve(arg, Role::Function, pool)?);
             }
         }
 
@@ -92,9 +88,7 @@ impl Env {
         })
     }
 
-    fn resolve_unbound<C>(&self, unbound: &UnboundAtom, role: Role, ctor: C) -> Result<BoundAtom>
-    where
-        C: Clone + Fn(TermKind) -> Term,
+    fn resolve_unbound<P: TermPool>(&self, unbound: &UnboundAtom, role: Role, pool: &P) -> Result<BoundAtom>
     {
         let head = Identifier::from(unbound.head.name()).over(unbound.head.span());
 
@@ -110,7 +104,7 @@ impl Env {
                 };
                 let atom = Diagnostic::with(
                     NullEmitter,
-                    AssertUnwindSafe(|| self.resolve_bound(&atom, ctor.clone())),
+                    AssertUnwindSafe(|| self.resolve_bound(&atom, pool)),
                 )
                 .ok()?;
 

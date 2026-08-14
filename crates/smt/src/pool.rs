@@ -24,99 +24,98 @@
 
 use crate::formally;
 use formally::{smt::*, support::Nominal};
-use std::sync::Arc;
+use std::{cell::RefCell, collections::HashSet, sync::Arc};
 
 use dashmap::DashSet;
-use formally_support::MaybeNominal;
 
-#[derive(Debug, Default)]
-pub struct TermPool {
-    pub(crate) terms: DashSet<Arc<TermKind>>,
+pub trait TermPool: Sized {
+    fn shared(&self, kind: TermKind) -> Term;
+
+    fn term(&self, term: impl ToTerm) -> Term {
+        term.to_term(self)
+    }
 }
 
-impl TermPool {
-    pub fn new() -> TermPool {
-        TermPool::default()
-    }
+#[derive(Debug, Default)]
+pub struct HashPool {
+    pool: RefCell<HashSet<Arc<TermKind>>>,
+}
 
-    pub fn term(&self, t: impl ToTerm) -> Term {
-        t.to_term(self)
+impl HashPool {
+    pub fn new() -> HashPool {
+        HashPool::default()
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct DashPool {
+    pool: DashSet<Arc<TermKind>>,
+}
+
+impl DashPool {
+    pub fn new() -> DashPool {
+        DashPool::default()
+    }
+}
+
+impl TermPool for DashPool {
+    fn shared(&self, kind: TermKind) -> Term {
+        if let Some(kind) = self.pool.get(&kind) {
+            Term(Nominal(kind.clone()))
+        } else {
+            let arc = Arc::new(kind);
+            let term = Term(Nominal(arc.clone()));
+            self.pool.insert(arc);
+
+            term
+        }
+    }
+}
+
+impl TermPool for HashPool {
+    fn shared(&self, kind: TermKind) -> Term {
+        if let Some(kind) = self.pool.borrow().get(&kind) {
+            Term(Nominal(kind.clone()))
+        } else {
+            let arc = Arc::new(kind);
+            let term = Term(Nominal(arc.clone()));
+            self.pool.borrow_mut().insert(arc);
+
+            term
+        }
     }
 }
 
 pub trait ToTerm {
-    fn to_term(self, pool: &TermPool) -> Term;
+    fn to_term<P: TermPool>(self, pool: &P) -> Term;
 }
 
 impl ToTerm for Term {
-    fn to_term(self, pool: &TermPool) -> Term {
-        match self.0 {
-            MaybeNominal::Structural(k) => pool.term(&*k),
-            MaybeNominal::Nominal(_) => self,
-        }
+    fn to_term<P: TermPool>(self, _pool: &P) -> Term {
+        self
     }
 }
 
 impl ToTerm for &Term {
-    fn to_term(self, pool: &TermPool) -> Term {
-        match &self.0 {
-            MaybeNominal::Structural(k) => pool.term(&**k),
-            MaybeNominal::Nominal(_) => self.clone(),
-        }
+    fn to_term<P: TermPool>(self, _pool: &P) -> Term {
+        self.clone()
     }
 }
 
-impl ToTerm for &TermKind {
-    fn to_term(self, pool: &TermPool) -> Term {
-        if let Some(kind) = pool.terms.get(self) {
-            Term(MaybeNominal::Nominal(Nominal(kind.clone())))
-        } else {
-            let arc = Arc::new(self.clone());
-            let term = Term(MaybeNominal::Nominal(Nominal(arc.clone())));
-            pool.terms.insert(arc);
-
-            term
-        }
-    }
-}
-
-impl ToTerm for TermKind {
-    fn to_term(self, pool: &TermPool) -> Term {
-        if let Some(kind) = pool.terms.get(&self) {
-            Term(MaybeNominal::Nominal(Nominal(kind.clone())))
-        } else {
-            let arc = Arc::new(self);
-            let term = Term(MaybeNominal::Nominal(Nominal(arc.clone())));
-            pool.terms.insert(arc);
-
-            term
-        }
+impl<T: Into<TermKind>> ToTerm for T {
+    fn to_term<P: TermPool>(self, pool: &P) -> Term {
+        pool.shared(self.into())
     }
 }
 
 impl ToTerm for &Sort {
-    fn to_term(self, pool: &TermPool) -> Term {
-        let arguments = self
-            .arguments
-            .iter()
-            .map(|arg| match arg {
-                SortArgument::Value(c) => pool.term(TermKind::Constant(c.clone())),
-                SortArgument::Sort(s) => pool.term(s),
-            })
-            .collect();
-        pool.term(TermKind::Atom(Atom::Bound(BoundAtom {
-            head: Reference {
-                function: self.head.clone(),
-                span: None,
-            },
-            arguments,
-            span: None,
-        })))
+    fn to_term<P: TermPool>(self, pool: &P) -> Term {
+        self.clone().to_term(pool)
     }
 }
 
 impl ToTerm for Sort {
-    fn to_term(self, pool: &TermPool) -> Term {
+    fn to_term<P: TermPool>(self, pool: &P) -> Term {
         let arguments = self
             .arguments
             .into_iter()
@@ -136,46 +135,11 @@ impl ToTerm for Sort {
     }
 }
 
-impl ToTerm for Declared {
-    fn to_term(self, pool: &TermPool) -> Term {
-        pool.term(TermKind::from(self))
-    }
-}
-
-impl ToTerm for &Declared {
-    fn to_term(self, pool: &TermPool) -> Term {
-        pool.term(TermKind::from(self.clone()))
-    }
-}
-
-impl ToTerm for Defined {
-    fn to_term(self, pool: &TermPool) -> Term {
-        pool.term(TermKind::from(self))
-    }
-}
-
-impl ToTerm for &Defined {
-    fn to_term(self, pool: &TermPool) -> Term {
-        pool.term(TermKind::from(self.clone()))
-    }
-}
-
-impl ToTerm for Primitive {
-    fn to_term(self, pool: &TermPool) -> Term {
-        pool.term(TermKind::from(self))
-    }
-}
-
-impl ToTerm for &Primitive {
-    fn to_term(self, pool: &TermPool) -> Term {
-        pool.term(TermKind::from(self.clone()))
-    }
-}
-
 impl ToTerm for &macros::Term<'_> {
-    fn to_term(self, pool: &TermPool) -> Term {
+    fn to_term<P: TermPool>(self, pool: &P) -> Term {
         match self {
             macros::Term::Term(t) => t.clone(),
+            macros::Term::TermKind(k) => pool.shared(k.clone()),
             macros::Term::Constant(c) => {
                 let c = match c {
                     macros::Constant::Integer { value } => Constant::Integer {

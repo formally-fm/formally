@@ -207,7 +207,7 @@ impl ToTokens for Term {
                 )
             }),
             Term::Ref(ident) => tokens.append_all(quote! {
-                #ident.clone().into()
+                formally::smt::macros::Term::from(#ident.clone())
             }),
             Term::App { head, args } => match head {
                 Head::Unbound(head) => {

@@ -156,7 +156,7 @@ impl Env {
 #[derive(Clone)]
 pub struct TermManager {
     manager: Rc<dyn backend::Manager>,
-    pool: Rc<TermPool>,
+    pool: Rc<HashPool>,
 }
 
 impl Debug for TermManager {
@@ -175,16 +175,18 @@ impl Default for TermManager {
     }
 }
 
+impl TermPool for TermManager {
+    fn shared(&self, kind: TermKind) -> Term {
+        self.pool.shared(kind)
+    }
+}
+
 impl TermManager {
     pub fn new(backend: impl Backend) -> TermManager {
         TermManager {
             manager: Rc::from(backend.manager()),
-            pool: Rc::new(TermPool::new()),
+            pool: Rc::default(),
         }
-    }
-
-    pub fn pool(&self) -> &TermPool {
-        &self.pool
     }
 
     pub fn term(&self, term: impl ToTerm) -> Term {
@@ -273,8 +275,7 @@ impl Solver {
     }
 
     pub fn resolve(&self, term: &Term, role: Role) -> Result<Term> {
-        self.env
-            .resolve(&term, role, |k| self.manager.pool().term(k))
+        self.env.resolve(term, role, self)
     }
 
     /// Declare a function (or a constant, or a sort).
@@ -325,7 +326,7 @@ impl Solver {
                 .add(bind.name(), Function::Binding(bind.clone()));
         }
 
-        def.body = nested.resolve(&def.body, Role::Function, |k| self.manager.pool().term(k))?;
+        def.body = nested.resolve(&def.body, Role::Function, self)?;
         def.body.type_check()?;
 
         let def = Defined::new(def);
@@ -389,6 +390,12 @@ impl Solver {
     }
 }
 
+impl TermPool for Solver {
+    fn shared(&self, kind: TermKind) -> Term {
+        self.manager.shared(kind)
+    }
+}
+
 impl Stack for Solver {
     /// Push a new frame in the assertions stack.
     ///
@@ -417,11 +424,11 @@ pub enum ModelValue {
     Constant(Constant),
 }
 
-impl From<ModelValue> for Term {
+impl From<ModelValue> for TermKind {
     fn from(value: ModelValue) -> Self {
         match value {
-            ModelValue::Boolean(b) => Term::from(b),
-            ModelValue::Constant(c) => Term::from(c),
+            ModelValue::Boolean(b) => TermKind::from(b),
+            ModelValue::Constant(c) => TermKind::from(c),
         }
     }
 }

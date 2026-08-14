@@ -254,11 +254,7 @@ pub trait Backend {
     fn manager(&self) -> Box<dyn Manager>;
 
     /// Create an instance of the backend solver based on the given `Config` and `Manager`
-    fn solver<'m>(
-        &self,
-        config: &Config,
-        manager: Rc<dyn Manager>,
-    ) -> Result<Box<dyn Solver>, Error>;
+    fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error>;
 }
 
 impl Debug for dyn Backend {
@@ -270,7 +266,7 @@ impl Debug for dyn Backend {
 pub trait Manager: Any {
     /// Return the backend this manager is an instance of.
     ///
-    /// This is useful to obtain a new different instance of the same backend or the name of the
+    /// This is useful to obtain a new solver or manager of the same backend or the name of the
     /// backend.
     fn backend(&self) -> &dyn Backend;
 }

@@ -332,8 +332,8 @@ impl Z3Manager {
                 let args = self.terms_to_z3(args)?;
 
                 let mut result = self.z3context.mk_implies(&args[0], &args[1]);
-                for i in 2..args.len() {
-                    result = self.z3context.mk_xor(&result, &args[i])
+                for arg in args.iter().skip(2) {
+                    result = self.z3context.mk_xor(&result, arg)
                 }
 
                 result

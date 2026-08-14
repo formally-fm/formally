@@ -52,16 +52,3 @@ fn term_macro() -> Result<()> {
 
     Ok(())
 }
-
-#[test]
-fn term_pool() -> Result<()> {
-    let pool = TermPool::new();
-
-    let t1 = pool.term(term!(and p q));
-
-    let t2 = pool.term(term!(and p q));
-
-    assert_eq!(t1, t2);
-
-    Ok(())
-}

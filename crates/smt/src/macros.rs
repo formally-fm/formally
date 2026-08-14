@@ -56,6 +56,7 @@ pub struct Atom<'t> {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum Term<'t> {
     Term(term::Term),
+    TermKind(TermKind),
     Constant(Constant),
     Atom(Atom<'t>),
 }
@@ -66,9 +67,15 @@ impl Default for Term<'_> {
     }
 }
 
-impl<T: Into<term::Term>> From<T> for Term<'_> {
+impl From<term::Term> for Term<'_> {
+    fn from(term: term::Term) -> Self {
+        Term::Term(term)
+    }
+}
+
+impl<T: Into<TermKind>> From<T> for Term<'_> {
     fn from(value: T) -> Self {
-        Term::Term(value.into())
+        Term::TermKind(value.into())
     }
 }
 
