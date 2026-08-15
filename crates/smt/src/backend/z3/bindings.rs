@@ -356,6 +356,35 @@ impl Context {
     pub fn mk_is_int(&self, arg: Ast) -> Ast {
         Ast::new(self, unsafe { Z3_mk_is_int(self.ctx, arg.ast).unwrap() })
     }
+
+    pub fn mk_rec_func_decl(&self, name: &str, domain: &[Sort], range: Sort) -> FuncDecl {
+        let name = CString::new(name.as_bytes()).unwrap();
+        let domain = domain.iter().map(|s| s.sort).collect_vec();
+
+        FuncDecl::new(self, unsafe {
+            Z3_mk_rec_func_decl(
+                self.ctx,
+                Z3_mk_string_symbol(self.ctx, name.as_ptr()).unwrap(),
+                domain.len() as c_uint,
+                domain.as_ptr(),
+                range.sort,
+            )
+            .unwrap()
+        })
+    }
+
+    pub fn add_rec_def(&self, func: &FuncDecl, args: &[Ast], body: Ast) {
+        let mut args = args.iter().map(|arg| arg.ast).collect_vec();
+        unsafe {
+            Z3_add_rec_def(
+                self.ctx,
+                func.decl,
+                args.len() as u32,
+                args.as_mut_ptr(),
+                body.ast,
+            )
+        }
+    }
 }
 
 impl Drop for Context {

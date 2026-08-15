@@ -146,8 +146,25 @@ impl Z3Manager {
         Ok(())
     }
 
-    pub fn define(&self, _def: smt::Defined) -> Result<()> {
-        todo!()
+    pub fn define(&self, def: smt::Defined) -> Result<()> {
+        if self.defs.borrow().contains_key(&def) {
+            return Ok(());
+        }
+        
+        let mut sorts = Vec::new();
+        let mut args = Vec::new();
+        for bind in &def.domain {
+            sorts.push(self.sort_to_z3(bind.sort())?);
+            args.push(self.binding_to_z3(bind)?)
+        } 
+        let range = self.sort_to_z3(&def.range)?;
+        
+        let func = self.z3context.mk_rec_func_decl(def.name.name(), &sorts, range);
+        self.z3context.add_rec_def(&func, &args, self.term_to_z3(&def.body)?);
+        
+        self.defs.borrow_mut().insert(def, func);
+        
+        Ok(())
     }
 
     fn terms_to_z3(&self, terms: &[smt::Term]) -> Result<Vec<z3::Ast>> {
@@ -446,7 +463,7 @@ impl Z3Manager {
         Ok(match atom {
             Reals_IntsAtom::To_real(arg) => self.z3context.mk_int2real(self.term_to_z3(arg)?),
             Reals_IntsAtom::To_int(arg) => self.z3context.mk_real2int(self.term_to_z3(arg)?),
-            Reals_IntsAtom::Is_int(arg) => self.z3context.mk_is_int(self.term_to_z3(arg)?)
+            Reals_IntsAtom::Is_int(arg) => self.z3context.mk_is_int(self.term_to_z3(arg)?),
         })
     }
 
