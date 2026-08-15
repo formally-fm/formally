@@ -139,7 +139,7 @@ impl Context {
         Sort::new(self, unsafe { Z3_mk_real_sort(self.ctx).unwrap() })
     }
 
-    pub fn mk_array_sort(&self, sorts: &[Sort], range: &Sort) -> Sort {
+    pub fn mk_array_sort(&self, sorts: &[Sort], range: Sort) -> Sort {
         let sorts = sorts.iter().map(|s| s.sort).collect_vec();
 
         Sort::new(self, unsafe {
@@ -168,7 +168,7 @@ impl Context {
         Ast::new(self, unsafe { Z3_mk_true(self.ctx).unwrap() })
     }
 
-    pub fn get_bool_value(&self, ast: &Ast) -> Z3_lbool {
+    pub fn get_bool_value(&self, ast: Ast) -> Z3_lbool {
         unsafe { Z3_get_bool_value(self.ctx, ast.ast) }
     }
 
@@ -190,7 +190,7 @@ impl Context {
         })
     }
 
-    pub fn mk_func_decl(&self, name: &str, sorts: &[Sort], range: &Sort) -> FuncDecl {
+    pub fn mk_func_decl(&self, name: &str, sorts: &[Sort], range: Sort) -> FuncDecl {
         let name = CString::new(name.as_bytes()).unwrap();
         let sorts = sorts.iter().map(|s| s.sort).collect_vec();
         FuncDecl::new(self, unsafe {
@@ -205,21 +205,21 @@ impl Context {
         })
     }
 
-    pub fn mk_app(&self, func: &FuncDecl, args: &[Ast]) -> Ast {
+    pub fn mk_app(&self, func: &FuncDecl, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_app(self.ctx, func.decl, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_select_n(&self, array: &Ast, args: &[Ast]) -> Ast {
+    pub fn mk_select_n(&self, array: Ast, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_select_n(self.ctx, array.ast, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_store_n(&self, array: &Ast, args: &[Ast], value: &Ast) -> Ast {
+    pub fn mk_store_n(&self, array: Ast, args: Vec<Ast>, value: Ast) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_store_n(
@@ -233,116 +233,128 @@ impl Context {
         })
     }
 
-    pub fn mk_not(&self, arg: &Ast) -> Ast {
+    pub fn mk_not(&self, arg: Ast) -> Ast {
         Ast::new(self, unsafe { Z3_mk_not(self.ctx, arg.ast).unwrap() })
     }
 
-    pub fn mk_implies(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_implies(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_implies(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_and(&self, args: &[Ast]) -> Ast {
+    pub fn mk_and(&self, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_and(self.ctx, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_or(&self, args: &[Ast]) -> Ast {
+    pub fn mk_or(&self, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_or(self.ctx, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_xor(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_xor(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_xor(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_eq(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_eq(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_eq(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_distinct(&self, args: &[Ast]) -> Ast {
+    pub fn mk_distinct(&self, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_distinct(self.ctx, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_ite(&self, cond: &Ast, then: &Ast, otherwise: &Ast) -> Ast {
+    pub fn mk_ite(&self, cond: Ast, then: Ast, otherwise: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_ite(self.ctx, cond.ast, then.ast, otherwise.ast).unwrap()
         })
     }
 
-    pub fn mk_unary_minus(&self, arg: &Ast) -> Ast {
+    pub fn mk_unary_minus(&self, arg: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_unary_minus(self.ctx, arg.ast).unwrap()
         })
     }
 
-    pub fn mk_sub(&self, args: &[Ast]) -> Ast {
+    pub fn mk_sub(&self, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_sub(self.ctx, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_add(&self, args: &[Ast]) -> Ast {
+    pub fn mk_add(&self, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_add(self.ctx, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_mul(&self, args: &[Ast]) -> Ast {
+    pub fn mk_mul(&self, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_mul(self.ctx, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_div(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_div(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_div(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_mod(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_mod(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_mod(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_le(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_le(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_le(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_lt(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_lt(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_lt(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_ge(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_ge(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_ge(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_gt(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_gt(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_gt(self.ctx, left.ast, right.ast).unwrap()
         })
+    }
+
+    pub fn mk_int2real(&self, arg: Ast) -> Ast {
+        Ast::new(self, unsafe { Z3_mk_int2real(self.ctx, arg.ast).unwrap() })
+    }
+
+    pub fn mk_real2int(&self, arg: Ast) -> Ast {
+        Ast::new(self, unsafe { Z3_mk_real2int(self.ctx, arg.ast).unwrap() })
+    }
+
+    pub fn mk_is_int(&self, arg: Ast) -> Ast {
+        Ast::new(self, unsafe { Z3_mk_is_int(self.ctx, arg.ast).unwrap() })
     }
 }
 
@@ -390,7 +402,7 @@ impl Solver {
         unsafe { Z3_solver_pop(self.ctx.ctx, self.slv, n as c_uint) }
     }
 
-    pub fn assert(&self, ast: &Ast) {
+    pub fn assert(&self, ast: Ast) {
         unsafe { Z3_solver_assert(self.ctx.ctx, self.slv, ast.ast) }
     }
 

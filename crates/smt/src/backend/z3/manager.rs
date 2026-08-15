@@ -139,9 +139,7 @@ impl Z3Manager {
             sorts.push(self.sort_to_z3(sort)?);
         }
 
-        let z3decl = self
-            .z3context
-            .mk_func_decl(decl.name.name(), &sorts, &range);
+        let z3decl = self.z3context.mk_func_decl(decl.name.name(), &sorts, range);
 
         self.decls.borrow_mut().insert(decl, z3decl);
 
@@ -229,7 +227,7 @@ impl Z3Manager {
             .process_results(|c| c.collect_vec())?;
 
         if let Some(func) = self.decls.borrow().get(decl) {
-            return Ok(self.z3context.mk_app(func, &args));
+            return Ok(self.z3context.mk_app(func, args));
         }
 
         Err(backend::Error::new(
@@ -248,7 +246,7 @@ impl Z3Manager {
             .process_results(|c| c.collect_vec())?;
 
         if let Some(func) = self.defs.borrow().get(def) {
-            return Ok(self.z3context.mk_app(func, &args));
+            return Ok(self.z3context.mk_app(func, args));
         }
 
         Err(backend::Error::new(
@@ -287,7 +285,7 @@ impl Z3Manager {
                     let index = self.sort_to_z3(self.sort_argument_to_sort(index)?)?;
                     let range = self.sort_to_z3(self.sort_argument_to_sort(range)?)?;
 
-                    self.z3context.mk_array_sort(&[index], &range)
+                    self.z3context.mk_array_sort(&[index], range)
                 }
             },
         })
@@ -307,102 +305,164 @@ impl Z3Manager {
         Ok(match atom {
             CoreAtom::True => self.z3context.mk_true(),
             CoreAtom::False => self.z3context.mk_false(),
-            CoreAtom::Not(arg) => self.z3context.mk_not(&self.term_to_z3(arg)?),
-            CoreAtom::Implies(args) => {
-                let args = self.terms_to_z3(args)?;
-
-                let mut result = self
-                    .z3context
-                    .mk_implies(&args[args.len() - 2], &args[args.len() - 1]);
-                for i in (0..args.len() - 2).rev() {
-                    result = self.z3context.mk_implies(&args[i], &result)
-                }
-
-                result
-            }
-            CoreAtom::And(args) => {
-                let args = self.terms_to_z3(args)?;
-                self.z3context.mk_and(&args)
-            }
-            CoreAtom::Or(args) => {
-                let args = self.terms_to_z3(args)?;
-                self.z3context.mk_or(&args)
-            }
-            CoreAtom::Xor(args) => {
-                let args = self.terms_to_z3(args)?;
-
-                let mut result = self.z3context.mk_implies(&args[0], &args[1]);
-                for arg in args.iter().skip(2) {
-                    result = self.z3context.mk_xor(&result, arg)
-                }
-
-                result
-            }
+            CoreAtom::Not(arg) => self.z3context.mk_not(self.term_to_z3(arg)?),
+            CoreAtom::Implies(args) => self
+                .terms_to_z3(args)?
+                .into_iter()
+                .rev()
+                .reduce(|acc, arg| self.z3context.mk_implies(arg, acc))
+                .unwrap_or(self.z3context.mk_false()),
+            CoreAtom::And(args) => self.z3context.mk_and(self.terms_to_z3(args)?),
+            CoreAtom::Or(args) => self.z3context.mk_or(self.terms_to_z3(args)?),
+            CoreAtom::Xor(args) => self
+                .terms_to_z3(args)?
+                .into_iter()
+                .reduce(|acc, arg| self.z3context.mk_xor(acc, arg))
+                .unwrap_or(self.z3context.mk_false()),
             CoreAtom::Equals(args) => {
                 let args = self.terms_to_z3(args)?;
 
                 let mut partials = Vec::new();
                 for i in 0..args.len() - 1 {
-                    partials.push(self.z3context.mk_eq(&args[i], &args[i + 1]));
+                    partials.push(self.z3context.mk_eq(args[i].clone(), args[i + 1].clone()));
                 }
-                self.z3context.mk_and(&partials)
+                self.z3context.mk_and(partials)
             }
-            CoreAtom::Distinct(args) => {
-                let args = self.terms_to_z3(args)?;
-                self.z3context.mk_distinct(&args)
-            }
+            CoreAtom::Distinct(args) => self.z3context.mk_distinct(self.terms_to_z3(args)?),
             CoreAtom::Ite(cond, then, else_) => {
                 let cond = self.term_to_z3(cond)?;
                 let then = self.term_to_z3(then)?;
                 let else_ = self.term_to_z3(else_)?;
 
-                self.z3context.mk_ite(&cond, &then, &else_)
+                self.z3context.mk_ite(cond, then, else_)
             }
         })
     }
 
     fn ints_atom_to_z3(&self, atom: &IntsAtom) -> Result<z3::Ast> {
-        match atom {
-            IntsAtom::Unary_minus(_) => todo!(),
-            IntsAtom::Minus(_) => todo!(),
-            IntsAtom::Plus(_) => todo!(),
-            IntsAtom::Mult(_) => todo!(),
-            IntsAtom::Div(_) => todo!(),
-            IntsAtom::Mod_(_, _) => todo!(),
-            IntsAtom::Abs(_, _) => todo!(),
-            IntsAtom::Le(_) => todo!(),
-            IntsAtom::Lt(_) => todo!(),
-            IntsAtom::Ge(_) => todo!(),
-            IntsAtom::Gt(_) => todo!(),
-        }
+        Ok(match atom {
+            IntsAtom::Unary_minus(arg) => self.z3context.mk_unary_minus(self.term_to_z3(arg)?),
+            IntsAtom::Minus(args) => self.z3context.mk_sub(self.terms_to_z3(args)?),
+            IntsAtom::Plus(args) => self.z3context.mk_add(self.terms_to_z3(args)?),
+            IntsAtom::Mult(args) => self.z3context.mk_mul(self.terms_to_z3(args)?),
+            IntsAtom::Div(args) => self
+                .terms_to_z3(args)?
+                .into_iter()
+                .reduce(|acc, arg| self.z3context.mk_div(acc, arg))
+                .unwrap_or(self.z3context.mk_int(1)),
+            IntsAtom::Mod_(left, right) => self
+                .z3context
+                .mk_mod(self.term_to_z3(left)?, self.term_to_z3(right)?),
+            IntsAtom::Abs(arg) => {
+                let arg = self.term_to_z3(arg)?;
+                self.z3context.mk_ite(
+                    self.z3context.mk_ge(arg.clone(), self.z3context.mk_int(0)),
+                    arg.clone(),
+                    self.z3context.mk_unary_minus(arg),
+                )
+            }
+            IntsAtom::Le(args) => {
+                let args = self.terms_to_z3(args)?;
+                let mut partials = Vec::new();
+                for i in 0..args.len() - 1 {
+                    partials.push(self.z3context.mk_le(args[i].clone(), args[i + 1].clone()));
+                }
+                self.z3context.mk_and(partials)
+            }
+            IntsAtom::Lt(args) => {
+                let args = self.terms_to_z3(args)?;
+                let mut partials = Vec::new();
+                for i in 0..args.len() - 1 {
+                    partials.push(self.z3context.mk_lt(args[i].clone(), args[i + 1].clone()));
+                }
+                self.z3context.mk_and(partials)
+            }
+            IntsAtom::Ge(args) => {
+                let args = self.terms_to_z3(args)?;
+                let mut partials = Vec::new();
+                for i in 0..args.len() - 1 {
+                    partials.push(self.z3context.mk_ge(args[i].clone(), args[i + 1].clone()));
+                }
+                self.z3context.mk_and(partials)
+            }
+            IntsAtom::Gt(args) => {
+                let args = self.terms_to_z3(args)?;
+                let mut partials = Vec::new();
+                for i in 0..args.len() - 1 {
+                    partials.push(self.z3context.mk_gt(args[i].clone(), args[i + 1].clone()));
+                }
+                self.z3context.mk_and(partials)
+            }
+        })
     }
 
     fn reals_atom_to_z3(&self, atom: &RealsAtom) -> Result<z3::Ast> {
-        match atom {
-            RealsAtom::Unary_minus(_) => todo!(),
-            RealsAtom::Minus(_) => todo!(),
-            RealsAtom::Plus(_) => todo!(),
-            RealsAtom::Mult(_) => todo!(),
-            RealsAtom::Div(_) => todo!(),
-            RealsAtom::Le(_) => todo!(),
-            RealsAtom::Lt(_) => todo!(),
-            RealsAtom::Ge(_) => todo!(),
-            RealsAtom::Gt(_) => todo!(),
-        }
+        Ok(match atom {
+            RealsAtom::Unary_minus(arg) => self.z3context.mk_unary_minus(self.term_to_z3(arg)?),
+            RealsAtom::Minus(args) => self.z3context.mk_sub(self.terms_to_z3(args)?),
+            RealsAtom::Plus(args) => self.z3context.mk_add(self.terms_to_z3(args)?),
+            RealsAtom::Mult(args) => self.z3context.mk_mul(self.terms_to_z3(args)?),
+            RealsAtom::Div(args) => self
+                .terms_to_z3(args)?
+                .into_iter()
+                .reduce(|acc, arg| self.z3context.mk_div(acc, arg))
+                .unwrap_or(self.z3context.mk_int(1)),
+            RealsAtom::Le(args) => {
+                let args = self.terms_to_z3(args)?;
+                let mut partials = Vec::new();
+                for i in 0..args.len() - 1 {
+                    partials.push(self.z3context.mk_le(args[i].clone(), args[i + 1].clone()));
+                }
+                self.z3context.mk_and(partials)
+            }
+            RealsAtom::Lt(args) => {
+                let args = self.terms_to_z3(args)?;
+                let mut partials = Vec::new();
+                for i in 0..args.len() - 1 {
+                    partials.push(self.z3context.mk_lt(args[i].clone(), args[i + 1].clone()));
+                }
+                self.z3context.mk_and(partials)
+            }
+            RealsAtom::Ge(args) => {
+                let args = self.terms_to_z3(args)?;
+                let mut partials = Vec::new();
+                for i in 0..args.len() - 1 {
+                    partials.push(self.z3context.mk_ge(args[i].clone(), args[i + 1].clone()));
+                }
+                self.z3context.mk_and(partials)
+            }
+            RealsAtom::Gt(args) => {
+                let args = self.terms_to_z3(args)?;
+                let mut partials = Vec::new();
+                for i in 0..args.len() - 1 {
+                    partials.push(self.z3context.mk_gt(args[i].clone(), args[i + 1].clone()));
+                }
+                self.z3context.mk_and(partials)
+            }
+        })
     }
 
     fn reals_int_atom_to_z3(&self, atom: &Reals_IntsAtom) -> Result<z3::Ast> {
-        match atom {
-            Reals_IntsAtom::To_real(_) => todo!(),
-            Reals_IntsAtom::To_int(_) => todo!(),
-            Reals_IntsAtom::Is_int(_) => todo!(),
-        }
+        Ok(match atom {
+            Reals_IntsAtom::To_real(arg) => self.z3context.mk_int2real(self.term_to_z3(arg)?),
+            Reals_IntsAtom::To_int(arg) => self.z3context.mk_real2int(self.term_to_z3(arg)?),
+            Reals_IntsAtom::Is_int(arg) => self.z3context.mk_is_int(self.term_to_z3(arg)?)
+        })
     }
 
     fn arrays_atom_to_z3(&self, atom: &ArraysAtom) -> Result<z3::Ast> {
-        match atom {
-            ArraysAtom::Select(_, _) => todo!(),
-            ArraysAtom::Store(_, _, _) => todo!(),
-        }
+        Ok(match atom {
+            ArraysAtom::Select(array, index) => {
+                let array = self.term_to_z3(array)?;
+                let index = self.term_to_z3(index)?;
+                self.z3context.mk_select_n(array, vec![index])
+            }
+            ArraysAtom::Store(array, index, value) => {
+                let array = self.term_to_z3(array)?;
+                let index = self.term_to_z3(index)?;
+                let value = self.term_to_z3(value)?;
+                self.z3context.mk_store_n(array, vec![index], value)
+            }
+        })
     }
 }

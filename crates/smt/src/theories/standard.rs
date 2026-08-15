@@ -160,7 +160,7 @@ theories! {
         fn mod_ (Ints::Int(), Ints::Int()) -> Ints::Int();
 
         /// Absolute value.
-        fn abs (Ints::Int(), Ints::Int()) -> Ints::Int();
+        fn abs (Ints::Int()) -> Ints::Int();
 
         /// Less-than-or-equal comparison.
         #[name = "<="]

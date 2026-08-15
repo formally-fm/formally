@@ -112,7 +112,7 @@ impl backend::Solver for Z3Solver {
     fn require(&mut self, term: &Term) -> Result<(), Error> {
         let ast = self.manager.term_to_z3(term)?;
 
-        self.z3solver.assert(&ast);
+        self.z3solver.assert(ast);
 
         Ok(())
     }
