@@ -112,7 +112,7 @@ impl Env {
                 for arg in &atom.arguments {
                     arguments.push(Sort::of(arg).ok()?);
                 }
-
+                
                 let mut matches = HashMap::new();
                 for (sort, arg) in zip(atom.domain(), &arguments) {
                     if !sort.matches_with(arg, &mut matches) {

@@ -42,7 +42,7 @@ use itertools::Itertools;
 /// The difference from a standard iterator is that [LookupSet] remembers enough information to
 /// allow the [one()](LookupSet::one) method to emit detailed error diagnostics. See
 /// [one()](LookupSet::one) for details.
-pub struct LookupSet<'s, 'i, T, V = &'s T> {
+pub struct LookupSet<'s, 'i, T: Hash + Eq, V = &'s T> {
     name: Identifier<'i>,
     scope: &'s Scope<T>,
     iterator: Box<dyn 's + Iterator<Item = &'s T>>,
@@ -50,7 +50,7 @@ pub struct LookupSet<'s, 'i, T, V = &'s T> {
     empty: bool,
 }
 
-impl<'s, 'i, T: 's, V: 's> LookupSet<'s, 'i, T, V> {
+impl<'s, 'i, T: 's + Hash + Eq, V: 's> LookupSet<'s, 'i, T, V> {
     fn new(
         name: Identifier<'i>,
         scope: &'s Scope<T>,
@@ -251,6 +251,9 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
 ///
 /// Here the [LookupSet::one()] method requires a single result to exist and emits detailed
 /// diagnostics if this is not the case. See its documentation for details.
+/// 
+/// The element type needs to implement [Hash] and [Eq]. These are used to ensure that if the same
+/// element is added twice under the same name, it is treated as a single entry.
 ///
 /// [Scope] objects support being *nested* under other [Scope] objects. Nesting simulates how
 /// one would implement a nested scope in a typical language, such as the scope under a function
@@ -286,12 +289,12 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
 /// declared in `scope` with name `"x"` shadows all the elements with the same name in `parent`. The
 /// second one succeeds as well because `"y"` is found in the parent.
 #[perfect_derive(Default, Clone)]
-pub struct Scope<T> {
-    elements: Stacked<rpds::HashTrieMapSync<String, rpds::VectorSync<T>>>,
+pub struct Scope<T: Hash + Eq> {
+    elements: Stacked<rpds::HashTrieMapSync<String, rpds::HashTrieSetSync<T>>>,
     parent: Option<Arc<Scope<T>>>,
 }
 
-impl<T> Scope<T> {
+impl<T: Hash + Eq> Scope<T> {
     /// Construct an empty [Scope]
     pub fn new() -> Self {
         Scope::default()
@@ -314,9 +317,9 @@ impl<T> Scope<T> {
     pub fn add(&mut self, name: &str, element: T) {
         if !self.elements.contains_key(name) {
             self.elements
-                .insert_mut(name.to_string(), rpds::Vector::new_sync());
+                .insert_mut(name.to_string(), rpds::HashTrieSetSync::new_sync());
         }
-        self.elements.get_mut(name).unwrap().push_back_mut(element);
+        self.elements.get_mut(name).unwrap().insert_mut(element);
     }
 
     pub fn lookup<'i>(&self, name: impl Into<Identifier<'i>>) -> LookupSet<'_, 'i, T, &'_ T> {
@@ -331,7 +334,7 @@ impl<T> Scope<T> {
     }
 }
 
-impl<T: Clone> Scope<T> {
+impl<T: Clone + Hash + Eq> Scope<T> {
     /// Clone all the elements of the given scope into `self`, registering them under the same
     /// names.
     pub fn merge(&mut self, other: &Scope<T>) {
@@ -343,7 +346,7 @@ impl<T: Clone> Scope<T> {
     }
 }
 
-impl<T> Stack for Scope<T> {
+impl<T: Hash + Eq> Stack for Scope<T> {
     fn push(&mut self) -> Result<()> {
         self.elements.push()
     }

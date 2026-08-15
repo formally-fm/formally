@@ -533,7 +533,7 @@ impl ToTokens for Attributed<Theory> {
                     formally::smt::Sort {
                         head: formally::smt::Function::Primitive(#module::#ident.clone()),
                         arguments: vec![#(#params.clone().into()),*],
-                        span: None
+                        span: Some(formally::support::Span::Builtin)
                     }
                 }
             })
@@ -596,7 +596,7 @@ impl ToTokens for Attributed<Theory> {
                 #atomenum::#cap => formally::smt::BoundAtom {
                     head: #module::#ident.clone().into(),
                     arguments: vec![],
-                    span: None
+                    span: Some(formally::support::Span::Builtin)
                 }
             });
 
@@ -616,7 +616,7 @@ impl ToTokens for Attributed<Theory> {
                     #atomenum::#cap(arguments) => formally::smt::BoundAtom {
                         head: #module::#ident.clone().into(),
                         arguments: arguments.to_vec(),
-                        span: None
+                        span: Some(formally::support::Span::Builtin)
                     }
                 });
 
@@ -640,7 +640,7 @@ impl ToTokens for Attributed<Theory> {
                     #atomenum::#cap(#(#argnames),*) => formally::smt::BoundAtom {
                         head: #module::#ident.clone().into(),
                         arguments: vec![#(#argnames.clone()),*],
-                        span: None
+                        span: Some(formally::support::Span::Builtin)
                     }
                 });
 
@@ -683,7 +683,7 @@ impl ToTokens for Attributed<Theory> {
                     #sortenum::#ident => formally::smt::Sort {
                         head: #module::#ident.clone().into(),
                         arguments: vec![],
-                        span: None
+                        span: Some(formally::support::Span::Builtin)
                     }
                 });
                 sort_try_from.push(quote! {
@@ -701,7 +701,7 @@ impl ToTokens for Attributed<Theory> {
                     #sortenum::#ident(#(#paramnames),*) => formally::smt::Sort {
                         head: #module::#ident.clone().into(),
                         arguments: vec![#(#paramnames.clone()),*],
-                        span: None
+                        span: Some(formally::support::Span::Builtin)
                     }
                 });
                 sort_try_from.push(quote! {

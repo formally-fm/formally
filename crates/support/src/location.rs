@@ -204,6 +204,9 @@ impl Sub for Location {
 pub enum Span {
     /// The [Span] represents the whole source file at the given [Origin].
     Whole(Origin),
+    /// The [Span] represents a built-in or primitive entity such as functions defined by SMT
+    /// theories
+    Builtin,
     /// The [Span] represents the interval between `begin` (included) and `end` (excluded) at the
     /// given [Origin].
     Span {
@@ -234,6 +237,7 @@ impl Display for Span {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Span::Whole(origin) => Display::fmt(origin, f),
+            Span::Builtin => write!(f, "builtin"),
             Span::Span { origin, begin, end } => {
                 if end.column > begin.column + 1 {
                     write!(
