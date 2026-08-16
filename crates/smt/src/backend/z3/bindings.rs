@@ -35,6 +35,7 @@ use std::{
 pub use z3_sys::ErrorCode;
 pub use z3_sys::Z3_L_FALSE;
 pub use z3_sys::Z3_L_TRUE;
+pub use z3_sys::AstKind;
 
 #[repr(transparent)]
 pub struct Config {
@@ -49,7 +50,7 @@ pub struct Context {
 pub struct Solver {
     pub ctx: Rc<Context>,
     pub slv: Z3_solver,
-    pub model: Option<Z3_model>,
+    pub model: Option<Model>,
 }
 
 pub struct Ast {
@@ -67,7 +68,6 @@ pub struct Sort {
     pub sort: Z3_sort,
 }
 
-#[expect(unused)]
 pub struct Model {
     pub ctx: Rc<Context>,
     pub model: Z3_model,
@@ -440,20 +440,12 @@ impl Solver {
 
         if answer == Z3_L_TRUE {
             let model = unsafe { Z3_solver_get_model(self.ctx.ctx, self.slv).unwrap() };
-            unsafe {
-                Z3_model_inc_ref(self.ctx.ctx, model);
-            }
-            self.model = Some(model);
+            self.model = Some(Model::new(self.ctx.clone(), model));
         } else {
             self.model = None;
         }
 
         answer
-    }
-
-    #[expect(unused)]
-    pub fn get_model(&self) -> Option<Model> {
-        self.model.map(|m| Model::new(self.ctx.clone(), m))
     }
 }
 
@@ -463,7 +455,7 @@ impl Clone for Solver {
         Solver {
             ctx: self.ctx.clone(),
             slv: self.slv,
-            model: self.model,
+            model: self.model.clone(),
         }
     }
 }
@@ -474,7 +466,6 @@ impl Drop for Solver {
     }
 }
 
-#[expect(unused)]
 impl Model {
     pub fn new(ctx: Rc<Context>, model: Z3_model) -> Model {
         unsafe {
@@ -490,6 +481,18 @@ impl Model {
         Some(Ast::new(&self.ctx, unsafe {
             Z3_model_get_const_interp(self.ctx.ctx, self.model, decl.decl)?
         }))
+    }
+}
+
+impl Clone for Model {
+    fn clone(&self) -> Self {
+        unsafe {
+            Z3_model_inc_ref(self.ctx.ctx, self.model);
+        }
+        Model {
+            ctx: self.ctx.clone(),
+            model: self.model,
+        }
     }
 }
 

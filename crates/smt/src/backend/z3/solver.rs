@@ -130,6 +130,32 @@ impl backend::Solver for Z3Solver {
     }
 
     fn model(&self) -> Result<Option<Box<dyn '_ + ModelProvider>>, Error> {
-        todo!()
+        match &self.z3solver.model {
+            Some(m) => Ok(Some(
+                Box::new(Model::new(self, m.clone())) as Box<dyn ModelProvider>
+            )),
+            None => Ok(None),
+        }
+    }
+}
+
+struct Model<'s> {
+    solver: &'s Z3Solver,
+    model: z3::Model,
+}
+
+impl<'s> Model<'s> {
+    fn new(solver: &'s Z3Solver, model: z3::Model) -> Model<'s> {
+        Model { solver, model }
+    }
+}
+
+impl ModelProvider for Model<'_> {
+    fn value(&self, decl: &Declared) -> Option<ModelValue> {
+        let decls = self.solver.manager.decls.borrow();
+        let func = decls.get(decl)?;
+        let ast = self.model.get_const_interp(func)?;
+
+        self.solver.manager.z3_const_to_value(ast)
     }
 }

@@ -43,11 +43,11 @@ type Result<T, E = backend::Error> = std::result::Result<T, E>;
 
 pub struct Z3Manager {
     pub z3context: Rc<z3::Context>,
-    decls: RefCell<HashMap<smt::Declared, z3::FuncDecl>>,
-    defs: RefCell<HashMap<smt::Defined, z3::FuncDecl>>,
-    sorts: RefCell<HashMap<smt::Declared, z3::Sort>>,
-    terms: RefCell<HashMap<smt::Term, z3::Ast>>,
-    bindings: RefCell<HashMap<smt::Binding, z3::Ast>>,
+    pub(super) decls: RefCell<HashMap<smt::Declared, z3::FuncDecl>>,
+    pub(super) defs: RefCell<HashMap<smt::Defined, z3::FuncDecl>>,
+    pub(super) sorts: RefCell<HashMap<smt::Declared, z3::Sort>>,
+    pub(super) terms: RefCell<HashMap<smt::Term, z3::Ast>>,
+    pub(super) bindings: RefCell<HashMap<smt::Binding, z3::Ast>>,
 }
 
 impl Z3Manager {
@@ -104,6 +104,32 @@ impl Z3Manager {
         Ok(ast)
     }
 
+    pub fn z3_const_to_value(&self, ast: z3::Ast) -> Option<smt::ModelValue> {
+        match self.z3context.get_bool_value(ast.clone()) {
+            z3::Z3_L_FALSE => {
+                return Some(smt::ModelValue::from(false));
+            }
+            z3::Z3_L_TRUE => {
+                return Some(smt::ModelValue::from(true));
+            }
+            _ => {}
+        }
+
+        if ast.kind() != z3::AstKind::Numeral {
+            return None;
+        }
+
+        let string = ast.get_numeral_string();
+
+        match rug::Integer::from_str_radix(&string, 10) {
+            Ok(int) => Some(smt::ModelValue::from(smt::Constant::from(int))),
+            Err(_) => match rug::Rational::from_str_radix(&string, 10) {
+                Ok(rat) => Some(smt::ModelValue::from(smt::Constant::from(rat))),
+                Err(_) => None,
+            },
+        }
+    }
+
     pub fn declare(&self, decl: smt::Declared) -> Result<()> {
         if smt::Sort::equal(&decl.range, &smt::Sort::sort()) {
             self.declare_sort(decl)
@@ -150,20 +176,23 @@ impl Z3Manager {
         if self.defs.borrow().contains_key(&def) {
             return Ok(());
         }
-        
+
         let mut sorts = Vec::new();
         let mut args = Vec::new();
         for bind in &def.domain {
             sorts.push(self.sort_to_z3(bind.sort())?);
             args.push(self.binding_to_z3(bind)?)
-        } 
+        }
         let range = self.sort_to_z3(&def.range)?;
-        
-        let func = self.z3context.mk_rec_func_decl(def.name.name(), &sorts, range);
-        self.z3context.add_rec_def(&func, &args, self.term_to_z3(&def.body)?);
-        
+
+        let func = self
+            .z3context
+            .mk_rec_func_decl(def.name.name(), &sorts, range);
+        self.z3context
+            .add_rec_def(&func, &args, self.term_to_z3(&def.body)?);
+
         self.defs.borrow_mut().insert(def, func);
-        
+
         Ok(())
     }
 
