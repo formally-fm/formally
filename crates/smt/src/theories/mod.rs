@@ -150,7 +150,6 @@ impl Sort {
         Sort {
             head: Function::Primitive(Primitive(Nominal(SArc::Static(&SORT_DECL)))),
             arguments: Vec::new(),
-            span: None,
         }
     }
 }

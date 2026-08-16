@@ -294,7 +294,7 @@ impl Solver {
         let decl = Declared::new(decl);
         self.backend.logic().check_function(&decl.clone().into())?;
 
-        if Sort::equal(&decl.range, &Sort::sort()) {
+        if decl.range == Sort::sort() {
             self.env.sorts.add(&decl.name, decl.clone().into());
         } else {
             self.env.functions.add(&decl.name, decl.clone().into());
@@ -332,7 +332,7 @@ impl Solver {
         let def = Defined::new(def);
         self.backend.logic().check_function(&def.clone().into())?;
 
-        if Sort::equal(&def.range, &Sort::sort()) {
+        if def.range == Sort::sort() {
             self.env.sorts.add(&def.name, def.clone().into());
         } else {
             self.env.functions.add(&def.name, def.clone().into());
@@ -351,7 +351,7 @@ impl Solver {
         self.backend.logic().check_term(&term)?;
         let sort = Sort::of(&term)?;
 
-        if !Sort::equal(&sort, &theories::Core::Bool()) {
+        if sort != theories::Core::Bool() {
             error!(term.span(), "can only assert Boolean terms");
             note!(term.span(), "asserted term is of sort `{}`", sort);
             return Err(DiagnosticEmitted);

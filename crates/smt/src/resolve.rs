@@ -74,7 +74,7 @@ impl Env {
 
         let mut resolved = Vec::new();
         for (sort, arg) in zip(domain, &atom.arguments) {
-            if Sort::equal(&sort, &Sort::sort()) {
+            if sort == Sort::sort() {
                 resolved.push(self.resolve(arg, Role::Sort, pool)?);
             } else {
                 resolved.push(self.resolve(arg, Role::Function, pool)?);

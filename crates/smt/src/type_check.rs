@@ -128,7 +128,7 @@ impl BoundAtom {
 
         match prim.domain() {
             [first, second, ..] if prim.associativity().is_some() => {
-                if Sort::equal(first, second) {
+                if *first == *second {
                     std::iter::repeat_n(first.clone(), self.arguments.len()).collect()
                 } else {
                     domain
@@ -172,7 +172,7 @@ impl TypeCheck for Declaration {
 impl TypeCheck for Sort {
     /// Check the well-formedness of the sort.
     fn type_check(&self) -> Result<Sort> {
-        if !Sort::equal(self.head.range(), &Sort::sort()) {
+        if *self.head.range() != Sort::sort() {
             error!(
                 self.head.span(),
                 "expected sort, found term of sort `{}`",

@@ -34,7 +34,7 @@ use std::{
 };
 
 /// An argument in a parametric sort such as `Int` and `Real` in `(Array Int Real)`.
-#[derive(Clone, Debug, Transitive)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Transitive)]
 #[allow(clippy::duplicated_attributes)]
 pub enum SortArgument {
     /// A constant argument (e.g., `32` in `(_ BitVec 32)`).
@@ -56,7 +56,7 @@ impl SortArgument {
                 }
                 _ => false,
             },
-            (SortArgument::Sort(s1), SortArgument::Sort(s2)) => Sort::equal(s1, s2),
+            (SortArgument::Sort(s1), SortArgument::Sort(s2)) => s1 == s2,
             _ => false,
         }
     }
@@ -102,24 +102,13 @@ impl<T: Into<Sort>> From<T> for SortArgument {
 /// not arbitrary terms but [SortArgument] objects which can be either another sort or a constant.
 /// This allows the representation of both SMT-LIBv2 sorts such as `(Array Int Real)` and `(_ BitVec
 /// 32)`.
-///
-/// Notably, [Sort] does *not* implement [Hash](std::hash::Hash), [PartialEq] and [Eq]. This is
-/// because comparing sorts is a semantic operation, so the canonical implementation of these traits
-/// would include also the `span` field, which should instead be excluded from a semantic
-/// comparison. However, excluding fields from [PartialEq] implementations is surprising and should
-/// be avoided.
-///
-/// For this reason, semantic comparison, excluding spans, is implemented as the [Sort::equal]
-/// associated function.
 #[allow(clippy::duplicated_attributes)]
-#[derive(Clone, Located, Locatable)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 pub struct Sort {
     /// The sort constructor that is being applied.
     pub head: Function,
     /// The sort's arguments.
     pub arguments: Vec<SortArgument>,
-    /// The sort's source span.
-    pub span: Option<Span>,
 }
 
 impl<T: Into<Function>> From<T> for Sort {
@@ -127,20 +116,16 @@ impl<T: Into<Function>> From<T> for Sort {
         Sort {
             head: value.into(),
             arguments: Vec::new(),
-            span: None,
         }
     }
 }
 
 impl Debug for Sort {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if Sort::equal(self, &Sort::sort()) {
+        if *self == Sort::sort() {
             write!(f, "Sort::sort()")
         } else {
-            f.debug_struct("Sort")
-                .field("head", &self.head)
-                .field("span", &self.span)
-                .finish()
+            f.debug_struct("Sort").field("head", &self.head).finish()
         }
     }
 }
@@ -149,12 +134,6 @@ impl Sort {
     /// Alias for `term.type_check(ctx)` which provide a slightly better notation.
     pub fn of(term: &Term) -> Result<Sort> {
         term.type_check()
-    }
-
-    /// Compare two sorts semantically (i.e. excluding source spans).
-    pub fn equal(first: &Sort, second: &Sort) -> bool {
-        first.head == second.head
-            && zip(&first.arguments, &second.arguments).all(|(f, s)| SortArgument::equal(f, s))
     }
 
     /// Evaluate a term as a sort.
@@ -167,7 +146,7 @@ impl Sort {
     /// arguments are of the right kind (sort arguments or constants).
     pub fn evaluate(term: &Term) -> Result<Sort> {
         let sort = Sort::of(term)?;
-        if !Sort::equal(&sort, &Sort::sort()) {
+        if sort != Sort::sort() {
             error!(term.span(), "expected sort, found term of sort `{}`", sort);
             return Err(DiagnosticEmitted);
         }
@@ -182,7 +161,7 @@ impl Sort {
 
         let mut evaluated = Vec::new();
         for (sort, arg) in zip(head.function.domain(), arguments) {
-            if Sort::equal(&sort, &Sort::sort()) {
+            if sort == Sort::sort() {
                 evaluated.push(SortArgument::Sort(Sort::evaluate(arg)?))
             } else {
                 match arg.kind() {
@@ -198,7 +177,6 @@ impl Sort {
         Ok(Sort {
             head: head.function.clone(),
             arguments: evaluated,
-            span: term.span(),
         })
     }
 
@@ -266,7 +244,6 @@ impl Sort {
         Ok(Sort {
             head: self.head.clone(),
             arguments,
-            span: self.span.clone(),
         })
     }
 }

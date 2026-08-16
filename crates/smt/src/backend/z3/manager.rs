@@ -77,6 +77,14 @@ impl backend::Manager for Z3Manager {
 
 impl Z3Manager {
     pub fn sort_to_z3(&self, sort: &smt::Sort) -> Result<z3::Sort> {
+        match &sort.head {
+            smt::Function::Binding(_) => unreachable!(),
+            smt::Function::Primitive(_) => self.prim_sort_to_z3(sort),
+            smt::Function::User(user) => self.user_sort_to_z3(sort, user),
+        }
+    }
+
+    fn prim_sort_to_z3(&self, sort: &smt::Sort) -> Result<z3::Sort> {
         match Z3ALLSort::try_from(sort) {
             Ok(sort) => self.z3sort_to_z3(sort),
             Err(_) => Err(backend::Error::new(
@@ -86,6 +94,22 @@ impl Z3Manager {
                     sort.head.name()
                 )),
             )),
+        }
+    }
+    
+    fn user_sort_to_z3(&self, sort: &smt::Sort, user: &smt::UserFunction) -> Result<z3::Sort> {
+        match user {
+            smt::UserFunction::Declared(decl) => match self.sorts.borrow().get(decl) {
+                Some(sort) => Ok(sort.clone()),
+                None => Err(backend::Error::new(
+                    Z3.name(),
+                    backend::ErrorKind::ViolatedPrecondition(format!(
+                        "unknown sort or mismatching arguments: `{}`",
+                        sort.head.name()
+                    )),
+                ))
+            }
+            smt::UserFunction::Defined(_) => todo!(),
         }
     }
 
@@ -131,7 +155,7 @@ impl Z3Manager {
     }
 
     pub fn declare(&self, decl: smt::Declared) -> Result<()> {
-        if smt::Sort::equal(&decl.range, &smt::Sort::sort()) {
+        if decl.range == smt::Sort::sort() {
             self.declare_sort(decl)
         } else {
             self.declare_fun(decl)
