@@ -25,7 +25,7 @@
 use crate::*;
 use formally::{
     smt::{
-        backend::{Backend, z3::Z3},
+        backend::{Backend, cvc5::Cvc5},
         logics::Logic,
     },
     support::*,
@@ -171,7 +171,7 @@ impl Debug for TermManager {
 
 impl Default for TermManager {
     fn default() -> Self {
-        TermManager::new(Z3)
+        TermManager::new(Cvc5)
     }
 }
 

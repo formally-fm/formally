@@ -209,12 +209,12 @@ impl Z3Manager {
             args.push(self.binding_to_z3(bind)?)
         }
         let range = self.sort_to_z3(&def.range)?;
+        let body = self.term_to_z3(&def.body)?;
 
         let func = self
             .z3context
             .mk_rec_func_decl(def.name.name(), &sorts, range);
-        self.z3context
-            .add_rec_def(&func, &args, self.term_to_z3(&def.body)?);
+        self.z3context.add_rec_def(&func, &args, body);
 
         self.defs.borrow_mut().insert(def, func);
 

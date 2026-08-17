@@ -23,13 +23,15 @@ formally-support = { path = "../support", version = "0.2025.12" }
 formally-io = { path = "../io", version = "0.2025.12" }
 formally-smt-macros = { path = "../smt-macros", version = "0.2025.121", features = ["__subcratedoc"] }
 
+z3-sys = "0.12.0"
+cvc5-sys = "0.4.0"
+
 derive_more = { version = "2.0.1", features = ["from", "as_ref", "display", "deref"] }
 itertools = "0.14.0"
 paste = "1.0.15"
-rpds = "1"
 rug = "1"
 transitive = "1.2.0"
-z3-sys = "0.10.0"
 linkme = "0.3.35"
 thiserror = "2.0.17"
 dashmap = "6.2.1"
+
