@@ -158,6 +158,7 @@
 //!    preconditions, and can have arbitrary (but *not* undefined) behavior in those cases.
 
 pub mod cvc5;
+pub mod standard;
 pub mod z3;
 
 use crate::formally;

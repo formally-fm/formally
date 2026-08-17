@@ -26,13 +26,13 @@ use crate::formally;
 use formally::smt::{
     backend::{
         self,
+        Backend as _,
         z3::{Z3, Z3ALL, bindings as z3, manager::Z3Manager},
     },
     logics::{Logic, standard_logic},
     *,
 };
 
-use crate::backend::{Backend, Error, Manager};
 use std::rc::Rc;
 
 pub struct Z3Solver {
@@ -77,11 +77,11 @@ impl Z3Solver {
 }
 
 impl backend::Solver for Z3Solver {
-    fn manager(&self) -> &dyn Manager {
+    fn manager(&self) -> &dyn backend::Manager {
         &*self.manager
     }
 
-    fn backend(&self) -> &dyn Backend {
+    fn backend(&self) -> &dyn backend::Backend {
         &Z3
     }
 
@@ -89,27 +89,27 @@ impl backend::Solver for Z3Solver {
         self.logic
     }
 
-    fn declare(&mut self, decl: Declared) -> Result<(), Error> {
+    fn declare(&mut self, decl: Declared) -> Result<(), backend::Error> {
         self.manager.declare(decl)
     }
 
-    fn define(&mut self, def: Defined) -> Result<(), Error> {
+    fn define(&mut self, def: Defined) -> Result<(), backend::Error> {
         self.manager.define(def)
     }
 
-    fn push(&mut self) -> Result<(), Error> {
+    fn push(&mut self) -> Result<(), backend::Error> {
         self.z3solver.push();
 
         Ok(())
     }
 
-    fn pop_n(&mut self, n: usize) -> Result<(), Error> {
+    fn pop_n(&mut self, n: usize) -> Result<(), backend::Error> {
         self.z3solver.pop(n);
 
         Ok(())
     }
 
-    fn require(&mut self, term: &Term) -> Result<(), Error> {
+    fn require(&mut self, term: &Term) -> Result<(), backend::Error> {
         let ast = self.manager.term_to_z3(term)?;
 
         self.z3solver.assert(ast);
@@ -117,7 +117,7 @@ impl backend::Solver for Z3Solver {
         Ok(())
     }
 
-    fn check(&mut self) -> Result<Option<bool>, Error> {
+    fn check(&mut self) -> Result<Option<bool>, backend::Error> {
         let result = self.z3solver.check();
 
         self.result = match result {
@@ -129,7 +129,7 @@ impl backend::Solver for Z3Solver {
         Ok(self.result)
     }
 
-    fn model(&self) -> Result<Option<Box<dyn '_ + ModelProvider>>, Error> {
+    fn model(&self) -> Result<Option<Box<dyn '_ + ModelProvider>>, backend::Error> {
         match &self.z3solver.model {
             Some(m) => Ok(Some(
                 Box::new(Model::new(self, m.clone())) as Box<dyn ModelProvider>
