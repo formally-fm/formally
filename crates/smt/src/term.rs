@@ -29,7 +29,7 @@ use derive_more::From;
 use transitive::Transitive;
 
 pub use rug::{Integer, Rational};
-use std::{hash::Hash, ops::Deref, sync::Arc};
+use std::{hash::Hash, sync::Arc};
 
 /// A constant term.
 ///
@@ -151,6 +151,20 @@ pub enum Atom {
     Unbound(UnboundAtom),
 }
 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum Quantifier {
+    Forall,
+    Exists,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
+pub struct Quantified {
+    pub quantifier: Quantifier,
+    pub bindings: Vec<Binding>,
+    pub body: Term,
+    pub span: Option<Span>,
+}
+
 /// The payload of [Term] objects.
 ///
 /// The [TermKind] enum lists the possible kinds of terms supported by the framework. [Term] derefs
@@ -181,6 +195,8 @@ pub enum TermKind {
     Constant(Constant),
     /// An atom.
     Atom(Atom),
+    /// A quantified formula
+    Quantified(Quantified),
 }
 
 /// An SMT term.
@@ -253,13 +269,5 @@ impl Term {
     /// Get this term's [TermKind].
     pub fn kind(&self) -> &TermKind {
         &self.0
-    }
-}
-
-impl Deref for Term {
-    type Target = TermKind;
-
-    fn deref(&self) -> &TermKind {
-        self.kind()
     }
 }

@@ -90,6 +90,36 @@ impl From<Term> for ast::Term {
                     span: None,
                 })
             }
+            TermKind::Quantified(quant) => match quant.quantifier {
+                Quantifier::Forall => ast::Term::Forall(ast::Forall {
+                    bindings: quant
+                        .bindings
+                        .iter()
+                        .map(|bind| ast::SortedVar::from(bind.clone()))
+                        .collect(),
+                    body: Box::new(ast::Term::from(quant.body.clone())),
+                    span: quant.span.clone(),
+                }),
+                Quantifier::Exists => ast::Term::Exists(ast::Exists {
+                    bindings: quant
+                        .bindings
+                        .iter()
+                        .map(|bind| ast::SortedVar::from(bind.clone()))
+                        .collect(),
+                    body: Box::new(ast::Term::from(quant.body.clone())),
+                    span: quant.span.clone(),
+                }),
+            },
+        }
+    }
+}
+
+impl From<Binding> for ast::SortedVar {
+    fn from(bind: Binding) -> Self {
+        ast::SortedVar {
+            name: ast::Symbol::from(bind.name().clone()),
+            sort: ast::Sort::from(bind.sort().clone()),
+            span: bind.span().clone(),
         }
     }
 }

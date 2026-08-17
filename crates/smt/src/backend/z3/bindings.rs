@@ -32,10 +32,10 @@ use std::{
     hash::{Hash, Hasher},
     rc::{Rc, Weak},
 };
+pub use z3_sys::AstKind;
 pub use z3_sys::ErrorCode;
 pub use z3_sys::Z3_L_FALSE;
 pub use z3_sys::Z3_L_TRUE;
-pub use z3_sys::AstKind;
 
 #[repr(transparent)]
 pub struct Config {
@@ -384,6 +384,48 @@ impl Context {
                 body.ast,
             )
         }
+    }
+
+    pub fn mk_forall_const(&self, bindings: &[Ast], body: Ast) -> Ast {
+        let mut apps = Vec::new();
+        for bind in bindings {
+            assert!(unsafe { Z3_is_app(self.ctx, bind.ast) });
+            apps.push(bind.ast.cast::<_Z3_app>())
+        }
+
+        Ast::new(self, unsafe {
+            Z3_mk_forall_const(
+                self.ctx,
+                0,
+                apps.len() as u32,
+                apps.as_ptr(),
+                0,
+                std::ptr::null(),
+                body.ast,
+            )
+            .unwrap()
+        })
+    }
+
+    pub fn mk_exists_const(&self, bindings: &[Ast], body: Ast) -> Ast {
+        let mut apps = Vec::new();
+        for bind in bindings {
+            assert!(unsafe { Z3_is_app(self.ctx, bind.ast) });
+            apps.push(bind.ast.cast::<_Z3_app>())
+        }
+
+        Ast::new(self, unsafe {
+            Z3_mk_exists_const(
+                self.ctx,
+                0,
+                apps.len() as u32,
+                apps.as_ptr(),
+                0,
+                std::ptr::null(),
+                body.ast,
+            )
+            .unwrap()
+        })
     }
 }
 

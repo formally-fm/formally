@@ -139,14 +139,33 @@ impl LogicRequirement for Linear {
                 }
                 Ok(())
             }
+            TermKind::Quantified(quant) => Linear::check_term(logic, &quant.body),
         }
     }
 }
 
 impl LogicRequirement for QuantifierFree {
-    fn check_term(_logic: &dyn Logic, _term: &Term) -> Result<()> {
-        // Fill here when we will support quantifiers
-        Ok(())
+    fn check_term(logic: &dyn Logic, term: &Term) -> Result<()> {
+        match term.kind() {
+            TermKind::Constant(_) => Ok(()),
+            TermKind::Atom(atom) => match atom {
+                Atom::Bound(BoundAtom { arguments, .. })
+                | Atom::Unbound(UnboundAtom { arguments, .. }) => {
+                    for arg in arguments {
+                        QuantifierFree::check_term(logic, arg)?;
+                    }
+                    Ok(())
+                }
+            },
+            TermKind::Quantified(_) => {
+                error!(
+                    term.span(),
+                    "quantified formulas are not admitted in logic `{}`",
+                    logic.name()
+                );
+                Err(DiagnosticEmitted)
+            }
+        }
     }
 }
 

@@ -56,12 +56,7 @@ impl TypeCheck for Term {
     /// so two terms that compare equal but point to [TermKind] objects with different memory
     /// addresses will not share the cached result.
     fn type_check(&self) -> Result<Sort> {
-        let sort = match self.kind() {
-            TermKind::Constant(cnst) => cnst.type_check()?,
-            TermKind::Atom(atom) => atom.type_check()?,
-        };
-
-        Ok(sort)
+        self.kind().type_check()
     }
 }
 
@@ -70,6 +65,7 @@ impl TypeCheck for TermKind {
         let sort = match self {
             TermKind::Constant(cnst) => cnst.type_check()?,
             TermKind::Atom(atom) => atom.type_check()?,
+            TermKind::Quantified(quant) => quant.type_check()?
         };
 
         Ok(sort)
@@ -152,6 +148,12 @@ impl TypeCheck for Atom {
             Atom::Bound(bound) => bound.type_check(),
             Atom::Unbound(unbound) => unbound.type_check(),
         }
+    }
+}
+
+impl TypeCheck for Quantified {
+    fn type_check(&self) -> Result<Sort> {
+        self.body.type_check()
     }
 }
 

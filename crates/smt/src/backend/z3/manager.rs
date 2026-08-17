@@ -96,7 +96,7 @@ impl Z3Manager {
             )),
         }
     }
-    
+
     fn user_sort_to_z3(&self, sort: &smt::Sort, user: &smt::UserFunction) -> Result<z3::Sort> {
         match user {
             smt::UserFunction::Declared(decl) => match self.sorts.borrow().get(decl) {
@@ -107,8 +107,8 @@ impl Z3Manager {
                         "unknown sort or mismatching arguments: `{}`",
                         sort.head.name()
                     )),
-                ))
-            }
+                )),
+            },
             smt::UserFunction::Defined(_) => todo!(),
         }
     }
@@ -121,6 +121,7 @@ impl Z3Manager {
         let ast = match term.kind() {
             smt::TermKind::Constant(cnst) => self.constant_to_z3(cnst)?,
             smt::TermKind::Atom(atom) => self.atom_to_z3(atom)?,
+            smt::TermKind::Quantified(quant) => self.quant_to_z3(quant)?,
         };
 
         self.terms.borrow_mut().insert(term.clone(), ast.clone());
@@ -235,6 +236,20 @@ impl Z3Manager {
             smt::Constant::Rational { value, .. } => {
                 Ok(self.z3context.mk_numeral(&value.to_string_radix(10)))
             }
+        }
+    }
+
+    fn quant_to_z3(&self, quant: &smt::Quantified) -> Result<z3::Ast> {
+        let mut bindings = Vec::new();
+        for bind in &quant.bindings {
+            bindings.push(self.binding_to_z3(bind)?);
+        }
+
+        let body = self.term_to_z3(&quant.body)?;
+
+        match quant.quantifier {
+            smt::Quantifier::Forall => Ok(self.z3context.mk_forall_const(&bindings, body)),
+            smt::Quantifier::Exists => Ok(self.z3context.mk_exists_const(&bindings, body)),
         }
     }
 

@@ -166,7 +166,7 @@ impl Sort {
             } else {
                 match arg.kind() {
                     TermKind::Constant(c) => evaluated.push(SortArgument::Value(c.clone())),
-                    TermKind::Atom(_) => {
+                    _ => {
                         error!(arg.span(), "sort arguments must be constant terms");
                         return Err(DiagnosticEmitted);
                     }

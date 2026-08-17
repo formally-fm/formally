@@ -45,21 +45,22 @@ impl Env {
     /// before type checking, because type checking of unbound atoms is not possible. This seems
     /// to require double the calls to [Term::type_check()], but the latter caches its results in
     /// `env.context()`, so each subterm gets type-checked only once anyway.
-    pub fn resolve<P: TermPool>(&self, term: &Term, role: Role, pool: &P) -> Result<Term>
-    {
+    pub fn resolve<P: TermPool>(&self, term: &Term, role: Role, pool: &P) -> Result<Term> {
         Ok(match term.kind() {
             TermKind::Constant(_) => term.clone(),
-            TermKind::Atom(Atom::Bound(atom)) => pool.term(TermKind::Atom(Atom::Bound(
-                self.resolve_bound(atom, pool)?,
-            ))),
+            TermKind::Atom(Atom::Bound(atom)) => {
+                pool.term(TermKind::Atom(Atom::Bound(self.resolve_bound(atom, pool)?)))
+            }
             TermKind::Atom(Atom::Unbound(unbound)) => pool.term(TermKind::Atom(Atom::Bound(
                 self.resolve_unbound(unbound, role, pool)?,
             ))),
+            TermKind::Quantified(quant) => {
+                pool.term(TermKind::Quantified(self.resolve_quant(quant, role, pool)?))
+            }
         })
     }
 
-    fn resolve_bound<P: TermPool>(&self, atom: &BoundAtom, pool: &P) -> Result<BoundAtom>
-    {
+    fn resolve_bound<P: TermPool>(&self, atom: &BoundAtom, pool: &P) -> Result<BoundAtom> {
         let domain = atom.domain();
 
         if domain.len() != atom.arguments.len() {
@@ -88,8 +89,12 @@ impl Env {
         })
     }
 
-    fn resolve_unbound<P: TermPool>(&self, unbound: &UnboundAtom, role: Role, pool: &P) -> Result<BoundAtom>
-    {
+    fn resolve_unbound<P: TermPool>(
+        &self,
+        unbound: &UnboundAtom,
+        role: Role,
+        pool: &P,
+    ) -> Result<BoundAtom> {
         let head = Identifier::from(unbound.head.name()).over(unbound.head.span());
 
         self.lookup(head.clone(), role)
@@ -112,7 +117,7 @@ impl Env {
                 for arg in &atom.arguments {
                     arguments.push(Sort::of(arg).ok()?);
                 }
-                
+
                 let mut matches = HashMap::new();
                 for (sort, arg) in zip(atom.domain(), &arguments) {
                     if !sort.matches_with(arg, &mut matches) {
@@ -123,5 +128,27 @@ impl Env {
                 Some(atom)
             })
             .one()
+    }
+
+    fn resolve_quant<P: TermPool>(
+        &self,
+        quant: &Quantified,
+        role: Role,
+        pool: &P,
+    ) -> Result<Quantified> {
+        let mut env = Env::new().with_parent(self.clone());
+        
+        for bind in &quant.bindings {
+            env.functions.add(bind.name().name(), Function::from(bind.clone()));
+        }
+        
+        let body = env.resolve(&quant.body, role, pool)?;
+        
+        Ok(Quantified {
+            quantifier: quant.quantifier,
+            bindings: quant.bindings.clone(),
+            body,
+            span: quant.span.clone()
+        })
     }
 }

@@ -275,7 +275,7 @@ impl Interpreter {
     }
 
     fn assert(state: &mut State, assert: ast::Assert) -> Result<()> {
-        let term = Interpreter::term_to_smt(&state.solver, assert.term);
+        let term = Interpreter::term_to_smt(&state.solver, assert.term)?;
         state.solver.require(term)?;
 
         state.mode = Mode::Assert;
@@ -364,7 +364,7 @@ impl Interpreter {
 
     fn define_const(state: &mut State, def: ast::DefineConst) -> Result<()> {
         let id = Identifier::from(def.name.inner()).over(def.name.span());
-        let value = Interpreter::term_to_smt(&state.solver, def.body);
+        let value = Interpreter::term_to_smt(&state.solver, def.body)?;
         let sort = Interpreter::sort_to_smt(&state.solver, &def.sort)?;
 
         state
@@ -387,7 +387,7 @@ impl Interpreter {
         }
 
         let id = Identifier::from(def.name.inner()).over(def.name.span());
-        let body = Interpreter::term_to_smt(&state.solver, def.body);
+        let body = Interpreter::term_to_smt(&state.solver, def.body)?;
         let range = Interpreter::sort_to_smt(&state.solver, &def.range)?;
 
         state
@@ -439,7 +439,7 @@ impl Interpreter {
                                 if let Some(value) = value {
                                     values.push((
                                         ast::Term::from(ast::Symbol::new(function.name()).unwrap()),
-                                        Interpreter::term_to_ast(&state.solver.term(value)),
+                                        ast::Term::from(state.solver.term(value)),
                                     ))
                                 } else {
                                     error!(
