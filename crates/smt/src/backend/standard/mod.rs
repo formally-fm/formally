@@ -22,9 +22,11 @@
 // SOFTWARE.
 //
 
+pub mod facade;
+
 use crate::formally;
 use formally::{
-    smt::{self, backend, logics::LogicEx, theories},
+    smt::{self, backend, logics::LogicEx},
     support::Identifier,
 };
 
@@ -32,73 +34,66 @@ use std::rc::Rc;
 
 type Result<T, E = backend::Error> = std::result::Result<T, E>;
 
-pub trait Backend {
+pub trait Manager: Default + Sized {
     type ALL: LogicEx;
-    type Manager: Manager<Backend = Self>;
-    type Solver;
-}
+    type Backend: backend::Backend;
+    type FuncDecl: Clone;
+    type Sort: Clone;
+    type Term: Clone;
 
-pub trait Manager: Sized {
-    type Backend: Backend<Manager = Self>;
-    type FuncDecl;
-    type FuncDef;
-    type Sort;
-    type Term;
-    type Binding;
+    fn backend(&self) -> &Self::Backend;
 
-    fn new() -> Self;
+    fn uninterpreted_sort(&self, name: Identifier<'_>) -> Result<Self::Sort>;
 
-    fn uninterpreted_sort(&mut self, name: Identifier<'_>) -> Result<Self::Sort>;
-
-    fn func_decl(&mut self, sorts: &[Self::Sort], range: Self::Sort) -> Result<Self::FuncDecl>;
+    fn func_decl(&self, sorts: &[Self::Sort], range: Self::Sort) -> Result<Self::FuncDecl>;
 
     fn func_def(
-        &mut self,
+        &self,
         sorts: &[Self::Sort],
         range: Self::Sort,
-        bindings: &[Self::Binding],
+        bindings: &[Self::Term],
         body: Self::Term,
-    ) -> Result<Self::FuncDef>;
+    ) -> Result<Self::FuncDecl>;
 
-    fn binding(&mut self, name: Identifier<'_>, sort: Self::Sort) -> Result<Self::Binding>;
+    fn binding(&self, name: &str, sort: Self::Sort) -> Result<Self::Term>;
 
-    fn application(&mut self, func: Self::FuncDecl, arguments: &[Self::Term])
-    -> Result<Self::Term>;
+    fn application(&self, func: &Self::FuncDecl, arguments: &[Self::Term]) -> Result<Self::Term>;
 
-    fn constant(&mut self, cnst: &smt::Constant) -> Result<Self::Term>;
+    fn constant(&self, cnst: &smt::Constant) -> Result<Self::Term>;
 
     fn quantified(
-        &mut self,
+        &self,
         quantifier: smt::Quantifier,
-        bindings: &[Self::Binding],
+        bindings: &[Self::Term],
         body: Self::Term,
     ) -> Result<Self::Term>;
 
     fn sort(
-        &mut self,
-        sort: <<Self::Backend as Backend>::ALL as LogicEx>::Sort<'_>,
+        &self,
+        sort: <Self::ALL as LogicEx>::Sort<'_>,
+        to_sort: impl Fn(&smt::Sort) -> Result<Self::Sort>,
+        to_sorts: impl Fn(&[smt::Sort]) -> Result<Vec<Self::Sort>>,
     ) -> Result<Self::Sort>;
 
     fn atom(
-        &mut self,
-        atom: <<Self::Backend as Backend>::ALL as LogicEx>::Atom<'_>,
+        &self,
+        atom: <Self::ALL as LogicEx>::Atom<'_>,
+        to_term: impl Fn(&smt::Term) -> Result<Self::Term>,
+        to_terms: impl Fn(&[smt::Term]) -> Result<Vec<Self::Term>>,
     ) -> Result<Self::Term>;
 }
 
 pub trait Solver: Sized {
-    type Backend: Backend<Solver = Self>;
+    type Manager: Manager;
     type Result: Into<Option<bool>>;
 
-    fn new(config: &smt::Config, manager: Rc<<Self::Backend as Backend>::Manager>) -> Self;
+    fn new(config: &smt::Config, manager: Rc<Self::Manager>) -> Self;
 
     fn push(&mut self) -> Result<()>;
 
     fn pop(&mut self, n: usize) -> Result<()>;
 
-    fn require(
-        &mut self,
-        term: <<Self::Backend as Backend>::Manager as Manager>::Term,
-    ) -> Result<()>;
-    
+    fn require(&mut self, term: <Self::Manager as Manager>::Term) -> Result<()>;
+
     fn check(&self) -> Result<Self::Result>;
 }

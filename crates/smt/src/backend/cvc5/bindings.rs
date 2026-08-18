@@ -23,11 +23,7 @@
 
 use cvc5_sys as cvc5;
 
-use std::{
-    ffi::{CStr, CString},
-    ptr::NonNull,
-    rc::Rc,
-};
+use std::{ffi::CString, ptr::NonNull, rc::Rc};
 
 pub use cvc5::Kind;
 
@@ -113,14 +109,14 @@ impl Drop for TermManager {
 }
 
 pub struct Solver {
-    manager: Rc<TermManager>,
+    _manager: Rc<TermManager>,
     solver: *mut cvc5::Solver,
 }
 
 impl Solver {
     pub fn new(manager: Rc<TermManager>) -> Solver {
         Solver {
-            manager: manager.clone(),
+            _manager: manager.clone(),
             solver: unsafe { cvc5::new(manager.manager) },
         }
     }
