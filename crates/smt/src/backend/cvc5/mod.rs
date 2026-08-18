@@ -107,14 +107,12 @@ impl standard::Solver for Solver {
             }
             None => &ALL,
         };
+        
+        let solver = Solver { cvc5solver, logic };
+        
+        solver.config(config)?;
 
-        if config.produce_models {
-            cvc5solver.set_option("produce-models", "true")
-        } else {
-            cvc5solver.set_option("produce-models", "false")
-        }
-
-        Ok(Solver { cvc5solver, logic })
+        Ok(solver)
     }
 
     fn logic(&self) -> &dyn Logic {
@@ -123,6 +121,15 @@ impl standard::Solver for Solver {
 
     fn solver(&self) -> &<Self::Manager as standard::Manager>::Solver {
         &self.cvc5solver
+    }
+
+    fn config(&self, config: &Config) -> Result<()> {
+        if config.produce_models {
+            self.cvc5solver.set_option("produce-models", "true")
+        } else {
+            self.cvc5solver.set_option("produce-models", "false")
+        }
+        Ok(())
     }
 
     fn push(&mut self) -> Result<()> {

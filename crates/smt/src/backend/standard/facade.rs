@@ -48,7 +48,7 @@ pub struct SolverFacade<S: Solver> {
     manager: Rc<ManagerFacade<<S as Solver>::Manager>>,
     solver: S,
     result: Option<bool>,
-    config: smt::Config,
+    config: RefCell<smt::Config>,
 }
 
 struct ModelFacade<'s, S: 's + Solver> {
@@ -63,6 +63,11 @@ impl<S: Solver> backend::Solver for SolverFacade<S> {
 
     fn backend(&self) -> &dyn Backend {
         self.manager().backend()
+    }
+
+    fn config(&self, config: &smt::Config) -> Result<()> {
+        *self.config.borrow_mut() = config.clone();
+        self.solver.config(config)
     }
 
     fn logic(&self) -> &dyn Logic {
@@ -96,7 +101,7 @@ impl<S: Solver> backend::Solver for SolverFacade<S> {
     }
 
     fn model(&self) -> Result<Option<Box<dyn '_ + smt::ModelProvider>>> {
-        if !self.config.produce_models {
+        if !self.config.borrow().produce_models {
             return Err(backend::Error::new(
                 self.backend().name(),
                 backend::ErrorKind::ViolatedPrecondition(
@@ -152,7 +157,7 @@ impl<S: Solver> SolverFacade<S> {
             manager: manager.clone(),
             solver: <S as Solver>::new(config, logic, manager.manager.clone())?,
             result: None,
-            config: config.clone(),
+            config: RefCell::new(config.clone()),
         })
     }
 }

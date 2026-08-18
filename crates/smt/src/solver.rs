@@ -258,6 +258,10 @@ impl Solver {
         self.backend.logic()
     }
 
+    pub fn config(&self, config: &Config) -> Result<()> {
+        Ok(self.backend.config(config)?)
+    }
+    
     /// Get the [Env] object holding the current scopes for functions and sorts declared and defined
     /// in the solver.
     pub fn env(&self) -> Env {

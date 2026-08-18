@@ -290,6 +290,8 @@ pub trait Solver {
     /// backend.
     fn backend(&self) -> &dyn Backend;
 
+    fn config(&self, config: &Config) -> Result<(), Error>;
+
     /// Return the logic object associated with the logic selected by the original [Config] object.
     fn logic(&self) -> &'_ dyn logics::Logic;
 

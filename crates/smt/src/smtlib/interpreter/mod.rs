@@ -136,7 +136,7 @@ impl Interpreter {
                 ResetAssertions(_) => Self::unsupported(config),
                 SetInfo(_) => Self::unsupported(config),
                 SetLogic(sl) => Self::set_logic(self, sl),
-                SetOption(so) => Self::set_option(config, so),
+                SetOption(so) => Self::set_option_start(config, so),
                 command => Self::fail(config, RequiredMode::Started, command),
             },
             Started(state) => match command {
@@ -164,7 +164,7 @@ impl Interpreter {
                 Reset(_) => Self::unsupported(&state.config),
                 ResetAssertions(_) => Self::unsupported(&state.config),
                 SetInfo(_) => Self::unsupported(&state.config),
-                SetOption(_) => Self::unsupported(&state.config),
+                SetOption(so) => Self::set_option_started(state, so),
                 _ => match (command, state.mode) {
                     (GetAssignments(_), Mode::Sat) => Self::unsupported(&state.config),
                     (GetModel(_), Mode::Sat) => Self::unsupported(&state.config),
@@ -273,13 +273,22 @@ impl Interpreter {
         Ok(())
     }
 
-    fn set_option(config: &mut Config, so: ast::SetOption) -> Result<()> {
+    fn set_option_start(config: &mut Config, so: ast::SetOption) -> Result<()> {
         match so.option {
-            ast::AstOption::ProduceModels(pm) => Ok(config.produce_models = pm.value),
+            ast::AstOption::ProduceModels(pm) => {
+                config.produce_models = pm.value;
+                Ok(())
+            },
             _ => Self::unsupported(config),
         }
     }
 
+    fn set_option_started(state: &mut State, so: ast::SetOption) -> Result<()> {
+        Self::set_option_start(&mut state.config, so)?;
+        
+        state.solver.config(&state.config)
+    }
+    
     fn assert(state: &mut State, assert: ast::Assert) -> Result<()> {
         let term = Interpreter::term_to_smt(&state.solver, assert.term)?;
         state.solver.require(term)?;

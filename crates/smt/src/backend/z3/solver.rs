@@ -32,6 +32,7 @@ use formally::smt::{
     *,
 };
 
+use crate::backend::Error;
 use std::rc::Rc;
 
 pub struct Z3Solver {
@@ -82,6 +83,10 @@ impl backend::Solver for Z3Solver {
 
     fn backend(&self) -> &dyn backend::Backend {
         &Z3
+    }
+
+    fn config(&self, _config: &Config) -> Result<(), Error> {
+        todo!()
     }
 
     fn logic(&self) -> &'_ dyn Logic {

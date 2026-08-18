@@ -26,7 +26,7 @@ mod facade;
 pub use facade::ManagerFacade;
 pub use facade::SolverFacade;
 
-use crate::{Config, formally};
+use crate::formally;
 use formally::smt::{
     self,
     backend::{Backend, Error},
@@ -103,7 +103,7 @@ pub trait Solver: Sized {
         Self: 's;
 
     fn new(
-        config: &Config,
+        config: &smt::Config,
         logic: Result<Option<&'static dyn Logic>>,
         manager: Rc<Self::Manager>,
     ) -> Result<Self>;
@@ -111,6 +111,8 @@ pub trait Solver: Sized {
     fn logic(&self) -> &dyn Logic;
 
     fn solver(&self) -> &<Self::Manager as Manager>::Solver;
+
+    fn config(&self, config: &smt::Config) -> Result<()>;
 
     fn push(&mut self) -> Result<()>;
 
