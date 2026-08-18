@@ -29,7 +29,7 @@ use formally::smt::{
     self,
     backend::{self, Backend, standard},
     logic,
-    logics::{Logic, LogicEx, standard_logic},
+    logics::{Logic, LogicEx},
     theories,
 };
 use std::rc::Rc;
@@ -47,6 +47,10 @@ struct Manager {
 struct Solver {
     cvc5solver: Rc<cvc5::Solver>,
     logic: &'static dyn Logic,
+}
+
+struct Model<'s> {
+    solver: &'s Solver,
 }
 
 logic! {
@@ -84,6 +88,10 @@ impl Backend for Cvc5 {
 impl standard::Solver for Solver {
     type Manager = Manager;
     type Result = cvc5::Result;
+    type Model<'s>
+        = Model<'s>
+    where
+        Self: 's;
 
     fn new(
         config: &Config,
@@ -92,7 +100,13 @@ impl standard::Solver for Solver {
     ) -> Result<Self> {
         let cvc5solver = Rc::new(cvc5::Solver::new(manager.cvc5manager.clone()));
 
-        let logic = logic?.unwrap_or(&ALL);
+        let logic = match logic? {
+            Some(logic) => {
+                cvc5solver.set_logic(logic.name());
+                logic
+            }
+            None => &ALL,
+        };
 
         if config.produce_models {
             cvc5solver.set_option("produce-models", "true")
@@ -132,6 +146,34 @@ impl standard::Solver for Solver {
     fn check(&self) -> Result<Self::Result> {
         Ok(self.cvc5solver.check_sat())
     }
+
+    fn model(&self) -> Result<Self::Model<'_>> {
+        Ok(Model { solver: self })
+    }
+}
+
+impl standard::Model for Model<'_> {
+    type Term = cvc5::Term;
+
+    fn value(&self, term: Self::Term) -> Option<smt::ModelValue> {
+        let value = self.solver.cvc5solver.get_value(term);
+
+        if let Some(value) = self.solver.cvc5solver.get_boolean_value(value) {
+            return Some(smt::ModelValue::Boolean(value));
+        } else if let Some(value) = self.solver.cvc5solver.get_integer_value(value) {
+            return Some(smt::ModelValue::Constant(smt::Constant::Integer {
+                value,
+                span: None,
+            }));
+        } else if let Some(value) = self.solver.cvc5solver.get_real_value(value) {
+            return Some(smt::ModelValue::Constant(smt::Constant::Rational {
+                value,
+                span: None,
+            }));
+        }
+
+        None
+    }
 }
 
 impl standard::Manager for Manager {
@@ -157,9 +199,13 @@ impl standard::Manager for Manager {
         sorts: &[cvc5::Sort],
         range: cvc5::Sort,
     ) -> Result<cvc5::Term> {
-        Ok(self
-            .cvc5manager
-            .mk_const(self.cvc5manager.mk_fun_sort(sorts, range), name))
+        if sorts.is_empty() {
+            Ok(self.cvc5manager.mk_const(range, name))
+        } else {
+            Ok(self
+                .cvc5manager
+                .mk_const(self.cvc5manager.mk_fun_sort(sorts, range), name))
+        }
     }
 
     fn func_def(
@@ -179,8 +225,12 @@ impl standard::Manager for Manager {
     }
 
     fn application(&self, func: &cvc5::Term, arguments: &[cvc5::Term]) -> Result<cvc5::Term> {
+        if arguments.is_empty() {
+            return Ok(*func);
+        }
+
         let mut args = Vec::new();
-        args.push(func.clone());
+        args.push(*func);
         args.extend(arguments.iter().cloned());
 
         Ok(self.cvc5manager.mk_term(cvc5::Kind::ApplyUf, &args))

@@ -519,7 +519,7 @@ impl Model {
         }
     }
 
-    pub fn get_const_interp(&self, decl: &FuncDecl) -> Option<Ast> {
+    pub fn _get_const_interp(&self, decl: &FuncDecl) -> Option<Ast> {
         Some(Ast::new(&self.ctx, unsafe {
             Z3_model_get_const_interp(self.ctx.ctx, self.model, decl.decl)?
         }))

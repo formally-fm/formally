@@ -26,8 +26,8 @@ use crate::formally;
 use formally::smt::{
     self,
     backend::{
-        self, Backend, Error,
-        standard::{Manager, Solver},
+        self, Backend,
+        standard::{Manager, Model, Solver},
     },
     logics::{Logic, LogicEx, standard_logic},
 };
@@ -50,6 +50,11 @@ pub struct SolverFacade<S: Solver> {
     result: Option<bool>,
 }
 
+struct ModelFacade<'s, S: 's + Solver> {
+    solver: &'s SolverFacade<S>,
+    model: S::Model<'s>,
+}
+
 impl<S: Solver> backend::Solver for SolverFacade<S> {
     fn manager(&self) -> &dyn backend::Manager {
         &*self.manager
@@ -63,34 +68,41 @@ impl<S: Solver> backend::Solver for SolverFacade<S> {
         self.solver.logic()
     }
 
-    fn declare(&mut self, decl: smt::Declared) -> Result<(), Error> {
+    fn declare(&mut self, decl: smt::Declared) -> Result<()> {
         self.manager.declare(self.solver.solver(), decl)
     }
 
-    fn define(&mut self, def: smt::Defined) -> Result<(), Error> {
+    fn define(&mut self, def: smt::Defined) -> Result<()> {
         self.manager.define(self.solver.solver(), def)
     }
 
-    fn push(&mut self) -> Result<(), Error> {
+    fn push(&mut self) -> Result<()> {
         self.solver.push()
     }
 
-    fn pop_n(&mut self, n: usize) -> Result<(), Error> {
+    fn pop_n(&mut self, n: usize) -> Result<()> {
         self.solver.pop(n)
     }
 
-    fn require(&mut self, term: &smt::Term) -> Result<(), Error> {
+    fn require(&mut self, term: &smt::Term) -> Result<()> {
         self.solver.require(self.manager.term(term)?)
     }
 
-    fn check(&mut self) -> Result<Option<bool>, Error> {
+    fn check(&mut self) -> Result<Option<bool>> {
         self.result = self.solver.check().map(Into::into)?;
 
         Ok(self.result)
     }
 
-    fn model(&self) -> Result<Option<Box<dyn '_ + smt::ModelProvider>>, Error> {
-        todo!()
+    fn model(&self) -> Result<Option<Box<dyn '_ + smt::ModelProvider>>> {
+        if self.result.is_none() {
+            return Ok(None);
+        }
+
+        Ok(Some(Box::new(ModelFacade {
+            solver: self,
+            model: self.solver.model()?,
+        })))
     }
 }
 
@@ -130,6 +142,14 @@ impl<S: Solver> SolverFacade<S> {
             solver: <S as Solver>::new(config, logic, manager.manager.clone())?,
             result: None,
         })
+    }
+}
+
+impl<'s, S: 's + Solver> backend::ModelProvider for ModelFacade<'s, S> {
+    fn value(&self, term: &smt::Term) -> Option<smt::ModelValue> {
+        let term = self.solver.manager.term(term).map(Some).unwrap_or(None)?;
+
+        self.model.value(term)
     }
 }
 
@@ -362,10 +382,7 @@ impl<M: Manager> ManagerFacade<M> {
     fn quant(&self, quant: &smt::Quantified) -> Result<M::Term> {
         let mut bindings = Vec::new();
         for bind in &quant.bindings {
-            bindings.push(
-                self.manager
-                    .binding(bind.name().name(), self.sort(bind.sort())?)?,
-            );
+            bindings.push(self.binding(bind)?);
         }
 
         let body = self.term(&quant.body)?;

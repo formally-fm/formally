@@ -35,7 +35,7 @@ use crate::formally;
 
 use formally::{
     io::print::Print,
-    smt::{self, Config, ModelProvider, TermPool as _, smtlib::ast},
+    smt::{self, Config, TermPool as _, smtlib::ast, term},
     support::*,
 };
 
@@ -255,11 +255,10 @@ impl Interpreter {
             return Ok(());
         };
 
-        config.logic = Some(
-            Identifier::from(sl.logic.inner())
-                .into_owned()
-                .over(sl.logic.span()),
-        );
+        config.logic = match sl.logic.inner() {
+            "ALL" => None,
+            logic => Some(Identifier::from(logic).into_owned().over(sl.logic.span())),
+        };
         match smt::Solver::new(&config) {
             Ok(solver) => {
                 *self = Interpreter::Started(State {
@@ -428,14 +427,8 @@ impl Interpreter {
                                 let symbol = Identifier::from(symbol.inner()).over(symbol.span());
                                 let functions = state.solver.functions();
                                 let function = functions.lookup(symbol.clone()).one()?;
-                                let value = match function {
-                                    smt::Function::Binding(_) => todo!(),
-                                    smt::Function::Primitive(_) => todo!(),
-                                    smt::Function::User(smt::UserFunction::Declared(decl)) => {
-                                        model.value(decl)
-                                    }
-                                    smt::Function::User(_) => todo!(),
-                                };
+                                let term = state.solver.term(term!(#function));
+                                let value = model.value(&term);
                                 if let Some(value) = value {
                                     values.push((
                                         ast::Term::from(ast::Symbol::new(function.name()).unwrap()),

@@ -23,9 +23,9 @@
 
 use cvc5_sys as cvc5;
 
-use std::{ffi::CString, ptr::NonNull, rc::Rc};
-
 pub use cvc5::Kind;
+use std::ffi::CStr;
+use std::{ffi::CString, ptr::NonNull, rc::Rc};
 
 pub type Sort = NonNull<cvc5::cvc5_sort_t>;
 pub type Term = NonNull<cvc5::cvc5_term_t>;
@@ -154,21 +154,6 @@ impl Solver {
         unsafe { cvc5::set_logic(self.solver, logic.as_ptr()) }
     }
 
-    pub fn declare_fun(&self, name: &str, sorts: &[Sort], range: Sort, fresh: bool) -> Term {
-        let name = CString::new(name.as_bytes()).unwrap();
-        unsafe {
-            NonNull::new(cvc5::declare_fun(
-                self.solver,
-                name.as_ptr(),
-                sorts.len(),
-                sorts.as_ptr().cast(),
-                range.as_ptr(),
-                fresh,
-            ))
-            .unwrap()
-        }
-    }
-
     pub fn define_fun(
         &self,
         name: &str,
@@ -206,6 +191,44 @@ impl Solver {
 
     pub fn pop(&self, n: u32) {
         unsafe { cvc5::pop(self.solver, n) }
+    }
+
+    pub fn get_value(&self, term: Term) -> Term {
+        unsafe { NonNull::new(cvc5::get_value(self.solver, term.as_ptr())).unwrap() }
+    }
+
+    pub fn get_boolean_value(&self, term: Term) -> Option<bool> {
+        unsafe {
+            if !cvc5::term_is_boolean_value(term.as_ptr()) {
+                return None;
+            }
+            
+            Some(cvc5::term_get_boolean_value(term.as_ptr()))
+        }
+    }
+    
+    pub fn get_integer_value(&self, term: Term) -> Option<rug::Integer> {
+        unsafe {
+            if !cvc5::term_is_integer_value(term.as_ptr()) {
+                return None;
+            }
+
+            let value = cvc5::term_get_integer_value(term.as_ptr());
+            let value = CStr::from_ptr(value).to_string_lossy();
+            Some(rug::Integer::from_str_radix(&value, 10).unwrap())
+        }
+    }
+
+    pub fn get_real_value(&self, term: Term) -> Option<rug::Rational> {
+        unsafe {
+            if !cvc5::term_is_real_value(term.as_ptr()) {
+                return None;
+            }
+
+            let value = cvc5::term_get_real_value(term.as_ptr());
+            let value = CStr::from_ptr(value).to_string_lossy();
+            Some(rug::Rational::from_str_radix(&value, 10).unwrap())
+        }
     }
 }
 
@@ -251,15 +274,16 @@ impl Result {
     }
 }
 
-impl Into<Option<bool>> for Result {
-    fn into(self) -> Option<bool> {
-        if self.is_sat() {
+impl From<Result> for Option<bool> {
+    fn from(value: Result) -> Self {
+        if value.is_sat() {
             Some(true)
-        } else if self.is_unsat() {
+        } else if value.is_unsat() {
             Some(false)
         } else {
-            assert!(self.is_unknown());
+            assert!(value.is_unknown());
             None
         }
     }
 }
+

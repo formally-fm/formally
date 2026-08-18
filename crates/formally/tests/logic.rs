@@ -49,7 +49,7 @@ fn solve() -> Result<()> {
 
     match answer {
         Answer::Yes => match solver.model()? {
-            Some(model) => assert_eq!(model.value(&q), Some(ModelValue::from(true))),
+            Some(model) => assert_eq!(model.value(q), Some(ModelValue::from(true))),
             None => panic!("there is no model!"),
         },
         _ => panic!("wrong answer: {answer:?}"),

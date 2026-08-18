@@ -98,6 +98,9 @@ pub trait Manager: Default + Sized {
 pub trait Solver: Sized {
     type Manager: 'static + Manager;
     type Result: Into<Option<bool>>;
+    type Model<'s>: Model<Term = <Self::Manager as Manager>::Term>
+    where
+        Self: 's;
 
     fn new(
         config: &Config,
@@ -116,4 +119,12 @@ pub trait Solver: Sized {
     fn require(&mut self, term: <Self::Manager as Manager>::Term) -> Result<()>;
 
     fn check(&self) -> Result<Self::Result>;
+
+    fn model(&self) -> Result<Self::Model<'_>>;
+}
+
+pub trait Model: Sized {
+    type Term;
+
+    fn value(&self, term: Self::Term) -> Option<smt::ModelValue>;
 }

@@ -98,6 +98,6 @@ pub fn standard_logics() -> impl Iterator<Item = &'static dyn Logic> {
 ///
 /// The function returns `None` if the logic of the given name is not found, and returns
 /// the second argument `all` if `logic` is equal to `"ALL"`.
-pub fn standard_logic<'b>(logic: &str) -> Option<&'static dyn Logic> {
+pub fn standard_logic(logic: &str) -> Option<&'static dyn Logic> {
     STANDARD_LOGICS_MAP.get(logic).map(|v| *v as &dyn Logic)
 }

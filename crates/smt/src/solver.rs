@@ -386,7 +386,13 @@ impl Solver {
     /// Note that the representation of model values is still incomplete and only Boolean and
     /// numerical values can be currently extracted.
     pub fn model(&self) -> Result<Option<Model<'_>>> {
-        Ok(self.backend.model()?.map(Model))
+        match self.backend.model()? {
+            Some(provider) => Ok(Some(Model {
+                solver: self,
+                provider,
+            })),
+            None => Ok(None),
+        }
     }
 }
 
@@ -435,7 +441,7 @@ impl From<ModelValue> for TermKind {
 
 /// A trait for types that can provide model values.
 pub trait ModelProvider {
-    fn value(&self, decl: &Declared) -> Option<ModelValue>;
+    fn value(&self, term: &Term) -> Option<ModelValue>;
 }
 
 /// The answer to a call to [Solver::check()].
@@ -461,17 +467,13 @@ impl Debug for Answer {
 }
 
 /// A model to the current set of assertions of a [Solver].
-#[derive(From)]
-pub struct Model<'s>(Box<dyn 's + ModelProvider>);
-
-impl<'s> Model<'s> {
-    pub fn new(provider: impl 's + ModelProvider) -> Self {
-        Model(Box::new(provider))
-    }
+pub struct Model<'s> {
+    solver: &'s Solver,
+    provider: Box<dyn 's + ModelProvider>,
 }
 
-impl ModelProvider for Model<'_> {
-    fn value(&self, decl: &Declared) -> Option<ModelValue> {
-        self.0.value(decl)
+impl Model<'_> {
+    pub fn value(&self, term: impl ToTerm) -> Option<ModelValue> {
+        self.provider.value(&self.solver.term(term))
     }
 }
