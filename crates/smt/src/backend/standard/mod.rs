@@ -22,33 +22,45 @@
 // SOFTWARE.
 //
 
-pub mod facade;
+mod facade;
+pub use facade::ManagerFacade;
+pub use facade::SolverFacade;
 
-use crate::formally;
-use formally::{
-    smt::{self, backend, logics::LogicEx},
-    support::Identifier,
+use crate::{Config, formally};
+use formally::smt::{
+    self,
+    backend::{Backend, Error},
+    logics::{Logic, LogicEx},
 };
 
 use std::rc::Rc;
 
-type Result<T, E = backend::Error> = std::result::Result<T, E>;
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub trait Manager: Default + Sized {
     type ALL: LogicEx;
-    type Backend: backend::Backend;
+    type Backend: Backend;
+    type Solver;
     type FuncDecl: Clone;
     type Sort: Clone;
     type Term: Clone;
 
     fn backend(&self) -> &Self::Backend;
 
-    fn uninterpreted_sort(&self, name: Identifier<'_>) -> Result<Self::Sort>;
+    fn uninterpreted_sort(&self, name: &str) -> Result<Self::Sort>;
 
-    fn func_decl(&self, sorts: &[Self::Sort], range: Self::Sort) -> Result<Self::FuncDecl>;
+    fn func_decl(
+        &self,
+        solver: &Self::Solver,
+        name: &str,
+        sorts: &[Self::Sort],
+        range: Self::Sort,
+    ) -> Result<Self::FuncDecl>;
 
     fn func_def(
         &self,
+        solver: &Self::Solver,
+        name: &str,
         sorts: &[Self::Sort],
         range: Self::Sort,
         bindings: &[Self::Term],
@@ -71,8 +83,8 @@ pub trait Manager: Default + Sized {
     fn sort(
         &self,
         sort: <Self::ALL as LogicEx>::Sort<'_>,
-        to_sort: impl Fn(&smt::Sort) -> Result<Self::Sort>,
-        to_sorts: impl Fn(&[smt::Sort]) -> Result<Vec<Self::Sort>>,
+        to_sort: impl Fn(&smt::SortArgument) -> Result<Self::Sort>,
+        to_value: impl Fn(&smt::SortArgument) -> Result<&smt::Constant>,
     ) -> Result<Self::Sort>;
 
     fn atom(
@@ -84,10 +96,18 @@ pub trait Manager: Default + Sized {
 }
 
 pub trait Solver: Sized {
-    type Manager: Manager;
+    type Manager: 'static + Manager;
     type Result: Into<Option<bool>>;
 
-    fn new(config: &smt::Config, manager: Rc<Self::Manager>) -> Self;
+    fn new(
+        config: &Config,
+        logic: Result<Option<&'static dyn Logic>>,
+        manager: Rc<Self::Manager>,
+    ) -> Result<Self>;
+
+    fn logic(&self) -> &dyn Logic;
+
+    fn solver(&self) -> &<Self::Manager as Manager>::Solver;
 
     fn push(&mut self) -> Result<()>;
 

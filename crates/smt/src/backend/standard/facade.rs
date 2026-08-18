@@ -25,15 +25,18 @@
 use crate::formally;
 use formally::smt::{
     self,
-    backend::{self, Backend as _, standard},
-    logics::LogicEx,
+    backend::{
+        self, Backend, Error,
+        standard::{Manager, Solver},
+    },
+    logics::{Logic, LogicEx, standard_logic},
 };
-use std::{cell::RefCell, collections::HashMap};
+use std::{any::Any, cell::RefCell, collections::HashMap, rc::Rc};
 
 type Result<T, E = backend::Error> = std::result::Result<T, E>;
 
-pub struct Manager<M: standard::Manager> {
-    manager: M,
+pub struct ManagerFacade<M: Manager> {
+    manager: Rc<M>,
     decls: RefCell<HashMap<smt::Declared, M::FuncDecl>>,
     defs: RefCell<HashMap<smt::Defined, M::FuncDecl>>,
     sorts: RefCell<HashMap<smt::Declared, M::Sort>>,
@@ -41,28 +44,111 @@ pub struct Manager<M: standard::Manager> {
     bindings: RefCell<HashMap<smt::Binding, M::Term>>,
 }
 
-impl<M: 'static + standard::Manager> backend::Manager for Manager<M> {
-    fn backend(&self) -> &dyn backend::Backend {
+pub struct SolverFacade<S: Solver> {
+    manager: Rc<ManagerFacade<<S as Solver>::Manager>>,
+    solver: S,
+    result: Option<bool>,
+}
+
+impl<S: Solver> backend::Solver for SolverFacade<S> {
+    fn manager(&self) -> &dyn backend::Manager {
+        &*self.manager
+    }
+
+    fn backend(&self) -> &dyn Backend {
+        self.manager().backend()
+    }
+
+    fn logic(&self) -> &dyn Logic {
+        self.solver.logic()
+    }
+
+    fn declare(&mut self, decl: smt::Declared) -> Result<(), Error> {
+        self.manager.declare(self.solver.solver(), decl)
+    }
+
+    fn define(&mut self, def: smt::Defined) -> Result<(), Error> {
+        self.manager.define(self.solver.solver(), def)
+    }
+
+    fn push(&mut self) -> Result<(), Error> {
+        self.solver.push()
+    }
+
+    fn pop_n(&mut self, n: usize) -> Result<(), Error> {
+        self.solver.pop(n)
+    }
+
+    fn require(&mut self, term: &smt::Term) -> Result<(), Error> {
+        self.solver.require(self.manager.term(term)?)
+    }
+
+    fn check(&mut self) -> Result<Option<bool>, Error> {
+        self.result = self.solver.check().map(Into::into)?;
+
+        Ok(self.result)
+    }
+
+    fn model(&self) -> Result<Option<Box<dyn '_ + smt::ModelProvider>>, Error> {
+        todo!()
+    }
+}
+
+impl<S: Solver> SolverFacade<S> {
+    pub fn new(
+        backend: &<<S as Solver>::Manager as Manager>::Backend,
+        config: &smt::Config,
+        manager: Rc<dyn backend::Manager>,
+    ) -> Result<Self> {
+        let manager =
+            match Rc::downcast::<ManagerFacade<<S as Solver>::Manager>>(manager as Rc<dyn Any>) {
+                Ok(manager) => manager,
+                Err(_) => return Err(backend::Error::new(
+                    backend.name(),
+                    backend::ErrorKind::Internal(
+                        "`SolverFacade` method called with a `dyn Manager` which is not `ManagerFacade`"
+                            .into(),
+                    ),
+                )),
+            };
+
+        let logic = match &config.logic {
+            Some(name) => match standard_logic(name) {
+                Some(found) => Ok(Some(found)),
+                None => Err(backend::Error {
+                    kind: Box::new(backend::ErrorKind::UnsupportedLogic(
+                        name.clone().into_owned(),
+                    )),
+                    backend: backend.name().to_string(),
+                }),
+            },
+            None => Ok(None),
+        };
+
+        Ok(SolverFacade {
+            manager: manager.clone(),
+            solver: <S as Solver>::new(config, logic, manager.manager.clone())?,
+            result: None,
+        })
+    }
+}
+
+impl<M: 'static + Manager> backend::Manager for ManagerFacade<M> {
+    fn backend(&self) -> &dyn Backend {
         self.manager.backend()
     }
 }
 
-impl<M: standard::Manager> Default for Manager<M> {
-    fn default() -> Self {
-        Manager {
-            manager: M::default(),
+impl<M: Manager> ManagerFacade<M> {
+    pub fn new(manager: M) -> Self {
+        ManagerFacade {
+            manager: Rc::new(manager),
             decls: RefCell::default(),
             defs: RefCell::default(),
             sorts: RefCell::default(),
             terms: RefCell::default(),
             bindings: RefCell::default(),
         }
-    }
-}
-
-impl<M: standard::Manager> Manager<M> {
-    pub fn new() -> Self {
-        Manager::default()
     }
 
     pub fn sort(&self, sort: &smt::Sort) -> Result<M::Sort> {
@@ -105,9 +191,64 @@ impl<M: standard::Manager> Manager<M> {
         Ok(vec)
     }
 
+    pub fn declare(&self, solver: &M::Solver, decl: smt::Declared) -> Result<()> {
+        if decl.range == smt::Sort::sort() {
+            self.declare_sort(decl)
+        } else {
+            self.declare_fun(solver, decl)
+        }
+    }
+
+    pub fn define(&self, solver: &M::Solver, def: smt::Defined) -> Result<()> {
+        if self.defs.borrow().contains_key(&def) {
+            return Ok(());
+        }
+
+        let mut sorts = Vec::new();
+        let mut args = Vec::new();
+        for bind in &def.domain {
+            sorts.push(self.sort(bind.sort())?);
+            args.push(self.binding(bind)?)
+        }
+        let range = self.sort(&def.range)?;
+        let body = self.term(&def.body)?;
+
+        let func = self
+            .manager
+            .func_def(solver, def.name.name(), &sorts, range, &args, body)?;
+
+        self.defs.borrow_mut().insert(def, func);
+
+        Ok(())
+    }
+
+    fn sort_argument_to_sort(&self, arg: &smt::SortArgument) -> Result<M::Sort> {
+        match arg {
+            smt::SortArgument::Sort(sort) => self.sort(sort),
+            smt::SortArgument::Value(_) => Err(backend::Error::new(
+                self.manager.backend().name(),
+                backend::ErrorKind::ViolatedPrecondition("expected sort, found a value".into()),
+            )),
+        }
+    }
+
+    fn sort_argument_to_value<'a>(&self, arg: &'a smt::SortArgument) -> Result<&'a smt::Constant> {
+        match arg {
+            smt::SortArgument::Value(value) => Ok(value),
+            smt::SortArgument::Sort(_) => Err(backend::Error::new(
+                self.manager.backend().name(),
+                backend::ErrorKind::ViolatedPrecondition("expected value, found a sort".into()),
+            )),
+        }
+    }
+
     fn prim_sort(&self, sort: &smt::Sort) -> Result<M::Sort> {
         match <M::ALL as LogicEx>::Sort::try_from(sort) {
-            Ok(sort) => self.manager.sort(sort, |s| self.sort(s), |s| self.sorts(s)),
+            Ok(sort) => self.manager.sort(
+                sort,
+                |arg| self.sort_argument_to_sort(arg),
+                |arg| self.sort_argument_to_value(arg),
+            ),
             Err(_) => Err(backend::Error::new(
                 self.manager.backend().name(),
                 backend::ErrorKind::ViolatedPrecondition(format!(
@@ -230,5 +371,41 @@ impl<M: standard::Manager> Manager<M> {
         let body = self.term(&quant.body)?;
 
         self.manager.quantified(quant.quantifier, &bindings, body)
+    }
+
+    fn declare_sort(&self, decl: smt::Declared) -> Result<()> {
+        if self.sorts.borrow().contains_key(&decl) {
+            return Ok(());
+        }
+
+        let sort = if decl.domain.is_empty() {
+            self.manager.uninterpreted_sort(decl.name.name())?
+        } else {
+            todo!()
+        };
+
+        self.sorts.borrow_mut().insert(decl, sort);
+
+        Ok(())
+    }
+
+    fn declare_fun(&self, solver: &M::Solver, decl: smt::Declared) -> Result<()> {
+        if self.decls.borrow().contains_key(&decl) {
+            return Ok(());
+        }
+
+        let range = self.sort(&decl.range)?;
+        let mut sorts = Vec::new();
+        for sort in &decl.domain {
+            sorts.push(self.sort(sort)?);
+        }
+
+        let func = self
+            .manager
+            .func_decl(solver, decl.name.name(), &sorts, range)?;
+
+        self.decls.borrow_mut().insert(decl, func);
+
+        Ok(())
     }
 }

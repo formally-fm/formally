@@ -25,8 +25,7 @@
 use crate::formally;
 use formally::smt::{
     backend::{
-        self,
-        Backend as _,
+        self, Backend as _,
         z3::{Z3, Z3ALL, bindings as z3, manager::Z3Manager},
     },
     logics::{Logic, standard_logic},
@@ -47,7 +46,7 @@ impl Z3Solver {
         let z3solver;
         let logic: &dyn Logic;
         match &config.logic {
-            Some(name) => match standard_logic(name, &Z3ALL) {
+            Some(name) => match standard_logic(name) {
                 Some(found) => {
                     z3solver = z3::Solver::new_for_logic(manager.z3context.clone(), name);
                     logic = found;

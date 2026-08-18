@@ -64,6 +64,18 @@ impl TermManager {
         }
     }
 
+    pub fn mk_fun_sort(&self, sorts: &[Sort], range: Sort) -> Sort {
+        unsafe {
+            NonNull::new(cvc5::mk_fun_sort(
+                self.manager,
+                sorts.len(),
+                sorts.as_ptr().cast(),
+                range.as_ptr(),
+            ))
+            .unwrap()
+        }
+    }
+
     pub fn mk_term(&self, kind: Kind, children: &[Term]) -> Term {
         unsafe {
             NonNull::new(cvc5::mk_term(
@@ -74,6 +86,16 @@ impl TermManager {
             ))
             .unwrap()
         }
+    }
+
+    pub fn mk_var(&self, sort: Sort, name: &str) -> Term {
+        let name = CString::new(name.as_bytes()).unwrap();
+        unsafe { NonNull::new(cvc5::mk_var(self.manager, sort.as_ptr(), name.as_ptr())).unwrap() }
+    }
+
+    pub fn mk_const(&self, sort: Sort, name: &str) -> Term {
+        let name = CString::new(name.as_bytes()).unwrap();
+        unsafe { NonNull::new(cvc5::mk_const(self.manager, sort.as_ptr(), name.as_ptr())).unwrap() }
     }
 
     pub fn mk_boolean(&self, value: bool) -> Term {
@@ -226,5 +248,18 @@ impl Result {
 
     pub fn is_unknown(&self) -> bool {
         unsafe { cvc5::result_is_unknown(self.result) }
+    }
+}
+
+impl Into<Option<bool>> for Result {
+    fn into(self) -> Option<bool> {
+        if self.is_sat() {
+            Some(true)
+        } else if self.is_unsat() {
+            Some(false)
+        } else {
+            assert!(self.is_unknown());
+            None
+        }
     }
 }
