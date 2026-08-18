@@ -136,7 +136,7 @@ impl Interpreter {
                 ResetAssertions(_) => Self::unsupported(config),
                 SetInfo(_) => Self::unsupported(config),
                 SetLogic(sl) => Self::set_logic(self, sl),
-                SetOption(_) => Self::unsupported(config),
+                SetOption(so) => Self::set_option(config, so),
                 command => Self::fail(config, RequiredMode::Started, command),
             },
             Started(state) => match command {
@@ -271,6 +271,13 @@ impl Interpreter {
         }
 
         Ok(())
+    }
+
+    fn set_option(config: &mut Config, so: ast::SetOption) -> Result<()> {
+        match so.option {
+            ast::AstOption::ProduceModels(pm) => Ok(config.produce_models = pm.value),
+            _ => Self::unsupported(config),
+        }
     }
 
     fn assert(state: &mut State, assert: ast::Assert) -> Result<()> {
@@ -417,6 +424,14 @@ impl Interpreter {
     }
 
     fn get_value(state: &mut State, cmd: ast::GetValue) -> Result<()> {
+        if !state.config.produce_models {
+            error!(
+                cmd.span,
+                "no model value can be produced if the `:produce-models` option is not set to true"
+            );
+            return Err(DiagnosticEmitted);
+        }
+
         match state.solver.model()? {
             Some(model) => {
                 let mut values = Vec::new();

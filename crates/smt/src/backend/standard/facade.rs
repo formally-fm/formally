@@ -48,6 +48,7 @@ pub struct SolverFacade<S: Solver> {
     manager: Rc<ManagerFacade<<S as Solver>::Manager>>,
     solver: S,
     result: Option<bool>,
+    config: smt::Config,
 }
 
 struct ModelFacade<'s, S: 's + Solver> {
@@ -95,6 +96,16 @@ impl<S: Solver> backend::Solver for SolverFacade<S> {
     }
 
     fn model(&self) -> Result<Option<Box<dyn '_ + smt::ModelProvider>>> {
+        if !self.config.produce_models {
+            return Err(backend::Error::new(
+                self.backend().name(),
+                backend::ErrorKind::ViolatedPrecondition(
+                    "no model can be produced if the `:produce-models` option is not set to true"
+                        .into(),
+                ),
+            ));
+        }
+
         if self.result.is_none() {
             return Ok(None);
         }
@@ -141,6 +152,7 @@ impl<S: Solver> SolverFacade<S> {
             manager: manager.clone(),
             solver: <S as Solver>::new(config, logic, manager.manager.clone())?,
             result: None,
+            config: config.clone(),
         })
     }
 }

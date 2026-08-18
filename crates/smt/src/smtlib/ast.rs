@@ -319,7 +319,7 @@ pub enum InfoFlag {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Attribute {
     pub keyword: Keyword,
-    pub value: Option<AttributeValue>,
+    pub value: AttributeValue,
     pub span: Option<Span>,
 }
 
@@ -991,6 +991,88 @@ impl From<Identifier> for QualifiedIdentifier {
             id,
             sort: None,
             span: None,
+        }
+    }
+}
+
+impl TryFrom<AttributeValue> for StringLiteral {
+    type Error = ();
+
+    fn try_from(value: AttributeValue) -> Result<Self, Self::Error> {
+        match value {
+            AttributeValue::Constant(Constant::String(s)) => Ok(s),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<AttributeValue> for Boolean {
+    type Error = ();
+
+    fn try_from(value: AttributeValue) -> Result<Self, Self::Error> {
+        let span = value.span();
+        match value {
+            AttributeValue::Constant(Constant::String(s)) => {
+                if s.value == "true" {
+                    Ok(Boolean { value: true, span })
+                } else if s.value == "false" {
+                    Ok(Boolean { value: false, span })
+                } else {
+                    Err(())
+                }
+            }
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<AttributeValue> for Numeral {
+    type Error = ();
+
+    fn try_from(value: AttributeValue) -> Result<Self, Self::Error> {
+        match value {
+            AttributeValue::Constant(Constant::Numeral(n)) => Ok(n),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<Attribute> for AstOption {
+    type Error = ();
+
+    fn try_from(attr: Attribute) -> Result<Self, ()> {
+        match attr.keyword.symbol.value.as_str() {
+            "diagnostic-output-channel" => Ok(AstOption::DiagnosticOutputChannel(
+                StringLiteral::try_from(attr.value)?,
+            )),
+            "global-declarations" => Ok(AstOption::GlobalDeclarations(Boolean::try_from(
+                attr.value,
+            )?)),
+            "interactive-mode" => Ok(AstOption::InteractiveMode(Boolean::try_from(attr.value)?)),
+            "print-success" => Ok(AstOption::PrintSuccess(Boolean::try_from(attr.value)?)),
+            "produce-assertions" => {
+                Ok(AstOption::ProduceAssertions(Boolean::try_from(attr.value)?))
+            }
+            "produce-assignments" => Ok(AstOption::ProduceAssignments(Boolean::try_from(
+                attr.value,
+            )?)),
+            "produce-models" => Ok(AstOption::ProduceModels(Boolean::try_from(attr.value)?)),
+            "produce-proofs" => Ok(AstOption::ProduceProofs(Boolean::try_from(attr.value)?)),
+            "produce-unsat-assumptions" => Ok(AstOption::ProduceUnsatAssumptions(
+                Boolean::try_from(attr.value)?,
+            )),
+            "produce-unsat-cores" => {
+                Ok(AstOption::ProduceUnsatCores(Boolean::try_from(attr.value)?))
+            }
+            "random-seet" => Ok(AstOption::RandomSeed(Numeral::try_from(attr.value)?)),
+            "regular-output-channel" => Ok(AstOption::RegularOutputChannel(
+                StringLiteral::try_from(attr.value)?,
+            )),
+            "reproducible-resource-limit" => Ok(AstOption::ReproducibleResourceLimit(
+                Numeral::try_from(attr.value)?,
+            )),
+            "verbosity" => Ok(AstOption::Verbosity(Numeral::try_from(attr.value)?)),
+            _ => Ok(AstOption::Attribute(Box::new(attr))),
         }
     }
 }

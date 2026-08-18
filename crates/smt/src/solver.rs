@@ -67,7 +67,7 @@ use std::{
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     /// The name of the logic to instantiate the solver for.
     ///
