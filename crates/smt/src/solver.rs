@@ -25,7 +25,7 @@
 use crate::*;
 use formally::{
     smt::{
-        backend::{Backend, cvc5::Cvc5},
+        backend::{Backend, z3::Z3},
         logics::Logic,
     },
     support::*,
@@ -171,7 +171,7 @@ impl Debug for TermManager {
 
 impl Default for TermManager {
     fn default() -> Self {
-        TermManager::new(Cvc5)
+        TermManager::new(Z3)
     }
 }
 
@@ -261,7 +261,7 @@ impl Solver {
     pub fn config(&self, config: &Config) -> Result<()> {
         Ok(self.backend.config(config)?)
     }
-    
+
     /// Get the [Env] object holding the current scopes for functions and sorts declared and defined
     /// in the solver.
     pub fn env(&self) -> Env {

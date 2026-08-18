@@ -26,6 +26,7 @@ use z3_sys::*;
 
 use itertools::Itertools;
 use std::fmt::Formatter;
+use std::mem::MaybeUninit;
 use std::{
     ffi::*,
     fmt::Debug,
@@ -37,9 +38,16 @@ pub use z3_sys::ErrorCode;
 pub use z3_sys::Z3_L_FALSE;
 pub use z3_sys::Z3_L_TRUE;
 
-#[repr(transparent)]
-pub struct Config {
-    pub config: Z3_config,
+pub struct LBool(Z3_lbool);
+
+impl From<LBool> for Option<bool> {
+    fn from(value: LBool) -> Self {
+        match value.0 {
+            Z3_L_TRUE => Some(true),
+            Z3_L_FALSE => Some(false),
+            _ => None,
+        }
+    }
 }
 
 pub struct Context {
@@ -50,7 +58,6 @@ pub struct Context {
 pub struct Solver {
     pub ctx: Rc<Context>,
     pub slv: Z3_solver,
-    pub model: Option<Model>,
 }
 
 pub struct Ast {
@@ -73,43 +80,25 @@ pub struct Model {
     pub model: Z3_model,
 }
 
-impl Config {
-    pub fn new() -> Config {
-        Config {
-            config: unsafe { Z3_mk_config().unwrap() },
-        }
-    }
-
-    pub fn set_param_value(&self, param: &CStr, value: &CStr) {
-        unsafe { Z3_set_param_value(self.config, param.as_ptr(), value.as_ptr()) }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config::new()
-    }
-}
-
-impl Drop for Config {
-    fn drop(&mut self) {
-        unsafe { Z3_del_config(self.config) }
-    }
+pub struct Params {
+    pub ctx: Rc<Context>,
+    pub params: Z3_params,
 }
 
 impl Context {
-    pub fn new(config: &Config) -> Rc<Context> {
+    pub fn new() -> Rc<Context> {
+        let config = unsafe { Z3_mk_config().unwrap() };
         Rc::new_cyclic(|weak| Context {
             this: weak.clone(),
-            ctx: unsafe { Z3_mk_context_rc(config.config).unwrap() },
+            ctx: unsafe { Z3_mk_context_rc(config).unwrap() },
         })
     }
 
-    pub fn get_error_code(&self) -> ErrorCode {
+    pub fn _get_error_code(&self) -> ErrorCode {
         unsafe { Z3_get_error_code(self.ctx) }
     }
 
-    pub fn get_error_msg(&self, code: ErrorCode) -> String {
+    pub fn _get_error_msg(&self, code: ErrorCode) -> String {
         unsafe {
             let string = Z3_get_error_msg(self.ctx, code);
             CString::from(CStr::from_ptr(string)).into_string().unwrap()
@@ -205,7 +194,7 @@ impl Context {
         })
     }
 
-    pub fn mk_app(&self, func: &FuncDecl, args: Vec<Ast>) -> Ast {
+    pub fn mk_app(&self, func: &FuncDecl, args: &[Ast]) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_app(self.ctx, func.decl, args.len() as c_uint, args.as_ptr()).unwrap()
@@ -444,7 +433,6 @@ impl Solver {
                 slv
             },
             ctx,
-            model: None,
         }
     }
 
@@ -461,7 +449,6 @@ impl Solver {
                 slv
             },
             ctx,
-            model: None,
         }
     }
 
@@ -477,17 +464,21 @@ impl Solver {
         unsafe { Z3_solver_assert(self.ctx.ctx, self.slv, ast.ast) }
     }
 
-    pub fn check(&mut self) -> Z3_lbool {
-        let answer = unsafe { Z3_solver_check(self.ctx.ctx, self.slv) };
+    pub fn check(&self) -> LBool {
+        unsafe { LBool(Z3_solver_check(self.ctx.ctx, self.slv)) }
+    }
 
-        if answer == Z3_L_TRUE {
-            let model = unsafe { Z3_solver_get_model(self.ctx.ctx, self.slv).unwrap() };
-            self.model = Some(Model::new(self.ctx.clone(), model));
-        } else {
-            self.model = None;
+    pub fn get_model(&self) -> Model {
+        unsafe {
+            Model::new(
+                self.ctx.clone(),
+                Z3_solver_get_model(self.ctx.ctx, self.slv).unwrap(),
+            )
         }
+    }
 
-        answer
+    pub fn set_params(&self, params: Params) {
+        unsafe { Z3_solver_set_params(self.ctx.ctx, self.slv, params.params) }
     }
 }
 
@@ -497,7 +488,6 @@ impl Clone for Solver {
         Solver {
             ctx: self.ctx.clone(),
             slv: self.slv,
-            model: self.model.clone(),
         }
     }
 }
@@ -519,10 +509,17 @@ impl Model {
         }
     }
 
-    pub fn _get_const_interp(&self, decl: &FuncDecl) -> Option<Ast> {
-        Some(Ast::new(&self.ctx, unsafe {
-            Z3_model_get_const_interp(self.ctx.ctx, self.model, decl.decl)?
-        }))
+    pub fn eval(&self, ast: &Ast) -> Option<Ast> {
+        unsafe {
+            let mut result: MaybeUninit<Z3_ast> = MaybeUninit::uninit();
+            let success =
+                Z3_model_eval(self.ctx.ctx, self.model, ast.ast, true, result.as_mut_ptr());
+            if success {
+                Some(Ast::new(&*self.ctx, result.assume_init()))
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -678,5 +675,45 @@ impl Drop for Sort {
 impl Hash for Sort {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Hash::hash(&self.sort, state)
+    }
+}
+
+impl Params {
+    pub fn new(ctx: Rc<Context>) -> Params {
+        unsafe {
+            let params = Z3_mk_params(ctx.ctx).unwrap();
+            Z3_params_inc_ref(ctx.ctx, params);
+
+            Params { params, ctx }
+        }
+    }
+
+    pub fn set_bool(&self, name: &str, value: bool) {
+        let name = CString::new(name.as_bytes()).unwrap();
+        unsafe {
+            Z3_params_set_bool(
+                self.ctx.ctx,
+                self.params,
+                Z3_mk_string_symbol(self.ctx.ctx, name.as_ptr()).unwrap(),
+                value,
+            )
+        }
+    }
+}
+
+impl Clone for Params {
+    fn clone(&self) -> Self {
+        unsafe { Z3_params_inc_ref(self.ctx.ctx, self.params) }
+
+        Params {
+            ctx: self.ctx.clone(),
+            params: self.params,
+        }
+    }
+}
+
+impl Drop for Params {
+    fn drop(&mut self) {
+        unsafe { Z3_params_dec_ref(self.ctx.ctx, self.params) }
     }
 }
