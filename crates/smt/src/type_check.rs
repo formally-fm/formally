@@ -57,11 +57,11 @@ impl TypeCheck for Term {
     /// addresses will not share the cached result.
     fn type_check(&self) -> Result<Sort> {
         if let Some(sort) = &*self.0.sort.lock().unwrap() {
-            return Ok(sort.clone())
+            return Ok(sort.clone());
         }
         let sort = self.kind().type_check()?;
         *self.0.sort.lock().unwrap() = Some(sort.clone());
-        
+
         Ok(sort)
     }
 }
@@ -71,7 +71,7 @@ impl TypeCheck for TermKind {
         let sort = match self {
             TermKind::Constant(cnst) => cnst.type_check()?,
             TermKind::Atom(atom) => atom.type_check()?,
-            TermKind::Quantified(quant) => quant.type_check()?
+            TermKind::Quantified(quant) => quant.type_check()?,
         };
 
         Ok(sort)
@@ -101,6 +101,7 @@ impl TypeCheck for BoundAtom {
             return Err(DiagnosticEmitted);
         }
 
+        #[allow(clippy::mutable_key_type)]
         let mut matches = HashMap::new();
         for (sort, arg) in zip(domain, &self.arguments) {
             let argsort = Sort::of(arg)?;

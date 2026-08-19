@@ -515,7 +515,7 @@ impl Model {
             let success =
                 Z3_model_eval(self.ctx.ctx, self.model, ast.ast, true, result.as_mut_ptr());
             if success {
-                Some(Ast::new(&*self.ctx, result.assume_init()))
+                Some(Ast::new(&self.ctx, result.assume_init()))
             } else {
                 None
             }

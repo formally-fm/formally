@@ -118,6 +118,7 @@ impl Env {
                     arguments.push(Sort::of(arg).ok()?);
                 }
 
+                #[allow(clippy::mutable_key_type)]
                 let mut matches = HashMap::new();
                 for (sort, arg) in zip(atom.domain(), &arguments) {
                     if !sort.matches_with(arg, &mut matches) {

@@ -61,6 +61,7 @@ impl SortArgument {
         }
     }
 
+    #[allow(clippy::mutable_key_type)]
     pub(crate) fn matches_with(
         &self,
         instance: &SortArgument,
@@ -180,6 +181,7 @@ impl Sort {
         })
     }
 
+    #[allow(clippy::mutable_key_type)]
     pub(crate) fn matches_with(
         &self,
         argument: &Sort,
@@ -219,6 +221,7 @@ impl Sort {
         }
     }
 
+    #[allow(clippy::mutable_key_type)]
     pub(crate) fn instantiate(&self, matches: &HashMap<Binding, Sort>) -> Result<Sort> {
         if let Function::Binding(bind) = &self.head {
             return matches.get(bind).cloned().ok_or_else(|| {
