@@ -23,10 +23,10 @@
 //
 
 use crate::formally;
-use formally::{smt::*, support::Nominal};
-use std::{cell::RefCell, collections::HashSet, sync::Arc};
-
 use dashmap::DashSet;
+use formally::{smt::*, support::Nominal};
+use std::sync::Mutex;
+use std::{borrow::Borrow, cell::RefCell, collections::HashSet, sync::Arc};
 
 pub trait TermPool: Sized {
     fn shared(&self, kind: TermKind) -> Term;
@@ -36,9 +36,18 @@ pub trait TermPool: Sized {
     }
 }
 
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct Lookup<T>(T);
+
+impl Borrow<TermKind> for Lookup<Arc<TermInner>> {
+    fn borrow(&self) -> &TermKind {
+        &self.0.kind
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct HashPool {
-    pool: RefCell<HashSet<Arc<TermKind>>>,
+    pool: RefCell<HashSet<Lookup<Arc<TermInner>>>>,
 }
 
 impl HashPool {
@@ -49,7 +58,7 @@ impl HashPool {
 
 #[derive(Debug, Default)]
 pub struct DashPool {
-    pool: DashSet<Arc<TermKind>>,
+    pool: DashSet<Lookup<Arc<TermInner>>>,
 }
 
 impl DashPool {
@@ -61,11 +70,14 @@ impl DashPool {
 impl TermPool for DashPool {
     fn shared(&self, kind: TermKind) -> Term {
         if let Some(kind) = self.pool.get(&kind) {
-            Term(Nominal(kind.clone()))
+            Term(Nominal(kind.0.clone()))
         } else {
-            let arc = Arc::new(kind);
+            let arc = Arc::new(TermInner {
+                kind,
+                sort: Mutex::default(),
+            });
             let term = Term(Nominal(arc.clone()));
-            self.pool.insert(arc);
+            self.pool.insert(Lookup(arc));
 
             term
         }
@@ -75,11 +87,14 @@ impl TermPool for DashPool {
 impl TermPool for HashPool {
     fn shared(&self, kind: TermKind) -> Term {
         if let Some(kind) = self.pool.borrow().get(&kind) {
-            Term(Nominal(kind.clone()))
+            Term(Nominal(kind.0.clone()))
         } else {
-            let arc = Arc::new(kind);
+            let arc = Arc::new(TermInner {
+                kind,
+                sort: Mutex::default(),
+            });
             let term = Term(Nominal(arc.clone()));
-            self.pool.borrow_mut().insert(arc);
+            self.pool.borrow_mut().insert(Lookup(arc));
 
             term
         }

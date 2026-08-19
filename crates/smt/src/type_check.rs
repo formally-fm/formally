@@ -56,7 +56,13 @@ impl TypeCheck for Term {
     /// so two terms that compare equal but point to [TermKind] objects with different memory
     /// addresses will not share the cached result.
     fn type_check(&self) -> Result<Sort> {
-        self.kind().type_check()
+        if let Some(sort) = &*self.0.sort.lock().unwrap() {
+            return Ok(sort.clone())
+        }
+        let sort = self.kind().type_check()?;
+        *self.0.sort.lock().unwrap() = Some(sort.clone());
+        
+        Ok(sort)
     }
 }
 

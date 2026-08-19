@@ -29,7 +29,12 @@ use derive_more::From;
 use transitive::Transitive;
 
 pub use rug::{Integer, Rational};
-use std::{hash::Hash, sync::Arc};
+use std::borrow::Borrow;
+use std::hash::Hasher;
+use std::{
+    hash::Hash,
+    sync::{Arc, Mutex},
+};
 
 /// A constant term.
 ///
@@ -235,11 +240,37 @@ pub enum TermKind {
 /// ```
 #[allow(clippy::duplicated_attributes)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct Term(pub(crate) Nominal<Arc<TermKind>>);
+pub struct Term(pub(crate) Nominal<Arc<TermInner>>);
+
+#[derive(Debug)]
+pub(crate) struct TermInner {
+    pub(crate) kind: TermKind,
+    pub(crate) sort: Mutex<Option<Sort>>,
+}
+
+impl Hash for TermInner {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.kind.hash(state)
+    }
+}
+
+impl PartialEq for TermInner {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+impl Eq for TermInner {}
+
+impl Borrow<TermKind> for TermInner {
+    fn borrow(&self) -> &TermKind {
+        &self.kind
+    }
+}
 
 impl Located for Term {
     fn span(&self) -> Option<Span> {
-        self.0.span()
+        self.0.kind.span()
     }
 }
 
@@ -268,6 +299,6 @@ impl From<Identifier<'_>> for Atom {
 impl Term {
     /// Get this term's [TermKind].
     pub fn kind(&self) -> &TermKind {
-        &self.0
+        &self.0.kind
     }
 }
