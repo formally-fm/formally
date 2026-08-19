@@ -1012,14 +1012,11 @@ impl TryFrom<AttributeValue> for Boolean {
     fn try_from(value: AttributeValue) -> Result<Self, Self::Error> {
         let span = value.span();
         match value {
-            AttributeValue::Constant(Constant::String(s)) => {
-                if s.value == "true" {
-                    Ok(Boolean { value: true, span })
-                } else if s.value == "false" {
-                    Ok(Boolean { value: false, span })
-                } else {
-                    Err(())
-                }
+            AttributeValue::Symbol(symbol) if symbol.inner() == "true" => {
+                Ok(Boolean { value: true, span })
+            }
+            AttributeValue::Symbol(symbol) if symbol.inner() == "false" => {
+                Ok(Boolean { value: false, span })
             }
             _ => Err(()),
         }

@@ -1,5 +1,5 @@
 (set-logic ALL)
-(set-option :produce-models "true")
+(set-option :produce-models true)
 
 (declare-const a Int)
 (define-fun f ((x Int) (y Int)) Bool (> x y))
