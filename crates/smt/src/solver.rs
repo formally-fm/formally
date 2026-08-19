@@ -323,11 +323,11 @@ impl Solver {
         let mut def = self.manager.definition(def);
 
         let mut nested = Env::new().with_parent(self.env());
-        for bind in &def.domain {
-            bind.sort().type_check()?;
+        for var in &def.domain {
+            var.sort().type_check()?;
             nested
                 .functions
-                .add(bind.name(), Function::Binding(bind.clone()));
+                .add(var.name(), Function::Variable(var.clone()));
         }
 
         def.body = nested.resolve(&def.body, Role::Function, self)?;

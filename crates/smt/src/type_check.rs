@@ -72,6 +72,7 @@ impl TypeCheck for TermKind {
             TermKind::Constant(cnst) => cnst.type_check()?,
             TermKind::Atom(atom) => atom.type_check()?,
             TermKind::Quantified(quant) => quant.type_check()?,
+            TermKind::Let(let_) => let_.type_check()?,
         };
 
         Ok(sort)
@@ -159,6 +160,12 @@ impl TypeCheck for Atom {
 }
 
 impl TypeCheck for Quantified {
+    fn type_check(&self) -> Result<Sort> {
+        self.body.type_check()
+    }
+}
+
+impl TypeCheck for Let {
     fn type_check(&self) -> Result<Sort> {
         self.body.type_check()
     }

@@ -278,17 +278,17 @@ impl Interpreter {
             ast::AstOption::ProduceModels(pm) => {
                 config.produce_models = pm.value;
                 Ok(())
-            },
+            }
             _ => Self::unsupported(config),
         }
     }
 
     fn set_option_started(state: &mut State, so: ast::SetOption) -> Result<()> {
         Self::set_option_start(&mut state.config, so)?;
-        
+
         state.solver.config(&state.config)
     }
-    
+
     fn assert(state: &mut State, assert: ast::Assert) -> Result<()> {
         let term = Interpreter::term_to_smt(&state.solver, assert.term)?;
         state.solver.require(term)?;
@@ -394,7 +394,7 @@ impl Interpreter {
     fn define_fun(state: &mut State, def: ast::FunctionDef) -> Result<()> {
         let mut domain = Vec::new();
         for arg in def.domain {
-            domain.push(smt::Binding::new(
+            domain.push(smt::Variable::new(
                 Identifier::from(arg.name.inner()).over(arg.name.span()),
                 Interpreter::sort_to_smt(&state.solver, &arg.sort)?,
                 arg.span.clone(),

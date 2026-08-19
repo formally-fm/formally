@@ -246,16 +246,16 @@ impl standard::Manager for Manager {
         name: &str,
         sorts: &[z3::Sort],
         range: z3::Sort,
-        bindings: &[z3::Ast],
+        variables: &[z3::Ast],
         body: z3::Ast,
     ) -> Result<z3::FuncDecl> {
         let def = self.z3context.mk_rec_func_decl(name, sorts, range);
-        self.z3context.add_rec_def(&def, bindings, body);
+        self.z3context.add_rec_def(&def, variables, body);
 
         Ok(def)
     }
 
-    fn binding(&self, name: &str, sort: z3::Sort) -> Result<z3::Ast> {
+    fn variable(&self, name: &str, sort: z3::Sort) -> Result<z3::Ast> {
         Ok(self.z3context.mk_const(name, sort))
     }
 
@@ -277,12 +277,12 @@ impl standard::Manager for Manager {
     fn quantified(
         &self,
         quantifier: smt::Quantifier,
-        bindings: &[z3::Ast],
+        variables: &[z3::Ast],
         body: z3::Ast,
     ) -> Result<z3::Ast> {
         match quantifier {
-            smt::Quantifier::Forall => Ok(self.z3context.mk_forall_const(bindings, body)),
-            smt::Quantifier::Exists => Ok(self.z3context.mk_exists_const(bindings, body)),
+            smt::Quantifier::Forall => Ok(self.z3context.mk_forall_const(variables, body)),
+            smt::Quantifier::Exists => Ok(self.z3context.mk_exists_const(variables, body)),
         }
     }
 

@@ -57,6 +57,7 @@ impl Env {
             TermKind::Quantified(quant) => {
                 pool.term(TermKind::Quantified(self.resolve_quant(quant, role, pool)?))
             }
+            TermKind::Let(let_) => pool.term(TermKind::Let(self.resolve_let(let_, role, pool)?)),
         })
     }
 
@@ -139,18 +140,35 @@ impl Env {
     ) -> Result<Quantified> {
         let mut env = Env::new().with_parent(self.clone());
 
-        for bind in &*quant.bindings {
+        for var in &*quant.variables {
             env.functions
-                .add(bind.name().name(), Function::from(bind.clone()));
+                .add(var.name().name(), Function::from(var.clone()));
         }
 
         let body = env.resolve(&quant.body, role, pool)?;
 
         Ok(Quantified {
             quantifier: quant.quantifier,
-            bindings: quant.bindings.clone(),
+            variables: quant.variables.clone(),
             body,
             span: quant.span.clone(),
+        })
+    }
+
+    fn resolve_let<P: TermPool>(&self, let_: &Let, role: Role, pool: &P) -> Result<Let> {
+        let mut env = Env::new().with_parent(self.clone());
+
+        for bind in &*let_.bindings {
+            env.functions
+                .add(bind.variable.name().name(), Function::from(bind.variable.clone()));
+        }
+
+        let body = env.resolve(&let_.body, role, pool)?;
+
+        Ok(Let {
+            bindings: let_.bindings.clone(),
+            body,
+            span: let_.span.clone(),
         })
     }
 }

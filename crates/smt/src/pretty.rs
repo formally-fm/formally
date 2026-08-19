@@ -57,12 +57,14 @@ impl From<Identifier<'_>> for ast::QualifiedIdentifier {
 impl From<Constant> for ast::Constant {
     fn from(cnst: Constant) -> Self {
         match cnst {
-            Constant::Integer { value, span } => {
-                ast::Constant::Numeral(ast::Numeral { value: (*value).clone(), span })
-            }
-            Constant::Rational { value, span } => {
-                ast::Constant::Decimal(ast::Decimal { value: (*value).clone(), span })
-            }
+            Constant::Integer { value, span } => ast::Constant::Numeral(ast::Numeral {
+                value: (*value).clone(),
+                span,
+            }),
+            Constant::Rational { value, span } => ast::Constant::Decimal(ast::Decimal {
+                value: (*value).clone(),
+                span,
+            }),
         }
     }
 }
@@ -93,33 +95,52 @@ impl From<Term> for ast::Term {
             TermKind::Quantified(quant) => match quant.quantifier {
                 Quantifier::Forall => ast::Term::Forall(ast::Forall {
                     bindings: quant
-                        .bindings
+                        .variables
                         .iter()
-                        .map(|bind| ast::SortedVar::from(bind.clone()))
+                        .map(|var| ast::SortedVar::from(var.clone()))
                         .collect(),
                     body: Box::new(ast::Term::from(quant.body.clone())),
                     span: quant.span.clone(),
                 }),
                 Quantifier::Exists => ast::Term::Exists(ast::Exists {
                     bindings: quant
-                        .bindings
+                        .variables
                         .iter()
-                        .map(|bind| ast::SortedVar::from(bind.clone()))
+                        .map(|var| ast::SortedVar::from(var.clone()))
                         .collect(),
                     body: Box::new(ast::Term::from(quant.body.clone())),
                     span: quant.span.clone(),
                 }),
             },
+            TermKind::Let(let_) => ast::Term::Let(ast::Let {
+                bindings: let_
+                    .bindings
+                    .iter()
+                    .map(|bind| ast::Binding::from(bind.clone()))
+                    .collect(),
+                body: Box::new(ast::Term::from(let_.body.clone())),
+                span: let_.span.clone(),
+            }),
         }
     }
 }
 
-impl From<Binding> for ast::SortedVar {
-    fn from(bind: Binding) -> Self {
+impl From<Variable> for ast::SortedVar {
+    fn from(var: Variable) -> Self {
         ast::SortedVar {
-            name: ast::Symbol::from(bind.name().clone()),
-            sort: ast::Sort::from(bind.sort().clone()),
-            span: bind.span().clone(),
+            name: ast::Symbol::from(var.name().clone()),
+            sort: ast::Sort::from(var.sort().clone()),
+            span: var.span().clone(),
+        }
+    }
+}
+
+impl From<Binding> for ast::Binding {
+    fn from(bind: Binding) -> Self {
+        ast::Binding {
+            name: ast::Symbol::from(bind.variable.name().clone()),
+            body: ast::Term::from(bind.def.clone()),
+            span: bind.span.clone(),
         }
     }
 }

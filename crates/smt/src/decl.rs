@@ -92,19 +92,19 @@ pub enum Associativity {
 
 /// A parameter in function definitions.
 ///
-/// [Binding] represents a parameter in the definition of functions. Instances of [Binding] are
-/// created with [Binding::new()] and used in the creation of [Definition] objects. See the
+/// [Variable] represents a parameter in the definition of functions. Instances of [Variable] are
+/// created with [Variable::new()] and used in the creation of [Definition] objects. See the
 /// documentation of [Definition::function] for an example.
 ///
-/// Comparison of [Binding] objects is *nominal*, that is, equality and hashing operate on the
-/// identity of the objects, not on their values. In other words, two [Binding] objects with
+/// Comparison of [Variable] objects is *nominal*, that is, equality and hashing operate on the
+/// identity of the objects, not on their values. In other words, two [Variable] objects with
 /// exactly the same fields (and in particular the same *name*) created by two different calls to
-/// [Binding::new()] will compare *different* and have a possibly different hash. Moreover,
-/// cloning a [Binding] object is a cheap operation and produces a second object which compares
+/// [Variable::new()] will compare *different* and have a possibly different hash. Moreover,
+/// cloning a [Variable] object is a cheap operation and produces a second object which compares
 /// *equal* to the first. Under the hood, this is the behavior of `Nominal<Arc<T>>` for some inner
 /// type `T`, so we also refer to the [Nominal] type for details.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located)]
-pub struct Binding(Nominal<Arc<BindingData>>);
+pub struct Variable(Nominal<Arc<BindingData>>);
 
 #[derive(Clone, Debug, Located, Locatable)]
 struct BindingData {
@@ -113,10 +113,10 @@ struct BindingData {
     pub span: Option<Span>,
 }
 
-impl Binding {
-    /// Create a new [Binding].
-    pub fn new<'a>(name: impl Into<Identifier<'a>>, sort: Sort, span: Option<Span>) -> Binding {
-        Binding(Nominal(Arc::new(BindingData {
+impl Variable {
+    /// Create a new [Variable].
+    pub fn new<'a>(name: impl Into<Identifier<'a>>, sort: Sort, span: Option<Span>) -> Variable {
+        Variable(Nominal(Arc::new(BindingData {
             name: name.into().into_owned(),
             sort,
             span,
@@ -152,7 +152,7 @@ pub struct Primitive(pub(crate) Nominal<SArc<PrimitiveData>>);
 #[derive(Clone, Debug)]
 pub(crate) struct PrimitiveData {
     pub name: Identifier<'static>,
-    pub parameters: Vec<Binding>,
+    pub parameters: Vec<Variable>,
     pub domain: Vec<Sort>,
     pub range: Sort,
     pub associativity: Option<Associativity>,
@@ -171,7 +171,7 @@ impl Primitive {
     /// introducing primitive symbols if through the [theory] macro.
     pub fn new<'a>(
         name: impl Into<Identifier<'a>>,
-        parameters: Vec<Binding>,
+        parameters: Vec<Variable>,
         domain: Vec<Sort>,
         range: Sort,
         associativity: Option<Associativity>,
@@ -197,7 +197,7 @@ impl Primitive {
     ///
     /// These are *not* the sorts of the arguments of the function. For that, call
     /// [domain()](Primitive::domain()).
-    pub fn parameters(&self) -> &[Binding] {
+    pub fn parameters(&self) -> &[Variable] {
         &self.0.parameters
     }
 
@@ -356,7 +356,7 @@ impl Declared {
 #[derive(Clone, Debug, Located, Locatable)]
 pub struct Definition<T: ToTerm> {
     pub name: Identifier<'static>,
-    pub domain: Vec<Binding>,
+    pub domain: Vec<Variable>,
     pub range: Sort,
     pub body: T,
     pub span: Option<Span>,
@@ -372,13 +372,13 @@ impl<T: ToTerm> Definition<T> {
     ///
     /// If the declaration do have a span it can be set using [over()](Definition::over()).
     ///
-    /// The function parameters are created as objects of type [Binding] which are given to the
+    /// The function parameters are created as objects of type [Variable] which are given to the
     /// `domain` field and freely used in the body.
     ///
     /// In the following example we define a function `mult-add` taking three real arguments,
     /// computing a *multiply-add* operation argument and returning it. Note that when defining
     /// the body with the `term!` macro, the parameters are in scope and can just be referred to by
-    /// name (the same name given to the constructor of [Binding]).
+    /// name (the same name given to the constructor of [Variable]).
     /// ```
     /// # mod formally {
     /// #    pub extern crate formally_smt as smt;
@@ -387,9 +387,9 @@ impl<T: ToTerm> Definition<T> {
     /// # use formally::{smt::{*, theories::*}, support::*};
     /// # fn main() -> Result<()> {
     /// # let mut solver = Solver::new(&Config::new().logic("NRA"))?;
-    /// let a = Binding::new("a", Reals::Real(), None);
-    /// let b = Binding::new("b", Reals::Real(), None);
-    /// let c = Binding::new("c", Reals::Real(), None);
+    /// let a = Variable::new("a", Reals::Real(), None);
+    /// let b = Variable::new("b", Reals::Real(), None);
+    /// let c = Variable::new("c", Reals::Real(), None);
     ///
     /// solver.define(
     ///     Definition::function("mult-add", [a, b, c], Reals::Real(), term!(+ (* a b) c))
@@ -399,7 +399,7 @@ impl<T: ToTerm> Definition<T> {
     /// ```
     pub fn function<'a>(
         name: impl Into<Identifier<'a>>,
-        domain: impl IntoIterator<Item = Binding>,
+        domain: impl IntoIterator<Item = Variable>,
         range: impl Into<Sort>,
         body: T,
     ) -> Definition<T> {
@@ -417,7 +417,7 @@ impl<T: ToTerm> Definition<T> {
     /// This is equivalent to `Definition::function(name, domain, theories::Core::Bool(), body)`.
     pub fn predicate<'a>(
         name: impl Into<Identifier<'a>>,
-        domain: impl IntoIterator<Item = Binding>,
+        domain: impl IntoIterator<Item = Variable>,
         body: T,
     ) -> Definition<T> {
         Definition::function(name, domain, theories::Core::Bool(), body)
@@ -439,7 +439,7 @@ impl<T: ToTerm> Definition<T> {
     /// This is equivalent to `Definition::function(name, domain, Sort::sort(), body)`.
     pub fn sort<'a>(
         name: impl Into<Identifier<'a>>,
-        domain: impl IntoIterator<Item = Binding>,
+        domain: impl IntoIterator<Item = Variable>,
         body: T,
     ) -> Definition<T> {
         Definition::function(name, domain, Sort::sort(), body)
@@ -494,15 +494,15 @@ impl Defined {
 /// The [Function] type represent any function usable to build terms.
 ///
 /// A function can be a *user function*, i.e. a [UserFunction] object which in turn can be either
-/// [Declared] or [Defined], a [Binding], or a [Primitive].
+/// [Declared] or [Defined], a [Variable], or a [Primitive].
 ///
 /// Some accessor methods are provided to get fields in common between the variants avoiding
 /// redundant pattern matches.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located, From)]
 #[allow(clippy::duplicated_attributes)]
 pub enum Function {
-    /// A binding.
-    Binding(Binding),
+    /// A variable.
+    Variable(Variable),
     /// A primitive function declared by some theory.
     Primitive(Primitive),
     /// A user function, i.e. either [Declared] or [Defined].
@@ -514,7 +514,7 @@ impl Function {
     /// Get the name of the function.
     pub fn name(&self) -> &Identifier<'_> {
         match self {
-            Function::Binding(bind) => bind.name(),
+            Function::Variable(var) => var.name(),
             Function::Primitive(prim) => prim.name(),
             Function::User(user) => user.name(),
         }
@@ -529,7 +529,7 @@ impl Function {
     /// [domain()](Function::domain()).
     pub fn parameters(&self) -> Vec<Sort> {
         match self {
-            Function::Binding(_) => Vec::new(),
+            Function::Variable(_) => Vec::new(),
             Function::Primitive(prim) => {
                 prim.parameters().iter().map(|p| p.sort().clone()).collect()
             }
@@ -540,7 +540,7 @@ impl Function {
     /// Get the domain of the function, i.e. the sorts of its arguments.
     pub fn domain(&self) -> Vec<Sort> {
         match self {
-            Function::Binding(_) => Vec::new(),
+            Function::Variable(_) => Vec::new(),
             Function::Primitive(prim) => prim.domain().to_vec(),
             Function::User(user) => user.domain(),
         }
@@ -549,7 +549,7 @@ impl Function {
     /// Get the range of the function, i.e. the sort of its return value.
     pub fn range(&self) -> &Sort {
         match self {
-            Function::Binding(bind) => bind.sort(),
+            Function::Variable(var) => var.sort(),
             Function::Primitive(prim) => prim.range(),
             Function::User(user) => user.range(),
         }

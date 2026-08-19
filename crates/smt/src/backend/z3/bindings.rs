@@ -375,11 +375,11 @@ impl Context {
         }
     }
 
-    pub fn mk_forall_const(&self, bindings: &[Ast], body: Ast) -> Ast {
+    pub fn mk_forall_const(&self, variables: &[Ast], body: Ast) -> Ast {
         let mut apps = Vec::new();
-        for bind in bindings {
-            assert!(unsafe { Z3_is_app(self.ctx, bind.ast) });
-            apps.push(bind.ast.cast::<_Z3_app>())
+        for var in variables {
+            assert!(unsafe { Z3_is_app(self.ctx, var.ast) });
+            apps.push(var.ast.cast::<_Z3_app>())
         }
 
         Ast::new(self, unsafe {
@@ -396,11 +396,11 @@ impl Context {
         })
     }
 
-    pub fn mk_exists_const(&self, bindings: &[Ast], body: Ast) -> Ast {
+    pub fn mk_exists_const(&self, variables: &[Ast], body: Ast) -> Ast {
         let mut apps = Vec::new();
-        for bind in bindings {
-            assert!(unsafe { Z3_is_app(self.ctx, bind.ast) });
-            apps.push(bind.ast.cast::<_Z3_app>())
+        for var in variables {
+            assert!(unsafe { Z3_is_app(self.ctx, var.ast) });
+            apps.push(var.ast.cast::<_Z3_app>())
         }
 
         Ast::new(self, unsafe {

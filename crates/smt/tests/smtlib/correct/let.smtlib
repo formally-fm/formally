@@ -1,0 +1,9 @@
+(set-logic LIA)
+(set-option :produce-models "true")
+
+(declare-const y Int)
+
+(assert (let ((x 42)) (= x y)))
+
+(check-sat)
+(get-value (y))

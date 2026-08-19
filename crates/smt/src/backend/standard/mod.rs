@@ -67,7 +67,7 @@ pub trait Manager: Default + Sized {
         body: Self::Term,
     ) -> Result<Self::FuncDecl>;
 
-    fn binding(&self, name: &str, sort: Self::Sort) -> Result<Self::Term>;
+    fn variable(&self, name: &str, sort: Self::Sort) -> Result<Self::Term>;
 
     fn application(&self, func: &Self::FuncDecl, arguments: &[Self::Term]) -> Result<Self::Term>;
 
@@ -76,7 +76,7 @@ pub trait Manager: Default + Sized {
     fn quantified(
         &self,
         quantifier: smt::Quantifier,
-        bindings: &[Self::Term],
+        variables: &[Self::Term],
         body: Self::Term,
     ) -> Result<Self::Term>;
 

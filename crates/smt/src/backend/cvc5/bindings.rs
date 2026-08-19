@@ -202,11 +202,11 @@ impl Solver {
             if !cvc5::term_is_boolean_value(term.as_ptr()) {
                 return None;
             }
-            
+
             Some(cvc5::term_get_boolean_value(term.as_ptr()))
         }
     }
-    
+
     pub fn get_integer_value(&self, term: Term) -> Option<rug::Integer> {
         unsafe {
             if !cvc5::term_is_integer_value(term.as_ptr()) {

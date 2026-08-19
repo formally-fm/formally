@@ -29,10 +29,8 @@ use derive_more::From;
 use transitive::Transitive;
 
 pub use rug::{Integer, Rational};
-use std::borrow::Borrow;
-use std::hash::Hasher;
 use std::{
-    hash::Hash,
+    hash::{Hash, Hasher},
     sync::{Arc, Mutex},
 };
 
@@ -177,6 +175,20 @@ pub enum Quantifier {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Quantified {
     pub quantifier: Quantifier,
+    pub variables: Arc<[Variable]>,
+    pub body: Term,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
+pub struct Binding {
+    pub variable: Variable,
+    pub def: Term,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
+pub struct Let {
     pub bindings: Arc<[Binding]>,
     pub body: Term,
     pub span: Option<Span>,
@@ -214,6 +226,8 @@ pub enum TermKind {
     Atom(Atom),
     /// A quantified formula
     Quantified(Quantified),
+    /// A `let` expression
+    Let(Let),
 }
 
 /// An SMT term.
@@ -272,12 +286,6 @@ impl PartialEq for TermInner {
 }
 
 impl Eq for TermInner {}
-
-impl Borrow<TermKind> for TermInner {
-    fn borrow(&self) -> &TermKind {
-        &self.kind
-    }
-}
 
 impl Located for Term {
     fn span(&self) -> Option<Span> {

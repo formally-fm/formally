@@ -121,32 +121,44 @@ impl Interpreter {
             ast::Term::Application(ast::Application { head, args, span }) => {
                 Interpreter::app_to_smt(solver, head, &args, span)
             }
-            ast::Term::Let(_) => todo!(),
+            ast::Term::Let(let_) => {
+                let mut bindings = Vec::new();
+                for bind in let_.bindings {
+                    bindings.push(Interpreter::binding_to_binding(solver, bind)?)
+                }
+                let body = Interpreter::term_to_smt(solver, *let_.body)?;
+
+                Ok(solver.term(smt::TermKind::Let(smt::Let {
+                    bindings: Arc::from(bindings.into_boxed_slice()),
+                    body,
+                    span: let_.span.clone(),
+                })))
+            }
             ast::Term::Lambda(_) => todo!(),
             ast::Term::Exists(exists) => {
-                let mut bindings = Vec::new();
+                let mut variables = Vec::new();
                 for var in exists.bindings {
-                    bindings.push(Interpreter::sorted_var_to_binding(solver, var)?)
+                    variables.push(Interpreter::sorted_var_to_variable(solver, var)?)
                 }
                 let body = Interpreter::term_to_smt(solver, *exists.body)?;
 
                 Ok(solver.term(smt::TermKind::Quantified(smt::Quantified {
                     quantifier: smt::Quantifier::Exists,
-                    bindings: Arc::from(bindings.into_boxed_slice()),
+                    variables: Arc::from(variables.into_boxed_slice()),
                     body,
                     span: exists.span.clone(),
                 })))
             }
             ast::Term::Forall(forall) => {
-                let mut bindings = Vec::new();
+                let mut variables = Vec::new();
                 for var in forall.bindings {
-                    bindings.push(Interpreter::sorted_var_to_binding(solver, var)?)
+                    variables.push(Interpreter::sorted_var_to_variable(solver, var)?)
                 }
                 let body = Interpreter::term_to_smt(solver, *forall.body)?;
 
                 Ok(solver.term(smt::TermKind::Quantified(smt::Quantified {
                     quantifier: smt::Quantifier::Forall,
-                    bindings: Arc::from(bindings.into_boxed_slice()),
+                    variables: Arc::from(variables.into_boxed_slice()),
                     body,
                     span: forall.span.clone(),
                 })))
@@ -156,11 +168,26 @@ impl Interpreter {
         }
     }
 
-    fn sorted_var_to_binding(solver: &smt::Solver, var: ast::SortedVar) -> Result<smt::Binding> {
-        Ok(smt::Binding::new(
+    fn sorted_var_to_variable(solver: &smt::Solver, var: ast::SortedVar) -> Result<smt::Variable> {
+        Ok(smt::Variable::new(
             Identifier::from(var.name.inner()),
             Interpreter::sort_to_smt(solver, &var.sort)?,
             var.span.clone(),
         ))
+    }
+
+    fn binding_to_binding(solver: &smt::Solver, bind: ast::Binding) -> Result<smt::Binding> {
+        let def = Interpreter::term_to_smt(solver, bind.body)?;
+        let sort = smt::Sort::of(&def)?;
+
+        Ok(smt::Binding {
+            variable: smt::Variable::new(
+                Identifier::from(bind.name.inner()),
+                sort,
+                bind.name.span(),
+            ),
+            def,
+            span: bind.span.clone(),
+        })
     }
 }

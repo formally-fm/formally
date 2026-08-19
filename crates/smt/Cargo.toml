@@ -34,4 +34,5 @@ transitive = "1.2.0"
 linkme = "0.3.35"
 thiserror = "2.0.17"
 dashmap = "6.2.1"
+rpds = "1"
 

@@ -140,6 +140,12 @@ impl LogicRequirement for Linear {
                 Ok(())
             }
             TermKind::Quantified(quant) => Linear::check_term(logic, &quant.body),
+            TermKind::Let(let_) => {
+                for bind in &*let_.bindings {
+                    Linear::check_term(logic, &bind.def)?
+                }
+                Linear::check_term(logic, &let_.body)
+            }
         }
     }
 }
@@ -164,6 +170,12 @@ impl LogicRequirement for QuantifierFree {
                     logic.name()
                 );
                 Err(DiagnosticEmitted)
+            }
+            TermKind::Let(let_) => {
+                for bind in &*let_.bindings {
+                    QuantifierFree::check_term(logic, &bind.def)?
+                }
+                QuantifierFree::check_term(logic, &let_.body)
             }
         }
     }

@@ -221,13 +221,13 @@ impl standard::Manager for Manager {
         name: &str,
         _sorts: &[cvc5::Sort],
         range: cvc5::Sort,
-        bindings: &[cvc5::Term],
+        variables: &[cvc5::Term],
         body: cvc5::Term,
     ) -> Result<cvc5::Term> {
-        Ok(solver.define_fun(name, bindings, range, body, false))
+        Ok(solver.define_fun(name, variables, range, body, false))
     }
 
-    fn binding(&self, name: &str, sort: cvc5::Sort) -> Result<cvc5::Term> {
+    fn variable(&self, name: &str, sort: cvc5::Sort) -> Result<cvc5::Term> {
         Ok(self.cvc5manager.mk_var(sort, name))
     }
 
@@ -257,10 +257,12 @@ impl standard::Manager for Manager {
     fn quantified(
         &self,
         quantifier: smt::Quantifier,
-        bindings: &[cvc5::Term],
+        variables: &[cvc5::Term],
         body: cvc5::Term,
     ) -> Result<cvc5::Term> {
-        let varlist = self.cvc5manager.mk_term(cvc5::Kind::VariableList, bindings);
+        let varlist = self
+            .cvc5manager
+            .mk_term(cvc5::Kind::VariableList, variables);
         let kind = match quantifier {
             smt::Quantifier::Forall => cvc5::Kind::Forall,
             smt::Quantifier::Exists => cvc5::Kind::Exists,

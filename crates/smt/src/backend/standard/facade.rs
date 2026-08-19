@@ -41,7 +41,7 @@ pub struct ManagerFacade<M: Manager> {
     defs: RefCell<HashMap<smt::Defined, M::FuncDecl>>,
     sorts: RefCell<HashMap<smt::Declared, M::Sort>>,
     terms: RefCell<HashMap<smt::Term, M::Term>>,
-    bindings: RefCell<HashMap<smt::Binding, M::Term>>,
+    variables: RefCell<HashMap<smt::Variable, M::Term>>,
 }
 
 pub struct SolverFacade<S: Solver> {
@@ -91,7 +91,8 @@ impl<S: Solver> backend::Solver for SolverFacade<S> {
     }
 
     fn require(&mut self, term: &smt::Term) -> Result<()> {
-        self.solver.require(self.manager.term(term)?)
+        self.solver
+            .require(self.manager.term(term, &BindMap::new())?)
     }
 
     fn check(&mut self) -> Result<Option<bool>> {
@@ -164,7 +165,12 @@ impl<S: Solver> SolverFacade<S> {
 
 impl<'s, S: 's + Solver> backend::ModelProvider for ModelFacade<'s, S> {
     fn value(&self, term: &smt::Term) -> Option<smt::ModelValue> {
-        let term = self.solver.manager.term(term).map(Some).unwrap_or(None)?;
+        let term = self
+            .solver
+            .manager
+            .term(term, &BindMap::new())
+            .map(Some)
+            .unwrap_or(None)?;
 
         self.model.value(term)
     }
@@ -176,6 +182,8 @@ impl<M: 'static + Manager> backend::Manager for ManagerFacade<M> {
     }
 }
 
+type BindMap<Term> = rpds::HashTrieMap<smt::Variable, Term>;
+
 impl<M: Manager> ManagerFacade<M> {
     pub fn new(manager: M) -> Self {
         ManagerFacade {
@@ -184,13 +192,13 @@ impl<M: Manager> ManagerFacade<M> {
             defs: RefCell::default(),
             sorts: RefCell::default(),
             terms: RefCell::default(),
-            bindings: RefCell::default(),
+            variables: RefCell::default(),
         }
     }
 
     pub fn sort(&self, sort: &smt::Sort) -> Result<M::Sort> {
         match &sort.head {
-            smt::Function::Binding(_) => unreachable!(),
+            smt::Function::Variable(_) => unreachable!(),
             smt::Function::Primitive(_) => self.prim_sort(sort),
             smt::Function::User(user) => self.user_sort(sort, user),
         }
@@ -204,15 +212,16 @@ impl<M: Manager> ManagerFacade<M> {
         Ok(vec)
     }
 
-    pub fn term(&self, term: &smt::Term) -> Result<M::Term> {
+    pub fn term(&self, term: &smt::Term, bindmap: &BindMap<M::Term>) -> Result<M::Term> {
         if let Some(term) = self.terms.borrow().get(term) {
             return Ok(term.clone());
         }
 
         let t = match term.kind() {
             smt::TermKind::Constant(cnst) => self.manager.constant(cnst)?,
-            smt::TermKind::Atom(atom) => self.atom(atom)?,
-            smt::TermKind::Quantified(quant) => self.quant(quant)?,
+            smt::TermKind::Atom(atom) => self.atom(atom, bindmap)?,
+            smt::TermKind::Quantified(quant) => self.quant(quant, bindmap)?,
+            smt::TermKind::Let(let_) => self.let_(let_, bindmap)?,
         };
 
         self.terms.borrow_mut().insert(term.clone(), t.clone());
@@ -220,10 +229,10 @@ impl<M: Manager> ManagerFacade<M> {
         Ok(t)
     }
 
-    pub fn terms(&self, terms: &[smt::Term]) -> Result<Vec<M::Term>> {
+    pub fn terms(&self, terms: &[smt::Term], bindmap: &BindMap<M::Term>) -> Result<Vec<M::Term>> {
         let mut vec = Vec::new();
         for sort in terms {
-            vec.push(self.term(sort)?)
+            vec.push(self.term(sort, bindmap)?)
         }
         Ok(vec)
     }
@@ -243,12 +252,12 @@ impl<M: Manager> ManagerFacade<M> {
 
         let mut sorts = Vec::new();
         let mut args = Vec::new();
-        for bind in &def.domain {
-            sorts.push(self.sort(bind.sort())?);
-            args.push(self.binding(bind)?)
+        for var in &def.domain {
+            sorts.push(self.sort(var.sort())?);
+            args.push(self.variable(var)?)
         }
         let range = self.sort(&def.range)?;
-        let body = self.term(&def.body)?;
+        let body = self.term(&def.body, &BindMap::new())?;
 
         let func = self
             .manager
@@ -312,12 +321,18 @@ impl<M: Manager> ManagerFacade<M> {
         }
     }
 
-    fn atom(&self, atom: &smt::Atom) -> Result<M::Term> {
+    fn atom(&self, atom: &smt::Atom, bindmap: &BindMap<M::Term>) -> Result<M::Term> {
         match atom {
             smt::Atom::Bound(atom) => match &atom.head.function {
-                smt::Function::Binding(bind) => self.binding(bind),
-                smt::Function::Primitive(_) => self.primitive(atom),
-                smt::Function::User(user) => self.user_func(user, &atom.arguments),
+                smt::Function::Variable(var) => {
+                    if let Some(t) = bindmap.get(var) {
+                        Ok(t.clone())
+                    } else {
+                        self.variable(var)
+                    }
+                }
+                smt::Function::Primitive(_) => self.primitive(atom, bindmap),
+                smt::Function::User(user) => self.user_func(user, &atom.arguments, bindmap),
             },
             smt::Atom::Unbound(smt::UnboundAtom { head, .. }) => Err(backend::Error::new(
                 self.manager.backend().name(),
@@ -328,25 +343,28 @@ impl<M: Manager> ManagerFacade<M> {
         }
     }
 
-    fn binding(&self, binding: &smt::Binding) -> Result<M::Term> {
-        if let Some(bind) = self.bindings.borrow().get(binding) {
-            return Ok(bind.clone());
+    fn variable(&self, variable: &smt::Variable) -> Result<M::Term> {
+        if let Some(var) = self.variables.borrow().get(variable) {
+            return Ok(var.clone());
         }
 
         let t = self
             .manager
-            .binding(binding.name().name(), self.sort(binding.sort())?)?;
+            .variable(variable.name().name(), self.sort(variable.sort())?)?;
 
-        self.bindings
+        self.variables
             .borrow_mut()
-            .insert(binding.clone(), t.clone());
+            .insert(variable.clone(), t.clone());
 
         Ok(t)
     }
 
-    fn primitive(&self, atom: &smt::BoundAtom) -> Result<M::Term> {
+    fn primitive(&self, atom: &smt::BoundAtom, bindmap: &BindMap<M::Term>) -> Result<M::Term> {
         match <M::ALL as LogicEx>::Atom::try_from(atom) {
-            Ok(atom) => self.manager.atom(atom, |t| self.term(t), |t| self.terms(t)),
+            Ok(atom) => {
+                self.manager
+                    .atom(atom, |t| self.term(t, bindmap), |t| self.terms(t, bindmap))
+            }
             Err(_) => Err(backend::Error::new(
                 self.manager.backend().name(),
                 backend::ErrorKind::ViolatedPrecondition(format!(
@@ -357,15 +375,25 @@ impl<M: Manager> ManagerFacade<M> {
         }
     }
 
-    fn user_func(&self, user: &smt::UserFunction, arguments: &[smt::Term]) -> Result<M::Term> {
+    fn user_func(
+        &self,
+        user: &smt::UserFunction,
+        arguments: &[smt::Term],
+        bindmap: &BindMap<M::Term>,
+    ) -> Result<M::Term> {
         match user {
-            smt::UserFunction::Declared(decl) => self.declared(decl, arguments),
-            smt::UserFunction::Defined(def) => self.defined(def, arguments),
+            smt::UserFunction::Declared(decl) => self.declared(decl, arguments, bindmap),
+            smt::UserFunction::Defined(def) => self.defined(def, arguments, bindmap),
         }
     }
 
-    fn declared(&self, decl: &smt::Declared, arguments: &[smt::Term]) -> Result<M::Term> {
-        let arguments = self.terms(arguments)?;
+    fn declared(
+        &self,
+        decl: &smt::Declared,
+        arguments: &[smt::Term],
+        bindmap: &BindMap<M::Term>,
+    ) -> Result<M::Term> {
+        let arguments = self.terms(arguments, bindmap)?;
 
         if let Some(func) = self.decls.borrow().get(decl) {
             return self.manager.application(func, &arguments);
@@ -380,8 +408,13 @@ impl<M: Manager> ManagerFacade<M> {
         ))
     }
 
-    fn defined(&self, def: &smt::Defined, arguments: &[smt::Term]) -> Result<M::Term> {
-        let arguments = self.terms(arguments)?;
+    fn defined(
+        &self,
+        def: &smt::Defined,
+        arguments: &[smt::Term],
+        bindmap: &BindMap<M::Term>,
+    ) -> Result<M::Term> {
+        let arguments = self.terms(arguments, bindmap)?;
 
         if let Some(func) = self.defs.borrow().get(def) {
             return self.manager.application(func, &arguments);
@@ -396,15 +429,27 @@ impl<M: Manager> ManagerFacade<M> {
         ))
     }
 
-    fn quant(&self, quant: &smt::Quantified) -> Result<M::Term> {
-        let mut bindings = Vec::new();
-        for bind in &*quant.bindings {
-            bindings.push(self.binding(bind)?);
+    fn quant(&self, quant: &smt::Quantified, bindmap: &BindMap<M::Term>) -> Result<M::Term> {
+        let mut bindmap = bindmap.clone();
+
+        let mut vars = Vec::new();
+        for var in &*quant.variables {
+            vars.push(self.variable(var)?);
+            bindmap.remove_mut(var);
         }
 
-        let body = self.term(&quant.body)?;
+        let body = self.term(&quant.body, &bindmap)?;
 
-        self.manager.quantified(quant.quantifier, &bindings, body)
+        self.manager.quantified(quant.quantifier, &vars, body)
+    }
+
+    fn let_(&self, let_: &smt::Let, bindmap: &BindMap<M::Term>) -> Result<M::Term> {
+        let mut nested = bindmap.clone();
+        for bind in &*let_.bindings {
+            nested.insert_mut(bind.variable.clone(), self.term(&bind.def, bindmap)?);
+        }
+
+        self.term(&let_.body, &nested)
     }
 
     fn declare_sort(&self, decl: smt::Declared) -> Result<()> {
