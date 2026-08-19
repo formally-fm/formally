@@ -32,6 +32,8 @@ use formally::{
     support::*,
 };
 
+use std::sync::Arc;
+
 impl Interpreter {
     fn sort_to_smt_term(sort: &ast::Sort, solver: &smt::Solver) -> smt::Term {
         match sort {
@@ -99,7 +101,7 @@ impl Interpreter {
                 Ok(solver.term(
                     smt::TermKind::Atom(smt::Atom::Unbound(smt::UnboundAtom {
                         head,
-                        arguments: smtargs,
+                        arguments: Arc::from(smtargs.into_boxed_slice()),
                         span: idspan,
                     }))
                     .over(span),
@@ -130,7 +132,7 @@ impl Interpreter {
 
                 Ok(solver.term(smt::TermKind::Quantified(smt::Quantified {
                     quantifier: smt::Quantifier::Exists,
-                    bindings,
+                    bindings: Arc::from(bindings.into_boxed_slice()),
                     body,
                     span: exists.span.clone(),
                 })))
@@ -144,7 +146,7 @@ impl Interpreter {
 
                 Ok(solver.term(smt::TermKind::Quantified(smt::Quantified {
                     quantifier: smt::Quantifier::Forall,
-                    bindings,
+                    bindings: Arc::from(bindings.into_boxed_slice()),
                     body,
                     span: forall.span.clone(),
                 })))

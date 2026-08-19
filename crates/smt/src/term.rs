@@ -44,19 +44,31 @@ use std::{
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 #[non_exhaustive]
 pub enum Constant {
-    Integer { value: Integer, span: Option<Span> },
-    Rational { value: Rational, span: Option<Span> },
+    Integer {
+        value: Arc<Integer>,
+        span: Option<Span>,
+    },
+    Rational {
+        value: Arc<Rational>,
+        span: Option<Span>,
+    },
 }
 
 impl From<Integer> for Constant {
     fn from(value: Integer) -> Self {
-        Constant::Integer { value, span: None }
+        Constant::Integer {
+            value: Arc::new(value),
+            span: None,
+        }
     }
 }
 
 impl From<Rational> for Constant {
     fn from(value: Rational) -> Self {
-        Constant::Rational { value, span: None }
+        Constant::Rational {
+            value: Arc::new(value),
+            span: None,
+        }
     }
 }
 
@@ -98,7 +110,7 @@ pub struct BoundAtom {
     /// the function that is being applied.
     pub head: Reference,
     /// the atom's argument terms.
-    pub arguments: Vec<Term>,
+    pub arguments: Arc<[Term]>,
     /// the atom's source span.
     pub span: Option<Span>,
 }
@@ -107,7 +119,7 @@ impl<T: Into<Reference>> From<T> for BoundAtom {
     fn from(value: T) -> Self {
         BoundAtom {
             head: value.into(),
-            arguments: Vec::new(),
+            arguments: Arc::default(),
             span: None,
         }
     }
@@ -128,7 +140,7 @@ pub struct UnboundAtom {
     /// the name of the function that is being applied.
     pub head: Identifier<'static>,
     /// the atom's argument terms.
-    pub arguments: Vec<Term>,
+    pub arguments: Arc<[Term]>,
     /// the atom's source span.
     pub span: Option<Span>,
 }
@@ -137,7 +149,7 @@ impl<'a, T: Into<Identifier<'a>>> From<T> for UnboundAtom {
     fn from(value: T) -> Self {
         UnboundAtom {
             head: value.into().into_owned(),
-            arguments: Vec::new(),
+            arguments: Arc::default(),
             span: None,
         }
     }
@@ -165,7 +177,7 @@ pub enum Quantifier {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Quantified {
     pub quantifier: Quantifier,
-    pub bindings: Vec<Binding>,
+    pub bindings: Arc<[Binding]>,
     pub body: Term,
     pub span: Option<Span>,
 }
@@ -238,7 +250,6 @@ pub enum TermKind {
 ///
 /// assert_ne!(Nominal::new(ponens1), Nominal::new(ponens2));
 /// ```
-#[allow(clippy::duplicated_attributes)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Term(pub(crate) Nominal<Arc<TermInner>>);
 

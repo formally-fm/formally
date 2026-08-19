@@ -103,7 +103,7 @@ impl TypeCheck for BoundAtom {
 
         #[allow(clippy::mutable_key_type)]
         let mut matches = HashMap::new();
-        for (sort, arg) in zip(domain, &self.arguments) {
+        for (sort, arg) in zip(domain, &*self.arguments) {
             let argsort = Sort::of(arg)?;
 
             if !sort.matches_with(&argsort, &mut matches) {

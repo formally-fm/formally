@@ -594,7 +594,7 @@ impl ToTokens for Attributed<Theory> {
             atom_into.push(quote! {
                 #atomenum::#cap => formally::smt::BoundAtom {
                     head: #module::#ident.clone().into(),
-                    arguments: vec![],
+                    arguments: std::sync::Arc::default(),
                     span: Some(formally::support::Span::Builtin)
                 }
             });
@@ -614,14 +614,14 @@ impl ToTokens for Attributed<Theory> {
                 atom_into.push(quote! {
                     #atomenum::#cap(arguments) => formally::smt::BoundAtom {
                         head: #module::#ident.clone().into(),
-                        arguments: arguments.to_vec(),
+                        arguments: std::sync::Arc::from(arguments.to_vec().into_boxed_slice()),
                         span: Some(formally::support::Span::Builtin)
                     }
                 });
 
                 atom_try_from.push(quote! {
                     else if atom.head.function == #module::#ident.clone().into() {
-                        Ok(#atomenum::#cap(atom.arguments.as_slice()))
+                        Ok(#atomenum::#cap(&*atom.arguments))
                     }
                 })
             } else {
@@ -638,7 +638,7 @@ impl ToTokens for Attributed<Theory> {
                 atom_into.push(quote! {
                     #atomenum::#cap(#(#argnames),*) => formally::smt::BoundAtom {
                         head: #module::#ident.clone().into(),
-                        arguments: vec![#(#argnames.clone()),*],
+                        arguments: std::sync::Arc::new([#(#argnames.clone()),*]),
                         span: Some(formally::support::Span::Builtin)
                     }
                 });

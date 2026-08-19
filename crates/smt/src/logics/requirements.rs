@@ -85,7 +85,7 @@ impl LogicRequirement for Linear {
         match term.kind() {
             TermKind::Constant(_) => Ok(()),
             TermKind::Atom(Atom::Unbound(UnboundAtom { arguments, .. })) => {
-                for arg in arguments {
+                for arg in &**arguments {
                     Linear::check_term(logic, arg)?;
                 }
                 Ok(())
@@ -134,7 +134,7 @@ impl LogicRequirement for Linear {
                     }
                 }
 
-                for arg in arguments {
+                for arg in &**arguments {
                     Linear::check_term(logic, arg)?;
                 }
                 Ok(())
@@ -151,7 +151,7 @@ impl LogicRequirement for QuantifierFree {
             TermKind::Atom(atom) => match atom {
                 Atom::Bound(BoundAtom { arguments, .. })
                 | Atom::Unbound(UnboundAtom { arguments, .. }) => {
-                    for arg in arguments {
+                    for arg in &**arguments {
                         QuantifierFree::check_term(logic, arg)?;
                     }
                     Ok(())

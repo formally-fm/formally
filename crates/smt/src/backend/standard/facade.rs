@@ -398,7 +398,7 @@ impl<M: Manager> ManagerFacade<M> {
 
     fn quant(&self, quant: &smt::Quantified) -> Result<M::Term> {
         let mut bindings = Vec::new();
-        for bind in &quant.bindings {
+        for bind in &*quant.bindings {
             bindings.push(self.binding(bind)?);
         }
 

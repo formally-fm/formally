@@ -32,7 +32,7 @@ use formally::smt::{
     logics::{Logic, LogicEx},
     theories,
 };
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 type Result<T, E = backend::Error> = std::result::Result<T, E>;
 
@@ -107,9 +107,9 @@ impl standard::Solver for Solver {
             }
             None => &ALL,
         };
-        
+
         let solver = Solver { cvc5solver, logic };
-        
+
         solver.config(config)?;
 
         Ok(solver)
@@ -169,12 +169,12 @@ impl standard::Model for Model<'_> {
             return Some(smt::ModelValue::Boolean(value));
         } else if let Some(value) = self.solver.cvc5solver.get_integer_value(value) {
             return Some(smt::ModelValue::Constant(smt::Constant::Integer {
-                value,
+                value: Arc::new(value),
                 span: None,
             }));
         } else if let Some(value) = self.solver.cvc5solver.get_real_value(value) {
             return Some(smt::ModelValue::Constant(smt::Constant::Rational {
-                value,
+                value: Arc::new(value),
                 span: None,
             }));
         }

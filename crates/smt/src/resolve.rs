@@ -26,7 +26,7 @@ use crate::*;
 use formally::support::*;
 
 use std::panic::AssertUnwindSafe;
-use std::{collections::HashMap, iter::zip};
+use std::{collections::HashMap, iter::zip, sync::Arc};
 
 impl Env {
     /// Perform *name resolution*.
@@ -74,7 +74,7 @@ impl Env {
         }
 
         let mut resolved = Vec::new();
-        for (sort, arg) in zip(domain, &atom.arguments) {
+        for (sort, arg) in zip(domain, &*atom.arguments) {
             if sort == Sort::sort() {
                 resolved.push(self.resolve(arg, Role::Sort, pool)?);
             } else {
@@ -84,7 +84,7 @@ impl Env {
 
         Ok(BoundAtom {
             head: atom.head.clone(),
-            arguments: resolved,
+            arguments: Arc::from(resolved.into_boxed_slice()),
             span: atom.span.clone(),
         })
     }
@@ -114,7 +114,7 @@ impl Env {
                 .ok()?;
 
                 let mut arguments = Vec::new();
-                for arg in &atom.arguments {
+                for arg in &*atom.arguments {
                     arguments.push(Sort::of(arg).ok()?);
                 }
 
@@ -138,18 +138,19 @@ impl Env {
         pool: &P,
     ) -> Result<Quantified> {
         let mut env = Env::new().with_parent(self.clone());
-        
-        for bind in &quant.bindings {
-            env.functions.add(bind.name().name(), Function::from(bind.clone()));
+
+        for bind in &*quant.bindings {
+            env.functions
+                .add(bind.name().name(), Function::from(bind.clone()));
         }
-        
+
         let body = env.resolve(&quant.body, role, pool)?;
-        
+
         Ok(Quantified {
             quantifier: quant.quantifier,
             bindings: quant.bindings.clone(),
             body,
-            span: quant.span.clone()
+            span: quant.span.clone(),
         })
     }
 }

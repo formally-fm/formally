@@ -161,7 +161,7 @@ impl Sort {
         };
 
         let mut evaluated = Vec::new();
-        for (sort, arg) in zip(head.function.domain(), arguments) {
+        for (sort, arg) in zip(head.function.domain(), &**arguments) {
             if sort == Sort::sort() {
                 evaluated.push(SortArgument::Sort(Sort::evaluate(arg)?))
             } else {

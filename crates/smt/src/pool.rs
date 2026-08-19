@@ -164,11 +164,11 @@ impl ToTerm for support::Term<'_> {
             support::Term::Constant(c) => {
                 let c = match c {
                     support::Constant::Integer { value, span } => Constant::Integer {
-                        value: Integer::from(value),
+                        value: Arc::new(Integer::from(value)),
                         span,
                     },
                     support::Constant::Rational { value, span } => Constant::Rational {
-                        value: Rational::from_str_radix(value, 10).unwrap(),
+                        value: Arc::new(Rational::from_str_radix(value, 10).unwrap()),
                         span,
                     },
                 };
@@ -188,14 +188,14 @@ impl ToTerm for support::Term<'_> {
                     support::AtomHead::Bound(support::BoundHead { function }) => {
                         pool.term(TermKind::Atom(Atom::Bound(BoundAtom {
                             head: Reference::from(function),
-                            arguments,
+                            arguments: Arc::from(arguments.into_boxed_slice()),
                             span: a.span,
                         })))
                     }
                     support::AtomHead::Unbound(support::UnboundHead { name }) => {
                         pool.term(TermKind::Atom(Atom::Unbound(UnboundAtom {
                             head: name.clone(),
-                            arguments,
+                            arguments: Arc::from(arguments.into_boxed_slice()),
                             span: a.span,
                         })))
                     }
