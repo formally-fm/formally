@@ -451,13 +451,12 @@ impl Interpreter {
                                 let symbol = Identifier::from(symbol.inner()).over(symbol.span());
                                 let functions = state.solver.functions();
                                 let function = functions.lookup(symbol.clone()).one()?;
-                                let term =
-                                    smt::TermKind::from(function.clone()).to_term_in(&state.solver);
-                                let value = model.value(&term);
+                                let value = model.value(function);
+
                                 if let Some(value) = value {
                                     values.push((
                                         ast::Term::from(ast::Symbol::new(function.name()).unwrap()),
-                                        ast::Term::from(value.to_term_in(&state.solver)),
+                                        ast::Term::from(value.into_term_in(&state.solver)),
                                     ))
                                 } else {
                                     error!(

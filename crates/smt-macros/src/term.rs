@@ -200,7 +200,13 @@ impl ToTokens for TermArgument {
             }),
             TermArgument::Seq(ident) => tokens.extend(quote! {
                 formally::smt::support::TermArgument::Seq(
-                    (#ident).clone().into_iter().map(|t| formally::smt::support::Term::from(t)).collect()
+                    (&#ident).into_iter().map(|t| {
+                        formally::smt::support::Term::Term(
+                            formally::support::Loc::new(
+                                formally::support::Nominal(t)
+                            )
+                        )
+                    }).collect()
                 )
             }),
         }
@@ -249,7 +255,11 @@ impl ToTokens for Term {
                 let args = &self.args;
                 if args.is_empty() {
                     tokens.append_all(quote! {
-                        formally::smt::support::Term::from((#head).clone())
+                        formally::smt::support::Term::Term(
+                            formally::support::Loc::new(
+                                formally::support::Nominal(&#head)
+                            )
+                        )
                     })
                 } else {
                     tokens.append_all(quote! {

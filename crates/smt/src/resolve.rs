@@ -49,17 +49,17 @@ impl Env {
         Ok(match term.kind() {
             TermKind::Constant(_) => term.clone(),
             TermKind::Atom(Atom::Bound(atom)) => {
-                TermKind::Atom(Atom::Bound(self.resolve_bound(atom, pool)?)).to_term_in(pool)
+                TermKind::Atom(Atom::Bound(self.resolve_bound(atom, pool)?)).into_term_in(pool)
             }
             TermKind::Atom(Atom::Unbound(unbound)) => {
                 TermKind::Atom(Atom::Bound(self.resolve_unbound(unbound, role, pool)?))
-                    .to_term_in(pool)
+                    .into_term_in(pool)
             }
             TermKind::Quantified(quant) => {
-                TermKind::Quantified(self.resolve_quant(quant, role, pool)?).to_term_in(pool)
+                TermKind::Quantified(self.resolve_quant(quant, role, pool)?).into_term_in(pool)
             }
             TermKind::Let(let_) => {
-                TermKind::Let(self.resolve_let(let_, role, pool)?).to_term_in(pool)
+                TermKind::Let(self.resolve_let(let_, role, pool)?).into_term_in(pool)
             }
         })
     }

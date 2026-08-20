@@ -175,6 +175,10 @@ impl TermPool for TermManager {
     fn shared(&self, kind: TermKind) -> Term {
         self.pool.shared(kind)
     }
+
+    fn shared_ref(&self, kind: &TermKind) -> Term {
+        self.pool.shared_ref(kind)
+    }
 }
 
 impl TermManager {
@@ -184,13 +188,13 @@ impl TermManager {
             pool: Rc::new(HashPool::new()),
         }
     }
-    
+
     pub fn new_with_pool(backend: impl Backend, pool: Rc<dyn TermPool>) -> TermManager {
         TermManager {
             backend_manager: Rc::from(backend.manager()),
             pool,
         }
-    } 
+    }
 }
 
 /// Main interface to SMT solvers.
@@ -311,7 +315,7 @@ impl Solver {
     /// the special sort [Sort::sort()]. See also [Definition::function()],
     /// [Definition::constant()], and [Definition::sort()] for details.
     pub fn define<T: ToTerm>(&mut self, def: Definition<T>) -> Result<Defined> {
-        let mut def = def.map(|body| body.to_term_in(self));
+        let mut def = def.map(|body| body.into_term_in(self));
 
         let mut nested = Env::new().with_parent(self.env());
         for var in &def.domain {
@@ -344,7 +348,7 @@ impl Solver {
     /// The term undergoes [name resolution](Term::resolve()) and must be well-typed and be of
     /// sort [Core::Bool()](theories::Core::Bool()).
     pub fn require<T: ToTerm>(&mut self, term: T) -> Result<()> {
-        let term = self.resolve(&term.to_term_in(&*self.manager), Role::Function)?;
+        let term = self.resolve(&term.into_term_in(&*self.manager), Role::Function)?;
         self.backend_solver.logic().check_term(&term)?;
         let sort = Sort::of(&term)?;
 
@@ -397,6 +401,10 @@ impl TermPool for Solver {
     fn shared(&self, kind: TermKind) -> Term {
         self.manager.shared(kind)
     }
+
+    fn shared_ref(&self, kind: &TermKind) -> Term {
+        self.manager.shared_ref(kind)
+    }
 }
 
 impl Stack for Solver {
@@ -436,6 +444,16 @@ impl From<ModelValue> for TermKind {
     }
 }
 
+impl ToTerm for ModelValue {
+    fn into_term_in(self, pool: &dyn TermPool) -> Term {
+        TermKind::from(self).into_term_in(pool)
+    }
+
+    fn to_term_in(&self, pool: &dyn TermPool) -> Term {
+        TermKind::from(self.clone()).into_term_in(pool)
+    }
+}
+
 /// A trait for types that can provide model values.
 pub trait ModelProvider {
     fn value(&self, term: &Term) -> Option<ModelValue>;
@@ -471,6 +489,6 @@ pub struct Model<'s> {
 
 impl Model<'_> {
     pub fn value(&self, term: impl ToTerm) -> Option<ModelValue> {
-        self.provider.value(&term.to_term_in(self.solver))
+        self.provider.value(&term.into_term_in(self.solver))
     }
 }

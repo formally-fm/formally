@@ -23,9 +23,12 @@
 //
 
 use crate::*;
-use formally::support::{Identifier, Locatable, Located, Span};
+use formally::{
+    smt,
+    support::{Identifier, Loc, Locatable, Located, Nominal, Span},
+};
 
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub enum Constant {
@@ -68,25 +71,11 @@ pub struct Atom<'t> {
     pub span: Option<Span>,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Located)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub enum Term<'t> {
-    Term(term::Term),
-    TermKind(TermKind),
+    Term(Loc<Nominal<&'t dyn ToTerm>>),
     Constant(Constant),
     Atom(Atom<'t>),
-}
-
-impl<'t> Locatable for Term<'t> {
-    type Located = Term<'t>;
-
-    fn over(self, span: impl Into<Option<Span>>) -> Term<'t> {
-        match self {
-            Term::Term(term) => Term::TermKind(term.kind().clone().over(span)),
-            Term::TermKind(kind) => Term::TermKind(kind.over(span)),
-            Term::Constant(cnst) => Term::Constant(cnst.over(span)),
-            Term::Atom(atom) => Term::Atom(atom.over(span)),
-        }
-    }
 }
 
 impl Default for Term<'_> {
@@ -98,15 +87,15 @@ impl Default for Term<'_> {
     }
 }
 
-impl From<term::Term> for Term<'_> {
-    fn from(term: term::Term) -> Self {
-        Term::Term(term)
+impl<'t> From<&'t dyn ToTerm> for Term<'t> {
+    fn from(value: &'t dyn ToTerm) -> Term<'t> {
+        Term::Term(Loc::new(Nominal(value)))
     }
 }
 
-impl<T: Into<TermKind>> From<T> for Term<'_> {
-    fn from(value: T) -> Self {
-        Term::TermKind(value.into())
+impl<'t> From<&'t smt::Term> for Term<'t> {
+    fn from(term: &'t smt::Term) -> Self {
+        Term::Term(Loc::new(Nominal(term)))
     }
 }
 
@@ -123,5 +112,59 @@ impl From<Identifier<'static>> for AtomHead {
         AtomHead::Unbound(UnboundHead {
             name: name.into_inner(),
         })
+    }
+}
+
+impl ToTerm for support::Term<'_> {
+    fn into_term_in(self, pool: &dyn TermPool) -> smt::Term {
+        match self {
+            Term::Term(t) => t.to_term_in(pool),
+            Term::Constant(c) => {
+                let c = match c {
+                    Constant::Integer { value, span } => smt::Constant::Integer {
+                        value: Arc::new(Integer::from(value)),
+                        span,
+                    },
+                    Constant::Rational { value, span } => smt::Constant::Rational {
+                        value: Arc::new(Rational::from_str_radix(value, 10).unwrap()),
+                        span,
+                    },
+                };
+                TermKind::Constant(c).into_term_in(pool)
+            }
+            Term::Atom(a) => {
+                let mut arguments = Vec::new();
+                for arg in a.arguments {
+                    match arg {
+                        TermArgument::Term(t) => arguments.push(t.to_term_in(pool)),
+                        TermArgument::Seq(seq) => {
+                            arguments.extend(seq.iter().map(|arg| arg.to_term_in(pool)))
+                        }
+                    }
+                }
+                match a.head {
+                    AtomHead::Bound(BoundHead { function }) => {
+                        TermKind::Atom(smt::Atom::Bound(BoundAtom {
+                            head: Reference::from(function),
+                            arguments: Arc::from(arguments.into_boxed_slice()),
+                            span: a.span,
+                        }))
+                        .into_term_in(pool)
+                    }
+                    AtomHead::Unbound(UnboundHead { name }) => {
+                        TermKind::Atom(smt::Atom::Unbound(UnboundAtom {
+                            head: Identifier::from(name.clone()),
+                            arguments: Arc::from(arguments.into_boxed_slice()),
+                            span: a.span,
+                        }))
+                        .into_term_in(pool)
+                    }
+                }
+            }
+        }
+    }
+
+    fn to_term_in(&self, pool: &dyn TermPool) -> smt::Term {
+        self.clone().into_term_in(pool)
     }
 }

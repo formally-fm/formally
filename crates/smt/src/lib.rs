@@ -119,10 +119,43 @@
 //!
 //! The most straightforward way of building a term is the [term!] macro, which
 //! directly accepts a convenient subset of the SMT-LIBv2 syntax for terms. The macro constructs a
-//! temporary object which implements the [ToTerm] trait, which is also implemented by many other
-//! types (including e.g., [Declared] and [Defined]), so the [term!] macro can be used as argument
-//! to any method that accepts a [ToTerm] instance, such as the [Solver::require()] method used in
-//! the above example.
+//! temporary object which implements the [ToTerm] trait, so the [term!] macro can be used as
+//! argument to any method that accepts a [ToTerm] instance, such as the [Solver::require()] method
+//! used in the above example. The macro supports specifying both arbitrary names
+//! which will be looked-up by the [Solver] later, or expanding previously declared [ToTerm]
+//! objects.
+//!
+//! Example:
+//! ```
+//! # mod formally {
+//! #    pub extern crate formally_support as support;
+//! #    pub extern crate formally_smt as smt;
+//! # }
+//! # use formally::{smt::*, support::*};
+//! # fn main() -> Result<()> {
+//! let config = Config::default().logic("LIA");
+//! let mut solver = Solver::new(&config)?;
+//!
+//! solver.declare(Declaration::integer("x"))?;
+//! solver.declare(Declaration::integer("y"))?;
+//!
+//! // here, `x` and `y` are looked up by `require()` in the solver's scope
+//! solver.require(term!(= (+ x y) 0));
+//!
+//! let z = solver.declare(Declaration::integer("z"))?;
+//! // here, `#z` refers to the Rust variable `z` declared above, of type [Declared], which
+//! // is expanded in place
+//! solver.require(term!(> #z 0))?;
+//!
+//! // any instance of ToTerm can be expanded
+//! let t1 = term!(> x y);
+//! let t2 = term!(> y z);
+//! let t3 = term!(> x z);
+//! solver.require(term!(=> (and #t1 #t2) #t3))?;
+//!
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! [Term] objects are obtained by uniquing a [TermKind] inside an instance of the
 //! [TermPool] trait. As in most other SMT interfaces, uniquing terms (also called "hash-consing")
@@ -152,37 +185,6 @@
 //! supports both specifying arbitrary names which will be looked-up by the [Solver] later, or
 //! expanding previously declared  [Term] objects.
 //!
-//! Example:
-//! ```
-//! # mod formally {
-//! #    pub extern crate formally_support as support;
-//! #    pub extern crate formally_smt as smt;
-//! # }
-//! # use formally::{smt::*, support::*};
-//! # fn main() -> Result<()> {
-//! let config = Config::default().logic("LIA");
-//! let mut solver = Solver::new(&config)?;
-//!
-//! solver.declare(Declaration::integer("x"))?;
-//! solver.declare(Declaration::integer("y"))?;
-//!
-//! // here, `x` and `y` are looked up by `require()` in the solver's scope
-//! solver.require(term!(= (+ x y) 0));
-//!
-//! let z = solver.declare(Declaration::integer("z"))?;
-//! // here, `z` refers to the variable `z` declared above, of type [Declared], which
-//! // is expanded in place after conversion to a [Term].
-//! solver.require(term!(> #z 0))?;
-//!
-//! // any term can be expanded
-//! let t1 = term!(> x y);
-//! let t2 = term!(> y z);
-//! let t3 = term!(> x z);
-//! solver.require(term!(=> (and #t1 #t2) #t3))?;
-//!
-//! # Ok(())
-//! # }
-//! ```
 //!
 //! ## Asserting terms and extracting models
 //!

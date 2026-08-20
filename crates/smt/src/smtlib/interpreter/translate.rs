@@ -37,10 +37,9 @@ use std::sync::Arc;
 impl Interpreter {
     fn sort_to_smt_term(sort: &ast::Sort, solver: &smt::Solver) -> smt::Term {
         match sort {
-            ast::Sort::Simple(ast::Identifier::Symbol(name)) => {
-                let head = Identifier::from(name.inner()).over(name.span());
-                term!(#head).to_term_in(solver)
-            }
+            ast::Sort::Simple(ast::Identifier::Symbol(name)) => Identifier::from(name.inner())
+                .over(name.span())
+                .into_term_in(solver),
             ast::Sort::Application(ast::SortApplication {
                 head: ast::Identifier::Symbol(head),
                 args,
@@ -49,11 +48,14 @@ impl Interpreter {
                 let head = Identifier::from(head.inner())
                     .into_owned()
                     .over(head.span());
-                let args = args
+                let args: Vec<_> = args
                     .iter()
-                    .map(|s| Interpreter::sort_to_smt_term(s, solver));
+                    .map(|s| Interpreter::sort_to_smt_term(s, solver))
+                    .collect();
 
-                term!(#head #(#args)*).over(span.clone()).to_term_in(solver)
+                term!(#head #(#args)*)
+                    .over(span.clone())
+                    .into_term_in(solver)
             }
             _ => todo!(),
         }
@@ -77,7 +79,7 @@ impl Interpreter {
         }
         .over(span);
 
-        term!(#cnst).to_term_in(solver)
+        term!(#cnst).into_term_in(solver)
     }
 
     fn app_to_smt(
@@ -104,7 +106,7 @@ impl Interpreter {
                     span: idspan,
                 }))
                 .over(span)
-                .to_term_in(solver);
+                .into_term_in(solver);
 
                 Ok(term)
             }
@@ -133,7 +135,7 @@ impl Interpreter {
                     body,
                     span: let_.span.clone(),
                 })
-                .to_term_in(solver);
+                .into_term_in(solver);
 
                 Ok(term)
             }
@@ -150,7 +152,7 @@ impl Interpreter {
                     body,
                     span: exists.span.clone(),
                 })
-                .to_term_in(solver);
+                .into_term_in(solver);
 
                 Ok(term)
             }
@@ -166,7 +168,7 @@ impl Interpreter {
                     body,
                     span: forall.span.clone(),
                 })
-                .to_term_in(solver);
+                .into_term_in(solver);
 
                 Ok(term)
             }
