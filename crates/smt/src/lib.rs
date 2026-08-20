@@ -191,7 +191,8 @@
 //! # }
 //! # use formally::{smt::*, support::*};
 //! # fn main() -> Result<()> {
-//! let mut solver = Solver::new(&Config::default())?;
+//! let config = Config::default().produce_models(true);
+//! let mut solver = Solver::new(&config)?;
 //!
 //! let p = solver.declare(Declaration::boolean("p"))?;
 //!
@@ -199,7 +200,7 @@
 //!
 //! assert_eq!(solver.check()?, Answer::Yes);
 //!
-//! assert_eq!(solver.model()?.unwrap().value(&p), Some(ModelValue::Boolean(true)));
+//! assert_eq!(solver.model()?.unwrap().value(p), Some(ModelValue::Boolean(true)));
 //! # Ok(())
 //! # }
 //! ```

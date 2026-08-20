@@ -42,11 +42,8 @@ use std::{
 ///
 /// This is a simple struct holding many parameters used to instantiate SMT solvers. [Config]
 /// instances are usually constructed from the default one by changing the desired parameters and
-/// then passed to [Solver::new()]. Fields are public and can be set arbitrarily but a builder
-/// method for each parameter is also provided, for convenience.
-///
-/// Note that [Config] is [Contextual] and its [Context] is the one that will be adopted by new
-/// solvers as well.
+/// then passed to [Solver::new()] and related constructors. Fields are public and can be set
+/// arbitrarily but a builder method for each parameter is also provided, for convenience.
 ///
 /// Example:
 /// ```
@@ -58,7 +55,6 @@ use std::{
 /// # fn main() -> Result<()> {
 /// let config =
 ///     Config::default()
-///         .backend(Z3)
 ///         .logic("LIA")
 ///         .produce_models(true);
 ///

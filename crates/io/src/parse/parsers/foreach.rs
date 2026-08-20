@@ -43,8 +43,7 @@ use crate::parse::*;
 ///     foreach(txt.chars(), |ch| char(ch).map(|ch| ch.to_ascii_uppercase()))
 /// }
 ///
-/// let emitter = StdErrEmitter::new();
-/// let result = uppercased("hello").parse(&emitter, "hello");
+/// let result = uppercased("hello").parse("hello");
 ///
 /// assert_eq!(result.unwrap(), "HELLO".to_string());
 /// ```

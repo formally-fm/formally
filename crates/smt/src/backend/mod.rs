@@ -28,8 +28,9 @@
 //!
 //! *Currently* only the [Z3](z3::Z3) is provided, but other ones will follow soon.
 //!
-//! When instantiating a [Solver], the backend is chosen by setting the [backend](Config::backend)
-//! field of the [Config] object.
+//! The backend is chosen when instantiating a [TermManager](smt::TermManager) or, as a shortcut,
+//! with the [Solver::new_with_backend()](smt::Solver::new_with_backend) function when constructing
+//! a [Solver](smt::Solver).
 //!
 //! ```
 //! # mod formally {
@@ -39,8 +40,9 @@
 //! # use formally::support::*;
 //! use formally::smt::{*, backend::z3::Z3};
 //! # fn main() -> Result<()> {
-//! let config = Config::default().backend(Z3);
-//! let solver = Solver::new(&config)?;
+//! let config = Config::default();
+//! let manager = TermManager::new(Z3);
+//! let solver = Solver::new_with_manager(&config, manager)?;
 //!
 //! // ...
 //!
@@ -77,21 +79,25 @@
 //! However, each backend instance is responsible to provide the logic named `"ALL"`, which by
 //! the SMT-LIBv2 specification correspond to a logic with no syntactic restriction based on the
 //! combination of all the theories supported by the solver. This logic can be internally declared
-//! using the [logic] macro and then passed to the `all` argument of
-//! [standard_logic()](logics::standard_logic()). For example:
+//! using the [logic] macro and returned when the given logic is `"ALL"`. For example:
 //! ```rust,no_run
 //! # mod formally {
 //! #     pub extern crate formally_support as support;
 //! #     pub extern crate formally_smt as smt;
 //! # }
-//! # use formally::{support::*, smt::{*, backend::*, logics::*, theories::*}};
-//! # use std::result::Result;
-//! # #[derive(Contextual)]
-//! # struct MyBackend {
-//! #    context: Context
-//! # }
+//! # use formally::{
+//! #     support::*,
+//! #     smt::{
+//! #         self, Config, logic, backend::{Backend,Solver,Manager,Error},
+//! #         logics::{standard_logic}, theories::*
+//! #     }
+//! # };
+//! # use std::{result::Result, rc::Rc};
+//! struct MyBackend {
+//!     // ... //!
+//! }
 //! logic! {
-//!    name: MyBackendALL,
+//!    name: ALL,
 //!    theories: [ Core, Ints, Reals, Arrays ],
 //!    requirements: [ ]
 //! }
@@ -101,10 +107,21 @@
 //!         "MyBackend"
 //!     }
 //!     // ...
-//!     fn instance(&self, config: &Config) -> Result<Box<dyn Solver>, Error> {
+//! #   fn manager(&self) -> Box<dyn Manager> {
+//! #     todo!()
+//! #   }
+//!     fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error> {
 //!         // ...
 //!         if let Some(logic) = &config.logic {
-//!             let logic = standard_logic(&logic, &MyBackendALL);
+//!             let logic = if logic.name() == "ALL" {
+//!                 &ALL
+//!             } else {
+//!                 if let Some(logic) = standard_logic(&logic) {
+//!                     logic
+//!                 } else {
+//!                     return Err(todo!());
+//!                 }
+//!             };
 //!             // ...
 //!         }
 //!         // ...

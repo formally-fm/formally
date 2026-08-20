@@ -241,29 +241,6 @@ pub enum TermKind {
 /// Important operations on terms include *type checking* ([Term::type_check()] and equivalently
 /// [Sort::of()]), and *name resolution* ([Term::resolve()]).
 ///
-/// Comparison of [Term] objects is *structural*, so equality and hashing account for the syntactic
-/// structure of the term (including the source spans). Keep this in mind when using terms as keys
-/// for hash maps because lookup can become very expensive.
-///
-/// To use terms as hashing keys it is better to compare them *nominally*, i.e. in such a way that
-/// objects with different memory addresses compare different even when structurally equal. To do
-/// that, you can wrap [Term] into a [Nominal] type.
-///
-/// Example:
-/// ```
-/// # mod formally {
-/// #    pub extern crate formally_support as support;
-/// #    pub extern crate formally_smt as smt;
-/// # }
-/// # use formally::smt::*;
-/// # use formally::support::*;
-/// let ponens1 = term!(=> (and (=> p q) p) q);
-/// let ponens2 = term!(=> (and (=> p q) p) q);
-///
-/// assert_eq!(ponens1, ponens2);
-///
-/// assert_ne!(Nominal::new(ponens1), Nominal::new(ponens2));
-/// ```
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Term(pub(crate) Nominal<Arc<TermInner>>);
 

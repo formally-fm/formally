@@ -25,6 +25,8 @@
 use crate::*;
 use formally::support::{Identifier, Locatable, Located, Span};
 
+use std::borrow::Cow;
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub enum Constant {
     Integer {
@@ -44,7 +46,7 @@ pub struct BoundHead {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct UnboundHead {
-    pub name: Identifier<'static>,
+    pub name: Cow<'static, str>,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -118,6 +120,8 @@ impl<T: Into<Function>> From<T> for AtomHead {
 
 impl From<Identifier<'static>> for AtomHead {
     fn from(name: Identifier<'static>) -> Self {
-        AtomHead::Unbound(UnboundHead { name })
+        AtomHead::Unbound(UnboundHead {
+            name: name.into_inner(),
+        })
     }
 }

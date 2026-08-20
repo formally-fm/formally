@@ -39,7 +39,6 @@
 //! and frequently used by any client code.
 //!
 //! These include:
-//! 1. The main [Context] object and related utilities
 //! 2. The *diagnostics* system, including the [error] macro, the [Emitter] trait and different
 //!    types of *emitters*.
 //! 3. The [Scope] type to help implementing statically scoped languages.
@@ -47,7 +46,7 @@
 //!    [Span] types.
 //! 5. Procedural macros to derive the `Located` and `Locatable` traits.
 //! 6. The [Nominal] smart pointer.
-//! 7. The [Stack] trait and the [Stacked] utility class to help implementing it.
+//! 7. The [Stack] trait and the [Stacked] utility type to help implementing it.
 
 mod formally {
     pub extern crate self as support;

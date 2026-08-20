@@ -88,9 +88,3 @@ impl<T> Deref for Nominal<T> {
         &self.0
     }
 }
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub enum MaybeNominal<T: Deref> {
-    Structural(T),
-    Nominal(Nominal<T>),
-}

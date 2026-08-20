@@ -24,9 +24,16 @@
 
 use crate::formally;
 use dashmap::DashSet;
-use formally::{smt::*, support::Nominal};
-use std::sync::Mutex;
-use std::{borrow::Borrow, cell::RefCell, collections::HashSet, sync::Arc};
+use formally::{
+    smt::*,
+    support::{Identifier, Nominal},
+};
+use std::{
+    borrow::Borrow,
+    cell::RefCell,
+    collections::HashSet,
+    sync::{Arc, Mutex},
+};
 
 pub trait TermPool: Sized {
     fn shared(&self, kind: TermKind) -> Term;
@@ -194,7 +201,7 @@ impl ToTerm for support::Term<'_> {
                     }
                     support::AtomHead::Unbound(support::UnboundHead { name }) => {
                         pool.term(TermKind::Atom(Atom::Unbound(UnboundAtom {
-                            head: name.clone(),
+                            head: Identifier::from(name.clone()),
                             arguments: Arc::from(arguments.into_boxed_slice()),
                             span: a.span,
                         })))

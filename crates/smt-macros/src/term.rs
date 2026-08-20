@@ -56,15 +56,16 @@ impl Display for Name {
 
 #[derive(Clone)]
 pub enum Head {
+    Int(syn::LitInt),
+    Real(syn::LitFloat),
     Unbound(Name),
     Bound(syn::Ident),
 }
 
 #[derive(Clone)]
-pub enum Term {
-    Int(syn::LitInt),
-    Real(syn::LitFloat),
-    App { head: Head, args: Vec<TermArgument> },
+pub struct Term {
+    head: Head,
+    args: Vec<TermArgument>,
 }
 
 #[derive(Clone)]
@@ -75,6 +76,14 @@ pub enum TermArgument {
 
 fn peek_punct(input: ParseStream) -> bool {
     matches!(input.cursor().token_tree(), Some((TokenTree::Punct(punct), _)) if punct.as_char() != '#')
+}
+
+fn peek_term(input: ParseStream) -> bool {
+    input.peek(syn::Ident)
+        || input.peek(Token![#])
+        || peek_punct(input)
+        || input.peek(syn::LitInt)
+        || input.peek(syn::LitFloat)
 }
 
 fn parse_punct_sequence(input: ParseStream) -> Result<Vec<Punct>> {
@@ -120,7 +129,11 @@ impl Parse for Name {
 
 impl Parse for Head {
     fn parse(input: ParseStream) -> Result<Self> {
-        if input.peek(Token![#]) {
+        if input.peek(syn::LitInt) {
+            Ok(Head::Int(input.parse()?))
+        } else if input.peek(syn::LitFloat) {
+            Ok(Head::Real(input.parse()?))
+        } else if input.peek(Token![#]) {
             input.parse::<Token![#]>()?;
             Ok(Head::Bound(input.parse()?))
         } else if input.peek(syn::Ident) || peek_punct(input) {
@@ -145,19 +158,22 @@ impl Parse for TermArgument {
             input.parse::<Token![*]>()?;
 
             Ok(TermArgument::Seq(ident))
+        } else if input.peek(syn::token::Paren) {
+            let content;
+            parenthesized!(content in input);
+            Ok(TermArgument::Term(content.parse()?))
         } else {
-            Ok(TermArgument::Term(input.parse()?))
+            Ok(TermArgument::Term(Term {
+                head: input.parse()?,
+                args: Vec::new(),
+            }))
         }
     }
 }
 
 impl Parse for Term {
     fn parse(input: ParseStream) -> Result<Self> {
-        if input.peek(syn::LitInt) {
-            Ok(Term::Int(input.parse()?))
-        } else if input.peek(syn::LitFloat) {
-            Ok(Term::Real(input.parse()?))
-        } else if input.peek(syn::Ident) || input.peek(Token![#]) || peek_punct(input) {
+        if peek_term(input) {
             let head = input.parse()?;
             let mut args = Vec::new();
 
@@ -165,7 +181,7 @@ impl Parse for Term {
                 args.push(input.parse()?);
             }
 
-            Ok(Term::App { head, args })
+            Ok(Term { head, args })
         } else if input.peek(syn::token::Paren) {
             let content;
             parenthesized!(content in input);
@@ -180,9 +196,7 @@ impl ToTokens for TermArgument {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             TermArgument::Term(term) => tokens.extend(quote! {
-                formally::smt::support::TermArgument::Term(
-                    formally::smt::support::Term::from((#term).clone())
-                )
+                formally::smt::support::TermArgument::Term(#term)
             }),
             TermArgument::Seq(ident) => tokens.extend(quote! {
                 formally::smt::support::TermArgument::Seq(
@@ -195,50 +209,58 @@ impl ToTokens for TermArgument {
 
 impl ToTokens for Term {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        match self {
-            Term::Int(lit) => tokens.append_all(quote! {
-                formally::smt::support::Term::Integer(
+        match &self.head {
+            Head::Int(lit) => tokens.append_all(quote! {
+                formally::smt::support::Term::Constant(
                     formally::smt::support::Constant::Integer {
                         value: #lit,
                         span: None
                     }
                 )
             }),
-            Term::Real(lit) => tokens.append_all(quote! {
-                formally::smt::Term::Constant(
-                    formally::smt::Constant::Rational {
-                        value: formally::smt::Rational::from_str_radix(#lit, 10).unwrap(),
+            Head::Real(lit) => {
+                let lit = &lit.to_string();
+                tokens.append_all(quote! {
+                    formally::smt::Term::Constant(
+                        formally::smt::Constant::Rational {
+                            value: #lit,
+                            span: None
+                        }
+                    )
+                })
+            }
+
+            Head::Unbound(head) => {
+                let head = head.to_string();
+                let args = &self.args;
+                tokens.append_all(quote! {
+                    formally::smt::support::Term::Atom(formally::smt::support::Atom {
+                        head: formally::smt::support::AtomHead::Unbound(
+                            formally::smt::support::UnboundHead {
+                                name: std::borrow::Cow::Borrowed(#head)
+                            }
+                        ),
+                        arguments: &[#(#args),*],
                         span: None
-                    }
-                )
-            }),
-            Term::App { head, args } => match head {
-                Head::Unbound(head) => {
-                    let head = head.to_string();
+                    })
+                })
+            }
+            Head::Bound(head) => {
+                let args = &self.args;
+                if args.is_empty() {
+                    tokens.append_all(quote! {
+                        formally::smt::support::Term::from((#head).clone())
+                    })
+                } else {
                     tokens.append_all(quote! {
                         formally::smt::support::Term::Atom(formally::smt::support::Atom {
-                            head: formally::smt::support::AtomHead::from(formally::support::Identifier::from(#head.to_string())),
+                            head: formally::smt::support::AtomHead::from((#head).clone()),
                             arguments: &[#(#args),*],
                             span: None
                         })
                     })
                 }
-                Head::Bound(head) => {
-                    if args.is_empty() {
-                        tokens.append_all(quote! {
-                            formally::smt::support::Term::from((#head).clone())
-                        })
-                    } else {
-                        tokens.append_all(quote! {
-                            formally::smt::support::Term::Atom(formally::smt::support::Atom {
-                                head: formally::smt::support::AtomHead::from((#head).clone()),
-                                arguments: &[#(#args),*],
-                                span: None
-                            })
-                        })
-                    }
-                }
-            },
+            }
         }
     }
 }

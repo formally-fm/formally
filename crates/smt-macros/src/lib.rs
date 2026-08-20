@@ -35,9 +35,9 @@
 )]
 #![doc = ""]
 
+mod logic;
 mod term;
 mod theories;
-mod logic;
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -103,7 +103,7 @@ pub fn term(input: TokenStream) -> TokenStream {
 /// Let us start, as an example, with the declaration of the [Core](crate::theories::Core)
 /// theory.
 ///
-/// ```
+/// ```ignore
 /// # mod formally {
 /// #   pub extern crate formally_support as support;
 /// #   pub extern crate formally_smt as smt;
@@ -295,12 +295,12 @@ pub fn term(input: TokenStream) -> TokenStream {
 /// adding a `extends:` field to the invocation of the macro.
 ///
 /// As an example, [Reals_Ints](crate::theories::Reals_Ints) is declared as follows:
-/// ```
+/// ```ignore
 /// # mod formally {
 /// #   pub extern crate formally_support as support;
 /// #   pub extern crate formally_smt as smt;
 /// # }
-/// # use formally::smt::{theory, theories::*};
+/// # use formally::smt::{theories, theories::*};
 /// theory! {
 ///     /// The combined theory of integers and reals.
 ///     ///

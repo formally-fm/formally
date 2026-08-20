@@ -101,19 +101,18 @@ impl Display for DiagnosticEmitted {
 /// instead. For an example see `formally::smt::backends::BackendError` type, and the documentation
 /// of [Diagnosable].
 pub trait Emit {
-    /// Emit the object as diagnostics using the current [Context] of the object as the [Emitter].
+    /// Emit the object as a diagnostic.
     fn emit(&self) -> DiagnosticEmitted;
 }
 
 /// Trait for types that contain all the necessary information to implement the [Emit] trait.
 ///
 /// Implementing [Diagnosable] for an error type requires it to be [Display] (required by
-/// [Error](std::error::Error) as well anyway) to know what to write to the diagnostic,
-/// [Located] to obtain a [Span] for the diagnostic, and [Contextual] to know the [Emitter] to use.
-/// In addition, the [Diagnosable::level()] method (which by default returns [Level::Error]) tells
-/// the level of the diagnostic. With all these information, [Emit] can be implemented
-/// automatically. In addition, the [Diagnosable::notes()] method, empty by default, can be
-/// implemented to emit further notes after the main diagnostic.
+/// [Error](std::error::Error) as well anyway) to know what to write to the diagnostic, and
+/// [Located] to obtain a [Span] for the diagnostic. In addition, the [Diagnosable::level()] method
+/// (which by default returns [Level::Error]) tells the level of the diagnostic. With all these
+/// information, [Emit] can be implemented automatically. In addition, the [Diagnosable::notes()]
+/// method, empty by default, can be implemented to emit further notes after the main diagnostic.
 ///
 /// The following example uses the [thiserror] crate to declare a "diagnosable" error type very
 /// easily for a hypothetical parsing function.
@@ -123,7 +122,7 @@ pub trait Emit {
 /// #     pub extern crate formally_support as support;
 /// # }
 /// use formally::support::{
-///     Context, Span, Located, Contextual, Diagnosable, DiagnosticEmitted
+///     Span, Located, Diagnosable, DiagnosticEmitted
 /// };
 /// use thiserror::Error;
 ///
@@ -137,11 +136,10 @@ pub trait Emit {
 ///    IO(std::io::Error)
 /// }
 ///
-/// #[derive(Debug, Error, Located, Contextual)]
+/// #[derive(Debug, Error, Located)]
 /// #[error("parsing error: {kind}")]
 /// pub struct ParsingError {
 ///     kind: ParsingErrorKind,
-///     context: Context,
 ///     span: Option<Span>
 /// }
 ///
@@ -202,24 +200,6 @@ impl<T: Emit> From<T> for DiagnosticEmitted {
 /// (usually an error) through an [Emitter], usually with the [error!] macro.
 pub type Result<T, E = DiagnosticEmitted> = std::result::Result<T, E>;
 
-/// Trait to extend the standard [Result](std::result::Result) type with the
-/// [recover()](Recover::recover()) method.
-///
-/// This trait is implemented for any `Result<T, E>`.
-pub trait Recover<T, E> {
-    /// Recover an erroneous [Result](std::result::Result) by replacing it with `Ok(value)`.
-    fn recover(self, value: T) -> Result<T, E>;
-}
-
-impl<T, E> Recover<T, E> for Result<T, E> {
-    fn recover(self, value: T) -> Result<T, E> {
-        match self {
-            Ok(ok) => Ok(ok),
-            Err(_) => Ok(value),
-        }
-    }
-}
-
 /// Trait for objects capable of emitting (or routing) diagnostics.
 ///
 /// [Emitter] is the core of `formally`'s error handling strategy. Diagnostics, in the form of
@@ -232,24 +212,32 @@ impl<T, E> Recover<T, E> for Result<T, E> {
 /// additional information associated with different source spans.
 ///
 /// For consistency of the user experience, it is important that everybody uses the same [Emitter].
-/// For this reason, a shared [Emitter] is always held by the current [Context], and [Context] iself
-/// implements [Emitter] to access to it confortably.
+/// For this reason, a global [Emitter] is always available from [Diagnostic::emitter()], which
+/// returns a global emitter object whose default value can be changed with
+/// [Diagnostic::set_default_global_emitter()]. The global emitter can be temporarily changed in a
+/// thread-local and scoped way with [Diagnostic::with()].
+///
+/// Different implementations of [Emitter] are provided and more will be added.
+/// Currently, we have:
+/// - [StdErrEmitter], to direct formatted messages to the standard error stream. This is currently
+///   the default global emitter.
+/// - [BatchedEmitter], to group diagnostics and emitting them all at once when requested
+/// - [NullEmitter], to suppress any diagnostic.
 ///
 /// [Diagnostic] objects are usually not constructed and emitted directly but using the [debug],
 /// [warning] and [error] macros. Similarly, notes are usually emitted with the [note] and [trace]
-/// macros.
+/// macros. These macros use the global [Emitter].
 ///
 /// Example:
 /// ```
 /// # use formally_support::*;
-/// # let ctx = &Context::new();
 /// # let span = Span::Span {
 /// #    origin: Default::default(),
 /// #    begin: Default::default(),
 /// #    end: Default::default()
 /// # };
 /// # let ident = "";
-/// error!(ctx, span, "unable to parse identifier: {}", ident);
+/// error!(span, "unable to parse identifier: {}", ident);
 /// ```
 pub trait Emitter {
     /// Emit a diagnostic.
@@ -302,6 +290,8 @@ thread_local! {
 /// Information attached to a diagnostic.
 ///
 /// See the [Emitter] trait for general information on the error reporting strategy of `formally`.
+///
+/// See the [emitter()](Diagnostic::emitter) function for how to reach the global [Emitter] object.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     /// The source span associated with this diagnostic.
@@ -320,18 +310,32 @@ impl Diagnostic {
         }
     }
 
+    /// Return a reference to the current default global [Emitter].
+    ///
+    /// This is the emitter used as the global emitter (returned by [Diagnostic::emitter()]) unless
+    /// a call of [Diagnostic::with()] is ongoing in the current thread.
     pub fn default_global_emitter() -> &'static dyn Emitter {
         &DefaultGlobalEmitter
     }
 
+    /// Set the default global [Emitter].
+    ///
+    /// This is the emitter used as the global emitter (returned by [Diagnostic::emitter()]) unless
+    /// a call of [Diagnostic::with()] is ongoing in the current thread.
     pub fn set_default_global_emitter(emitter: impl 'static + Send + Sync + Emitter) {
         *DEFAULT_GLOBAL_EMITTER.lock().unwrap() = Arc::new(emitter);
     }
 
+    /// Return the current global [Emitter].
     pub fn emitter() -> &'static dyn Emitter {
         &GlobalEmitter
     }
 
+    /// Temporarily changes the global [Emitter].
+    ///
+    /// Changes the global emitter for the current thread, executes the given function, and then
+    /// restores the old global emitter. If the function panics, the old emitter is restored and the
+    /// panic propagated.
     pub fn with<E, F, R>(emitter: E, f: F) -> R
     where
         E: 'static + Emitter,
@@ -372,7 +376,7 @@ impl Emitter for NullEmitter {
 ///
 /// [BatchEmitter] works by relaying all the received diagnostics to an inner [Emitter] instance,
 /// but only after a call to [BatchEmitter::commit]. If the object is destroyed before a call to
-/// [BatchEmitter::commit], the pending dianostics are ignored.
+/// [BatchEmitter::commit], the pending dianostics are discarded.
 pub struct BatchEmitter<'e> {
     emitter: &'e dyn Emitter,
     batched: RefCell<Vec<Batched>>,
@@ -429,7 +433,7 @@ impl Emitter for BatchEmitter<'_> {
 /// This is a simple [Emitter] to just print diagnostic messages to the standard error stream of the
 /// process with attached the source span information.
 ///
-/// This type is currently the default [Emitter] for newly constructed [Context] objects.
+/// This type is currently the default global [Emitter].
 pub struct StdErrEmitter {
     trace_emitted: Mutex<bool>,
     note_emitted: Mutex<bool>,
@@ -488,19 +492,19 @@ impl Emitter for StdErrEmitter {
 
 #[doc(hidden)]
 #[macro_export]
-macro_rules! diagnose {
+macro_rules! diagnose_impl {
     ($ty:ident::$level:ident, $emitter:expr, $span:expr, $arg:literal) => {
-        $crate::diagnose!(
+        $crate::diagnose_impl!(
             impl $ty, $level, $emitter, $span.clone().into(), format!($arg)
         )
     };
     ($ty:ident::$level:ident, $emitter:expr, $span:expr, $arg:expr) => {
-        $crate::diagnose!(
+        $crate::diagnose_impl!(
             impl $ty, $level, $emitter, $span.clone().into(), $arg
         )
     };
     ($ty:ident::$level:ident, $emitter:expr, $span:expr, $($args:tt)+) => {
-        $crate::diagnose!(
+        $crate::diagnose_impl!(
             impl $ty, $level, $emitter, $span.clone().into(), format!($($args)*)
         )
     };
@@ -520,6 +524,21 @@ macro_rules! diagnose {
     };
 }
 
+/// Generic and more flexible version of the [error!], [warning!], etc. macros.
+///
+/// The [error!], [warning!], [debug!], [internal!], [note!], and [trace!] macro are based on
+/// invocations of [diagnose!] which is the most flexible and generic of the set.
+///
+/// It accepts as a first argument a literal value of [Level] or [NoteKind], depending on which it
+/// emits a diagnostic or a note. It accepts then an emitter, a span, and a message, optionally
+/// formatted à la [format!] followed by the format arguments.
+#[macro_export]
+macro_rules! diagnose {
+    ($ty:ident::$level:ident, $emitter:expr, $span:expr, $($args:tt)+) => {
+        $crate::diagnose_impl!($ty::$level, $emitter, $span, $($args)*)
+    }
+}
+
 /// Emit a note of kind [NoteKind::Note] with a formatted message.
 ///
 /// Notes are meant to be attached to diagnostics, so one should be sure that a diagnostic (e.g., an
@@ -527,14 +546,12 @@ macro_rules! diagnose {
 /// information, possibly attached to different source spans, to a previously emitted diagnostic.
 ///
 /// Example:
-/// Example:
 /// ```
 /// # use formally_support::*;
-/// # let ctx = &Context::new();
 /// # let span = Span::default();
 /// # let ident = "";
-/// error!(ctx, span, "unable to parse identifier: {}", ident);
-/// note!(ctx, span, "it seems to be a number instead");
+/// error!(span, "unable to parse identifier: {}", ident);
+/// note!(span, "it seems to be a number instead");
 #[macro_export]
 macro_rules! note {
     ($($args:tt)+) => {
@@ -552,14 +569,13 @@ macro_rules! note {
 /// ```rust,no_run
 /// # use formally_support::*;
 /// # fn parse_message(s: &str) -> Result<i32> {
-/// # let ctx = &Context::new();
 /// # let span = Span::default();
 /// # fn parse_int(s: &str) -> Result<i32> { Ok(0) }
 /// # fn something(i: i32) -> i32 { i }
 ///  match parse_int(s) {
 ///     Ok(value) => Ok(something(value)),
 ///     Err(_) => {
-///         trace!(ctx, span, "while parsing a message");
+///         trace!(span, "while parsing a message");
 ///         Err(DiagnosticEmitted)
 ///     }
 ///  }
@@ -577,9 +593,8 @@ macro_rules! trace {
 /// Example:
 /// ```
 /// # use formally_support::*;
-/// # let ctx = &Context::new();
 /// # let span = Span::default();
-/// internal!(ctx, span, "violated precondition: index out of bounds");
+/// internal!(span, "violated precondition: index out of bounds");
 /// ```
 #[macro_export]
 macro_rules! internal {
@@ -593,10 +608,9 @@ macro_rules! internal {
 /// Example:
 /// ```
 /// # use formally_support::*;
-/// # let ctx = &Context::new();
 /// # let span = Span::default();
 /// # let ident = "";
-/// error!(ctx, span, "unable to parse identifier: {}", ident);
+/// error!(span, "unable to parse identifier: {}", ident);
 /// ```
 #[macro_export]
 macro_rules! error {
@@ -613,10 +627,9 @@ macro_rules! error {
 /// Example:
 /// ```
 /// # use formally_support::*;
-/// # let ctx = &Context::new();
 /// # let span = Span::default();
 /// # let ident = "";
-/// warning!(ctx, span, "misleading identifier: {}", ident);
+/// warning!(span, "misleading identifier: {}", ident);
 /// ```
 #[macro_export]
 macro_rules! warning {
@@ -634,10 +647,9 @@ macro_rules! warning {
 /// Example:
 /// ```
 /// # use formally_support::*;
-/// # let ctx = &Context::new();
 /// # let span = Span::default();
 /// let x = 42;
-/// debug!(ctx, span, "variable x holds: {}", x);
+/// debug!(span, "variable x holds: {}", x);
 /// ```
 #[macro_export]
 macro_rules! debug {

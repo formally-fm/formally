@@ -112,8 +112,7 @@ pub trait Control<'c, Out: 'c>: Parse<'c, Out> {
     ///          }).ok()
     /// }
     ///
-    /// let emitter = StdErrEmitter::new();
-    /// let result = float().parse(&emitter, "1234/4321");
+    /// let result = float().parse("1234/4321");
     ///
     /// assert!(matches!(result, Err(ParseError::Reject)));
     /// ```

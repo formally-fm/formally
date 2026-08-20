@@ -48,19 +48,10 @@ use derive_more::Display;
 ///
 /// It is often controverial to decide whether a [Located] type should compare equal accounting for
 /// its span or not. For this reason, [Loc] intentionally does not implement [PartialEq] nor [Eq].
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
 pub struct Loc<T> {
     pub value: T,
     pub span: Option<Span>,
-}
-
-impl<T: Default> Default for Loc<T> {
-    fn default() -> Self {
-        Self {
-            value: Default::default(),
-            span: Default::default(),
-        }
-    }
 }
 
 impl<T> Loc<T> {
@@ -330,6 +321,11 @@ impl<'a> Identifier<'a> {
         &self.name
     }
 
+    /// Turn the identifier into the inner `Cow<'a, str>`
+    pub fn into_inner(self) -> Cow<'a, str> {
+        self.name
+    }
+
     /// Turn the identifier into its inner string.
     pub fn into_string(self) -> String {
         self.name.into_owned()
@@ -369,5 +365,11 @@ impl From<String> for Identifier<'_> {
 impl<'a> From<&'a str> for Identifier<'a> {
     fn from(name: &'a str) -> Self {
         Identifier::new(name)
+    }
+}
+
+impl<'a> From<Cow<'a, str>> for Identifier<'a> {
+    fn from(name: Cow<'a, str>) -> Self {
+        Identifier { name, span: None }
     }
 }

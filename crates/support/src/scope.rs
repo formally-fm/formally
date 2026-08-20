@@ -239,7 +239,7 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
 /// # fn main() -> Result<()> {
 /// let mut scope = Scope::new();
 /// scope.push();
-/// scope.add("x", term!(and p q));
+/// scope.add("x", Loc::new(42));
 ///
 /// println!("x: {}", scope.lookup(Identifier::from("x")).one()?);
 ///
@@ -251,7 +251,7 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
 ///
 /// Here the [LookupSet::one()] method requires a single result to exist and emits detailed
 /// diagnostics if this is not the case. See its documentation for details.
-/// 
+///
 /// The element type needs to implement [Hash] and [Eq]. These are used to ensure that if the same
 /// element is added twice under the same name, it is treated as a single entry.
 ///

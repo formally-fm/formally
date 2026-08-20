@@ -137,11 +137,11 @@ impl Sort {
     /// # use formally::{smt::*, support::*};
     /// # fn main() -> Result<()> {
     /// let mut solver = Solver::new(&Config::default().logic("ALIA"))?;
-    /// let array = term!(Array Int Int); // construct the term
-    /// let array = array.resolve(&solver.env(), Role::Sort)?; // resolve the names
-    /// let sort = array.type_check(solver.context())?; // type-check the term
+    /// let array = solver.term(term!(Array Int Int)); // construct the term
+    /// let array = solver.env().resolve(&array, Role::Sort, &solver)?; // resolve the names
+    /// let sort = Sort::of(&array)?; // type-check the term
     ///
-    /// assert!(Sort::equal(&sort, &Sort::sort())); // the resulting sort is `Sort::sort()`
+    /// assert_eq!(sort, Sort::sort()); // the resulting sort is `Sort::sort()`
     /// # Ok(())
     /// # }
     /// ```

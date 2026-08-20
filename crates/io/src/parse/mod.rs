@@ -93,13 +93,12 @@
 //! #     ascii_digit().many1().to_string().map(|s| s.parse()).ok()
 //! #         .named("integer number", "integer numbers")
 //! # }
-//! let emitter = StdErrEmitter::new();
 //!
-//! let result = integer().parse(&emitter, "1234");
+//! let result = integer().parse("1234");
 //!
 //! assert!(matches!(result, Ok(1234)));
 //!
-//! let result = integer().parse(&emitter, "hello");
+//! let result = integer().parse("hello");
 //!
 //! assert!(result.is_err());
 //! ```
@@ -176,7 +175,7 @@
 //!         .ignore() // we don't care about the content of the comment
 //! }
 //!
-//! fn tuple_of<'c, T: 'c>(element: Parser<'c, T>) -> Parser<Vec<T>> {
+//! fn tuple_of<'c, T: 'c>(element: Parser<'c, T>) -> Parser<'c, Vec<T>> {
 //!     let to_skip = // we skip...
 //!         whitespace() // ...either a whitespace character...
 //!             .ignore() // (turn `Parser<char>` into `Parser<()>`)
@@ -195,9 +194,7 @@
 //!     4, 5)
 //! ";
 //!
-//! let emitter = StdErrEmitter::new();
-//!
-//! let result = tuple_of(integer()).parse(&emitter, input);
+//! let result = tuple_of(integer()).parse(input);
 //!
 //! assert_eq!(result.unwrap(), vec![1,2,3,4,5])
 //! ```
@@ -445,7 +442,7 @@ impl Iterator for View<'_> {
 ///                 Ok(number)
 ///             }
 ///             Err(err) if split.has_advanced() => {
-///                 error!(&split.emitter, split.elapsed(), "{err}");
+///                 diagnose!(Level::Error, &split.emitter, split.elapsed(), "{err}");
 ///                 split.commit();
 ///                 Err(DiagnosticEmitted.into())
 ///             }
@@ -454,9 +451,7 @@ impl Iterator for View<'_> {
 ///     })
 /// }
 ///
-/// let emitter = StdErrEmitter::new();
-///
-/// let result = integer().parse(&emitter, "1234");
+/// let result = integer().parse("1234");
 ///
 /// assert!(matches!(result, Ok(1234)));
 /// ```
