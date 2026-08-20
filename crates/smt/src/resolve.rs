@@ -49,15 +49,18 @@ impl Env {
         Ok(match term.kind() {
             TermKind::Constant(_) => term.clone(),
             TermKind::Atom(Atom::Bound(atom)) => {
-                pool.term(TermKind::Atom(Atom::Bound(self.resolve_bound(atom, pool)?)))
+                TermKind::Atom(Atom::Bound(self.resolve_bound(atom, pool)?)).to_term_in(pool)
             }
-            TermKind::Atom(Atom::Unbound(unbound)) => pool.term(TermKind::Atom(Atom::Bound(
-                self.resolve_unbound(unbound, role, pool)?,
-            ))),
+            TermKind::Atom(Atom::Unbound(unbound)) => {
+                TermKind::Atom(Atom::Bound(self.resolve_unbound(unbound, role, pool)?))
+                    .to_term_in(pool)
+            }
             TermKind::Quantified(quant) => {
-                pool.term(TermKind::Quantified(self.resolve_quant(quant, role, pool)?))
+                TermKind::Quantified(self.resolve_quant(quant, role, pool)?).to_term_in(pool)
             }
-            TermKind::Let(let_) => pool.term(TermKind::Let(self.resolve_let(let_, role, pool)?)),
+            TermKind::Let(let_) => {
+                TermKind::Let(self.resolve_let(let_, role, pool)?).to_term_in(pool)
+            }
         })
     }
 
@@ -159,8 +162,10 @@ impl Env {
         let mut env = Env::new().with_parent(self.clone());
 
         for bind in &*let_.bindings {
-            env.functions
-                .add(bind.variable.name().name(), Function::from(bind.variable.clone()));
+            env.functions.add(
+                bind.variable.name().name(),
+                Function::from(bind.variable.clone()),
+            );
         }
 
         let body = env.resolve(&let_.body, role, pool)?;

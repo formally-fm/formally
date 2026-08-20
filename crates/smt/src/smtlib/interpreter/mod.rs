@@ -35,7 +35,7 @@ use crate::formally;
 
 use formally::{
     io::print::Print,
-    smt::{self, Config, TermPool as _, smtlib::ast, term},
+    smt::{self, Config, ToTerm, smtlib::ast},
     support::*,
 };
 
@@ -451,12 +451,13 @@ impl Interpreter {
                                 let symbol = Identifier::from(symbol.inner()).over(symbol.span());
                                 let functions = state.solver.functions();
                                 let function = functions.lookup(symbol.clone()).one()?;
-                                let term = state.solver.term(term!(#function));
+                                let term =
+                                    smt::TermKind::from(function.clone()).to_term_in(&state.solver);
                                 let value = model.value(&term);
                                 if let Some(value) = value {
                                     values.push((
                                         ast::Term::from(ast::Symbol::new(function.name()).unwrap()),
-                                        ast::Term::from(state.solver.term(value)),
+                                        ast::Term::from(value.to_term_in(&state.solver)),
                                     ))
                                 } else {
                                     error!(

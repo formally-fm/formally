@@ -70,13 +70,14 @@
 //!
 //! # Overview
 //!
-//! At the core of the [smt][self] crate we have the [Solver] type which provides easy access to a
-//! selected backend (e.g. Z3), and the [Term] type which describes an SMT term that can be asserted
-//! to the [Solver] or used to represent values in a model.
+//! At the core of the [smt][self] crate we have the [Solver] type, which provides easy access to a
+//! selected backend (e.g. Z3 or cvc5), and the [Term] type, which describes an SMT term that can be
+//! asserted to the [Solver] or used to represent values in a model.
 //!
 //! Terms are built on top of [Function] objects which can be either:
 //! 1. [Primitive] entities such as the ones defined by a theory, e.g. [theories::Ints::plus()].
-//! 2. [Variable] entities used in function definitions to represent function parameters.
+//! 2. [Variable] entities used in function definitions to represent function parameters, quantified
+//!    variables, etc.
 //! 3. [Declared] entities, which are the unknowns of the SMT problem, which the solver has to find
 //!    values of.
 //! 2. [Defined] entities, which have a known definition and are mostly just shortcuts to repeat
@@ -97,7 +98,7 @@
 //! The method returns a [Defined] object which uniquely represents the definition.
 //!
 //! [Declared] and [Defined] objects can then be used to build more complex [Term] objects, either
-//! directly or with the [term] macro, which can then be asserted using [Solver::require()].
+//! directly or with the [term!] macro, which can then be asserted using [Solver::require()].
 //!
 //! In the above example we used the [Declaration::integer()] function which is a shortcut to call
 //! [Declaration::constant()] with sort [theories::Ints::Int()]. In turn, [Declaration::constant()]
@@ -108,19 +109,45 @@
 //! ## Building terms
 //!
 //! SMT terms are represented by the [Term] type, which is a shared reference to a [TermKind] enum.
-//! The latter is a simple enum which is either a constant (such as `42` or `3.14`) or an atom that
-//! applies a [Function] to some arguments. Usually, interfaces to SMT solvers provide many types
-//! and functions to create all the different kind of terms supported by the solvers (boolean
-//! connectives, arithmetic functions, and so on). Instead, [formally::smt] takes a different
-//! approach. Terms are just applications of functions to arguments, and the functions are objects
-//! provided by the different theories to represent what the theory supports.
+//! The latter is a simple enum which is either a constant (such as `42` or `3.14`), an atom that
+//! applies a [Function] to some arguments, a quantified formula, a `let` expression, and so on...
+//! Usually, interfaces to SMT solvers provide many types and functions to create all the different
+//! kind of terms supported by the solvers (boolean connectives, arithmetic functions, and so on).
+//! Instead, [formally::smt] takes a different approach. Terms are just applications of functions to
+//! arguments, and the functions are objects provided by the different theories to represent what
+//! the theory supports.
 //!
-//! Theories do not need to be declared upfront by this crate, but can be declared at any time using
-//! the [theory] macro. This design provides maximum flexibility for each backend to support any
-//! available theory without being limited to only the theories this crate knows about in advance.
-//! See the [theories] module for more details on theories.
+//! The most straightforward way of building a term is the [term!] macro, which
+//! directly accepts a convenient subset of the SMT-LIBv2 syntax for terms. The macro constructs a
+//! temporary object which implements the [ToTerm] trait, which is also implemented by many other
+//! types (including e.g., [Declared] and [Defined]), so the [term!] macro can be used as argument
+//! to any method that accepts a [ToTerm] instance, such as the [Solver::require()] method used in
+//! the above example.
 //!
-//! Despite this flexibility, building terms is straightforward thanks to the [term] macro, which
+//! [Term] objects are obtained by uniquing a [TermKind] inside an instance of the
+//! [TermPool] trait. As in most other SMT interfaces, uniquing terms (also called "hash-consing")
+//! ensures that comparisons and hashing is cheap and common subterms are shared. [Solver]
+//! implements [TermPool], so its [Solver::term()] method can be used to turn into a [Term] any
+//! instance of [ToTerm] (including invocations of the [term!] macro).
+//!
+//! [Solver], in turn, does not handle terms itself, but uses an instance of [TermManager]. The
+//! latter is a type with the purpose of handling terms and their corresponding handles in the
+//! currently selected SMT backend. A [TermManager] instance can be shared between multiple
+//! [Solver]s created with the [Solver::new_with_manager()] constructor. The terms obtained through
+//! the same [TermManager] can be freely used in different solvers and are converted to the
+//! underlying SMT backend handles only once.
+//!
+//! Under the hood they use the [HashPool] type which is based on a
+//! common hash table. For concurrent uses, [DashPool] is also provided, which is based on
+//! [dashmap::DashSet].
+//!
+//! Theories do not need to be declared upfront by this crate, but can be declared at any time, by
+//! solver backends or by client code, using the [theories!] macro. This design provides maximum
+//! flexibility for each backend to support any available theory without being limited to only the
+//! theories this crate knows about in advance. See the [mod@theories] module for more details on
+//! theories.
+//!
+//! Despite this flexibility, building terms is straightforward thanks to the [term!] macro, which
 //! directly accepts a convenient subset of the SMT-LIBv2 syntax for terms. Inside terms, the macro
 //! supports both specifying arbitrary names which will be looked-up by the [Solver] later, or
 //! expanding previously declared  [Term] objects.

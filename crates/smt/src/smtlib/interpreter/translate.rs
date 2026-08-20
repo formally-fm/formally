@@ -25,7 +25,7 @@
 use crate::formally;
 use formally::{
     smt::{
-        self, TermPool as _,
+        self, ToTerm,
         smtlib::{ast, interpreter::Interpreter},
         term,
     },
@@ -39,7 +39,7 @@ impl Interpreter {
         match sort {
             ast::Sort::Simple(ast::Identifier::Symbol(name)) => {
                 let head = Identifier::from(name.inner()).over(name.span());
-                solver.term(term!(#head))
+                term!(#head).to_term_in(solver)
             }
             ast::Sort::Application(ast::SortApplication {
                 head: ast::Identifier::Symbol(head),
@@ -53,7 +53,7 @@ impl Interpreter {
                     .iter()
                     .map(|s| Interpreter::sort_to_smt_term(s, solver));
 
-                solver.term(term!(#head #(#args)*).over(span.clone()))
+                term!(#head #(#args)*).over(span.clone()).to_term_in(solver)
             }
             _ => todo!(),
         }
@@ -77,7 +77,7 @@ impl Interpreter {
         }
         .over(span);
 
-        solver.term(term!(#cnst))
+        term!(#cnst).to_term_in(solver)
     }
 
     fn app_to_smt(
@@ -98,14 +98,15 @@ impl Interpreter {
 
                 let syspan = symbol.span();
                 let head = Identifier::from(symbol.into_inner()).over(syspan);
-                Ok(solver.term(
-                    smt::TermKind::Atom(smt::Atom::Unbound(smt::UnboundAtom {
-                        head,
-                        arguments: Arc::from(smtargs.into_boxed_slice()),
-                        span: idspan,
-                    }))
-                    .over(span),
-                ))
+                let term = smt::TermKind::Atom(smt::Atom::Unbound(smt::UnboundAtom {
+                    head,
+                    arguments: Arc::from(smtargs.into_boxed_slice()),
+                    span: idspan,
+                }))
+                .over(span)
+                .to_term_in(solver);
+
+                Ok(term)
             }
             _ => todo!(),
         }
@@ -127,12 +128,14 @@ impl Interpreter {
                     bindings.push(Interpreter::binding_to_binding(solver, bind)?)
                 }
                 let body = Interpreter::term_to_smt(solver, *let_.body)?;
-
-                Ok(solver.term(smt::TermKind::Let(smt::Let {
+                let term = smt::TermKind::Let(smt::Let {
                     bindings: Arc::from(bindings.into_boxed_slice()),
                     body,
                     span: let_.span.clone(),
-                })))
+                })
+                .to_term_in(solver);
+
+                Ok(term)
             }
             ast::Term::Lambda(_) => todo!(),
             ast::Term::Exists(exists) => {
@@ -141,13 +144,15 @@ impl Interpreter {
                     variables.push(Interpreter::sorted_var_to_variable(solver, var)?)
                 }
                 let body = Interpreter::term_to_smt(solver, *exists.body)?;
-
-                Ok(solver.term(smt::TermKind::Quantified(smt::Quantified {
+                let term = smt::TermKind::Quantified(smt::Quantified {
                     quantifier: smt::Quantifier::Exists,
                     variables: Arc::from(variables.into_boxed_slice()),
                     body,
                     span: exists.span.clone(),
-                })))
+                })
+                .to_term_in(solver);
+
+                Ok(term)
             }
             ast::Term::Forall(forall) => {
                 let mut variables = Vec::new();
@@ -155,13 +160,15 @@ impl Interpreter {
                     variables.push(Interpreter::sorted_var_to_variable(solver, var)?)
                 }
                 let body = Interpreter::term_to_smt(solver, *forall.body)?;
-
-                Ok(solver.term(smt::TermKind::Quantified(smt::Quantified {
+                let term = smt::TermKind::Quantified(smt::Quantified {
                     quantifier: smt::Quantifier::Forall,
                     variables: Arc::from(variables.into_boxed_slice()),
                     body,
                     span: forall.span.clone(),
-                })))
+                })
+                .to_term_in(solver);
+
+                Ok(term)
             }
             ast::Term::Match(_) => todo!(),
             ast::Term::Attributed(_) => todo!(),

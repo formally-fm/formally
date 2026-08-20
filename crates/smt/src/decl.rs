@@ -465,6 +465,16 @@ impl<T: ToTerm> Definition<T> {
     pub fn real<'a>(name: impl Into<Identifier<'a>>, value: T) -> Definition<T> {
         Definition::constant(name, theories::Reals::Real(), value)
     }
+
+    pub fn map<U: ToTerm>(self, f: impl FnOnce(T) -> U) -> Definition<U> {
+        Definition {
+            name: self.name,
+            domain: self.domain,
+            range: self.range,
+            body: f(self.body),
+            span: self.span,
+        }
+    }
 }
 
 /// Represent a specific function (or constant, or sort) defined in a [Solver].

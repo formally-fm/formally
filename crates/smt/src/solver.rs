@@ -151,8 +151,8 @@ impl Env {
 
 #[derive(Clone)]
 pub struct TermManager {
-    manager: Rc<dyn backend::Manager>,
-    pool: Rc<HashPool>,
+    backend_manager: Rc<dyn backend::Manager>,
+    pool: Rc<dyn TermPool>,
 }
 
 impl Debug for TermManager {
@@ -160,7 +160,7 @@ impl Debug for TermManager {
         write!(
             f,
             "TermManager {{ backend: {} }}",
-            self.manager.backend().name()
+            self.backend_manager.backend().name()
         )
     }
 }
@@ -180,24 +180,17 @@ impl TermPool for TermManager {
 impl TermManager {
     pub fn new(backend: impl Backend) -> TermManager {
         TermManager {
-            manager: Rc::from(backend.manager()),
-            pool: Rc::default(),
+            backend_manager: Rc::from(backend.manager()),
+            pool: Rc::new(HashPool::new()),
         }
     }
-
-    pub fn term(&self, term: impl ToTerm) -> Term {
-        self.pool.term(term)
-    }
-
-    pub fn definition<T: ToTerm>(&self, def: Definition<T>) -> Definition<Term> {
-        Definition {
-            name: def.name,
-            domain: def.domain,
-            range: def.range,
-            body: self.term(def.body),
-            span: def.span,
+    
+    pub fn new_with_pool(backend: impl Backend, pool: Rc<dyn TermPool>) -> TermManager {
+        TermManager {
+            backend_manager: Rc::from(backend.manager()),
+            pool,
         }
-    }
+    } 
 }
 
 /// Main interface to SMT solvers.
@@ -219,7 +212,7 @@ impl TermManager {
 ///
 /// [Solver] implements [Stack] to provide the usual incremental interface of most SAT/SMT solvers.
 pub struct Solver {
-    backend: Box<dyn backend::Solver>,
+    backend_solver: Box<dyn backend::Solver>,
     env: Env,
     manager: Rc<TermManager>,
 }
@@ -230,13 +223,13 @@ impl Solver {
         manager: impl Into<Rc<TermManager>>,
     ) -> Result<Solver> {
         let manager = manager.into();
-        let backend = manager
-            .manager
+        let backend_solver = manager
+            .backend_manager
             .backend()
-            .solver(config, manager.manager.clone())?;
+            .solver(config, manager.backend_manager.clone())?;
         Ok(Solver {
-            env: Env::new().with_parent(backend.logic().theory().env()),
-            backend,
+            env: Env::new().with_parent(backend_solver.logic().theory().env()),
+            backend_solver,
             manager,
         })
     }
@@ -251,11 +244,11 @@ impl Solver {
 
     /// Get the currently selected [Logic].
     pub fn logic(&self) -> &dyn Logic {
-        self.backend.logic()
+        self.backend_solver.logic()
     }
 
     pub fn config(&self, config: &Config) -> Result<()> {
-        Ok(self.backend.config(config)?)
+        Ok(self.backend_solver.config(config)?)
     }
 
     /// Get the [Env] object holding the current scopes for functions and sorts declared and defined
@@ -292,14 +285,16 @@ impl Solver {
     pub fn declare(&mut self, decl: Declaration) -> Result<Declared> {
         decl.type_check()?;
         let decl = Declared::new(decl);
-        self.backend.logic().check_function(&decl.clone().into())?;
+        self.backend_solver
+            .logic()
+            .check_function(&decl.clone().into())?;
 
         if decl.range == Sort::sort() {
             self.env.sorts.add(&decl.name, decl.clone().into());
         } else {
             self.env.functions.add(&decl.name, decl.clone().into());
         }
-        self.backend.declare(decl.clone())?;
+        self.backend_solver.declare(decl.clone())?;
 
         Ok(decl)
     }
@@ -316,7 +311,7 @@ impl Solver {
     /// the special sort [Sort::sort()]. See also [Definition::function()],
     /// [Definition::constant()], and [Definition::sort()] for details.
     pub fn define<T: ToTerm>(&mut self, def: Definition<T>) -> Result<Defined> {
-        let mut def = self.manager.definition(def);
+        let mut def = def.map(|body| body.to_term_in(self));
 
         let mut nested = Env::new().with_parent(self.env());
         for var in &def.domain {
@@ -330,14 +325,16 @@ impl Solver {
         def.body.type_check()?;
 
         let def = Defined::new(def);
-        self.backend.logic().check_function(&def.clone().into())?;
+        self.backend_solver
+            .logic()
+            .check_function(&def.clone().into())?;
 
         if def.range == Sort::sort() {
             self.env.sorts.add(&def.name, def.clone().into());
         } else {
             self.env.functions.add(&def.name, def.clone().into());
         }
-        self.backend.define(def.clone())?;
+        self.backend_solver.define(def.clone())?;
 
         Ok(def)
     }
@@ -347,8 +344,8 @@ impl Solver {
     /// The term undergoes [name resolution](Term::resolve()) and must be well-typed and be of
     /// sort [Core::Bool()](theories::Core::Bool()).
     pub fn require<T: ToTerm>(&mut self, term: T) -> Result<()> {
-        let term = self.resolve(&self.manager.term(term), Role::Function)?;
-        self.backend.logic().check_term(&term)?;
+        let term = self.resolve(&term.to_term_in(&*self.manager), Role::Function)?;
+        self.backend_solver.logic().check_term(&term)?;
         let sort = Sort::of(&term)?;
 
         if sort != theories::Core::Bool() {
@@ -357,7 +354,7 @@ impl Solver {
             return Err(DiagnosticEmitted);
         }
 
-        self.backend.require(&term)?;
+        self.backend_solver.require(&term)?;
 
         Ok(())
     }
@@ -368,7 +365,7 @@ impl Solver {
     /// and the case where no error occurred but the solver gave up on finding an answer
     /// (`Ok(Answer::Unknown)`).
     pub fn check(&mut self) -> Result<Answer> {
-        match self.backend.check()? {
+        match self.backend_solver.check()? {
             Some(true) => Ok(Answer::Yes),
             Some(false) => Ok(Answer::No),
             None => Ok(Answer::Unknown),
@@ -386,7 +383,7 @@ impl Solver {
     /// Note that the representation of model values is still incomplete and only Boolean and
     /// numerical values can be currently extracted.
     pub fn model(&self) -> Result<Option<Model<'_>>> {
-        match self.backend.model()? {
+        match self.backend_solver.model()? {
             Some(provider) => Ok(Some(Model {
                 solver: self,
                 provider,
@@ -408,7 +405,7 @@ impl Stack for Solver {
     /// The assertion stack includes asserted terms and declared/defined entities.
     /// Currently, the `:global-declarations` option of SMT-LIBv2 is not supported.
     fn push(&mut self) -> Result<()> {
-        Ok(self.backend.push()?)
+        Ok(self.backend_solver.push()?)
     }
 
     /// Pops a frame from the assertions stack, doing nothing if there is no frame to remove.
@@ -416,7 +413,7 @@ impl Stack for Solver {
     /// The assertion stack includes asserted terms and declared/defined entities.
     /// Currently, the `:global-declarations` option of SMT-LIBv2 is not supported.
     fn pop_n(&mut self, n: usize) -> Result<()> {
-        Ok(self.backend.pop_n(n)?)
+        Ok(self.backend_solver.pop_n(n)?)
     }
 }
 
@@ -474,6 +471,6 @@ pub struct Model<'s> {
 
 impl Model<'_> {
     pub fn value(&self, term: impl ToTerm) -> Option<ModelValue> {
-        self.provider.value(&self.solver.term(term))
+        self.provider.value(&term.to_term_in(self.solver))
     }
 }

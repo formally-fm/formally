@@ -35,12 +35,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub trait TermPool: Sized {
+pub trait TermPool {
     fn shared(&self, kind: TermKind) -> Term;
-
-    fn term(&self, term: impl ToTerm) -> Term {
-        term.to_term(self)
-    }
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -109,62 +105,63 @@ impl TermPool for HashPool {
 }
 
 pub trait ToTerm {
-    fn to_term<P: TermPool>(self, pool: &P) -> Term;
+    fn to_term_in(self, pool: &dyn TermPool) -> Term;
 }
 
 impl ToTerm for Term {
-    fn to_term<P: TermPool>(self, _pool: &P) -> Term {
+    fn to_term_in(self, _pool: &dyn TermPool) -> Term {
         self
     }
 }
 
 impl ToTerm for &Term {
-    fn to_term<P: TermPool>(self, _pool: &P) -> Term {
+    fn to_term_in(self, _pool: &dyn TermPool) -> Term {
         self.clone()
     }
 }
 
 impl<T: Into<TermKind>> ToTerm for T {
-    fn to_term<P: TermPool>(self, pool: &P) -> Term {
+    fn to_term_in(self, pool: &dyn TermPool) -> Term {
         pool.shared(self.into())
     }
 }
 
 impl ToTerm for &Sort {
-    fn to_term<P: TermPool>(self, pool: &P) -> Term {
-        self.clone().to_term(pool)
+    fn to_term_in(self, pool: &dyn TermPool) -> Term {
+        self.clone().to_term_in(pool)
     }
 }
 
 impl ToTerm for Sort {
-    fn to_term<P: TermPool>(self, pool: &P) -> Term {
+    fn to_term_in(self, pool: &dyn TermPool) -> Term {
         let arguments = self
             .arguments
             .into_iter()
             .map(|arg| match arg {
-                SortArgument::Value(c) => pool.term(TermKind::Constant(c)),
-                SortArgument::Sort(s) => pool.term(s),
+                SortArgument::Value(c) => TermKind::Constant(c).to_term_in(pool),
+                SortArgument::Sort(s) => s.to_term_in(pool),
             })
             .collect();
-        pool.term(TermKind::Atom(Atom::Bound(BoundAtom {
+        TermKind::Atom(Atom::Bound(BoundAtom {
             head: Reference {
                 function: self.head,
                 span: None,
             },
             arguments,
             span: None,
-        })))
+        }))
+        .to_term_in(pool)
     }
 }
 
 impl ToTerm for &support::Term<'_> {
-    fn to_term<P: TermPool>(self, pool: &P) -> Term {
-        self.clone().to_term(pool)
+    fn to_term_in(self, pool: &dyn TermPool) -> Term {
+        self.clone().to_term_in(pool)
     }
 }
 
 impl ToTerm for support::Term<'_> {
-    fn to_term<P: TermPool>(self, pool: &P) -> Term {
+    fn to_term_in(self, pool: &dyn TermPool) -> Term {
         match self {
             support::Term::Term(t) => t.clone(),
             support::Term::TermKind(k) => pool.shared(k.clone()),
@@ -179,32 +176,34 @@ impl ToTerm for support::Term<'_> {
                         span,
                     },
                 };
-                pool.term(TermKind::Constant(c))
+                TermKind::Constant(c).to_term_in(pool)
             }
             support::Term::Atom(a) => {
                 let mut arguments = Vec::new();
                 for arg in a.arguments {
                     match arg {
-                        support::TermArgument::Term(t) => arguments.push(pool.term(t)),
+                        support::TermArgument::Term(t) => arguments.push(t.to_term_in(pool)),
                         support::TermArgument::Seq(seq) => {
-                            arguments.extend(seq.iter().map(|arg| pool.term(arg)))
+                            arguments.extend(seq.iter().map(|arg| arg.to_term_in(pool)))
                         }
                     }
                 }
                 match a.head {
                     support::AtomHead::Bound(support::BoundHead { function }) => {
-                        pool.term(TermKind::Atom(Atom::Bound(BoundAtom {
+                        TermKind::Atom(Atom::Bound(BoundAtom {
                             head: Reference::from(function),
                             arguments: Arc::from(arguments.into_boxed_slice()),
                             span: a.span,
-                        })))
+                        }))
+                        .to_term_in(pool)
                     }
                     support::AtomHead::Unbound(support::UnboundHead { name }) => {
-                        pool.term(TermKind::Atom(Atom::Unbound(UnboundAtom {
+                        TermKind::Atom(Atom::Unbound(UnboundAtom {
                             head: Identifier::from(name.clone()),
                             arguments: Arc::from(arguments.into_boxed_slice()),
                             span: a.span,
-                        })))
+                        }))
+                        .to_term_in(pool)
                     }
                 }
             }
