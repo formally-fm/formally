@@ -143,7 +143,7 @@ impl ToTokens for Root {
                 #atomenum::#name(atom) => atom.into()
             });
             atom_try_from.push(quote! {
-                match <<#theory as formally::smt::theories::TheoryEx>::Atom<'t> as TryFrom<&'t formally::smt::BoundAtom>>::try_from(atom) {
+                match <<#theory as formally::smt::theories::TheoryEx>::Atom<'t> as TryFrom<&'t formally::smt::Atom>>::try_from(atom) {
                     Ok(atom) => return Ok(#atomenum::#name(atom)),
                     Err(_) => {},
                 }
@@ -219,18 +219,18 @@ impl ToTokens for Root {
                 #(#atom_cases),*
             }
 
-            impl<'t> Into<formally::smt::BoundAtom> for #atomenum<'t> {
-                fn into(self) -> formally::smt::BoundAtom {
+            impl<'t> Into<formally::smt::Atom> for #atomenum<'t> {
+                fn into(self) -> formally::smt::Atom {
                     match self {
                         #(#atom_into),*
                     }
                 }
             }
 
-            impl<'t> TryFrom<&'t formally::smt::BoundAtom> for #atomenum<'t> {
-                type Error = &'t formally::smt::BoundAtom;
+            impl<'t> TryFrom<&'t formally::smt::Atom> for #atomenum<'t> {
+                type Error = &'t formally::smt::Atom;
 
-                fn try_from(atom: &'t formally::smt::BoundAtom) -> Result<Self, Self::Error> {
+                fn try_from(atom: &'t formally::smt::Atom) -> Result<Self, Self::Error> {
                     #(#atom_try_from)*
 
                     return Err(atom)

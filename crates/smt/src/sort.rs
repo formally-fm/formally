@@ -152,16 +152,18 @@ impl Sort {
             return Err(DiagnosticEmitted);
         }
 
-        let TermKind::Atom(Atom::Bound(BoundAtom {
-            head, arguments, ..
-        })) = term.kind()
+        let TermKind::Atom(Atom {
+            head: AtomHead::Bound(BoundHead { function, .. }),
+            arguments,
+            ..
+        }) = term.kind()
         else {
             internal!(term.span(), "sort term does not evaluate to a sort");
             return Err(DiagnosticEmitted);
         };
 
         let mut evaluated = Vec::new();
-        for (sort, arg) in zip(head.function.domain(), &**arguments) {
+        for (sort, arg) in zip(function.domain(), &**arguments) {
             if sort == Sort::sort() {
                 evaluated.push(SortArgument::Sort(Sort::evaluate(arg)?))
             } else {
@@ -176,7 +178,7 @@ impl Sort {
         }
 
         Ok(Sort {
-            head: head.function.clone(),
+            head: function.clone(),
             arguments: evaluated,
         })
     }

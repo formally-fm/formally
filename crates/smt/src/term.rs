@@ -29,7 +29,9 @@ use derive_more::From;
 use transitive::Transitive;
 
 pub use rug::{Integer, Rational};
+use std::fmt::Formatter;
 use std::{
+    fmt::Display,
     hash::{Hash, Hasher},
     sync::{Arc, Mutex},
 };
@@ -70,27 +72,6 @@ impl From<Rational> for Constant {
     }
 }
 
-/// A [Function] associated with a source [Span].
-///
-/// [Reference] just wraps a [Function] together with a [Span] to keep track of there the mention
-/// of the function appeared in an original source code. After [name resolution], this span
-/// corresponds with the span of the [Identifier] that was replaced with this [Reference].
-#[allow(clippy::duplicated_attributes)]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
-pub struct Reference {
-    pub function: Function,
-    pub span: Option<Span>,
-}
-
-impl<T: Into<Function>> From<T> for Reference {
-    fn from(value: T) -> Self {
-        Reference {
-            function: value.into(),
-            span: None,
-        }
-    }
-}
-
 /// A *bound* atom.
 ///
 /// A bound atom represents an expression of the form `(f arg1 arg2 ...)` where `f` is already given
@@ -102,24 +83,27 @@ impl<T: Into<Function>> From<T> for Reference {
 /// [Solver::require()] already perform name resolution and type checking appropriately.
 ///
 /// Terms can usually better be constructed with the [term] macro, which can build both bound and
-/// [unbound](UnboundAtom) atoms.
+/// [unbound](UnboundHead) atoms.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
-pub struct BoundAtom {
+pub struct BoundHead {
     /// the function that is being applied.
-    pub head: Reference,
-    /// the atom's argument terms.
-    pub arguments: Arc<[Term]>,
+    pub function: Function,
     /// the atom's source span.
     pub span: Option<Span>,
 }
 
-impl<T: Into<Reference>> From<T> for BoundAtom {
-    fn from(value: T) -> Self {
-        BoundAtom {
-            head: value.into(),
-            arguments: Arc::default(),
+impl From<Function> for BoundHead {
+    fn from(function: Function) -> Self {
+        BoundHead {
+            function,
             span: None,
         }
+    }
+}
+
+impl Display for BoundHead {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.function.name())
     }
 }
 
@@ -134,36 +118,84 @@ impl<T: Into<Reference>> From<T> for BoundAtom {
 /// not usually be a concern because [Solver::declare()], [Solver::define()], and
 /// [Solver::require()] already perform name resolution and type checking appropriately.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
-pub struct UnboundAtom {
+pub struct UnboundHead {
     /// the name of the function that is being applied.
     pub head: Identifier<'static>,
-    /// the atom's argument terms.
-    pub arguments: Arc<[Term]>,
     /// the atom's source span.
     pub span: Option<Span>,
 }
 
-impl<'a, T: Into<Identifier<'a>>> From<T> for UnboundAtom {
+impl<'a, T: Into<Identifier<'a>>> From<T> for UnboundHead {
     fn from(value: T) -> Self {
-        UnboundAtom {
-            head: value.into().into_owned(),
-            arguments: Arc::default(),
-            span: None,
+        let ident = value.into();
+        UnboundHead {
+            span: ident.span(),
+            head: ident.into_owned(),
         }
+    }
+}
+
+impl Display for UnboundHead {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.head)
     }
 }
 
 /// An atom term.
 ///
-/// Atoms can be [bound](BoundAtom) or [unbound](UnboundAtom).
+/// Atoms can be [bound](BoundHead) or [unbound](UnboundHead).
 /// 1. bound atoms refer to a specific [Function] object and therefore can be type checked directly.
 /// 2. unbound atoms contain only an [Identifier] in place of the applied function, so [name
 ///    resolution](Term::resolve) has to be performed on an unbound term before it can be type
 ///    checked.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, From, Located, Locatable)]
-pub enum Atom {
-    Bound(BoundAtom),
-    Unbound(UnboundAtom),
+#[derive(Debug, Clone, Hash, PartialEq, Eq, From, Located, Locatable, Transitive)]
+#[allow(clippy::duplicated_attributes)]
+#[transitive(from(Identifier<'static>, UnboundHead))]
+#[transitive(from(Function, BoundHead))]
+#[transitive(from(Variable, Function))]
+#[transitive(from(Primitive, Function))]
+#[transitive(from(UserFunction, Function))]
+#[transitive(from(Declared, UserFunction))]
+#[transitive(from(Defined, UserFunction))]
+pub enum AtomHead {
+    Bound(BoundHead),
+    Unbound(UnboundHead),
+}
+
+impl Display for AtomHead {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AtomHead::Bound(bound) => bound.fmt(f),
+            AtomHead::Unbound(unbound) => unbound.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable, Transitive)]
+#[allow(clippy::duplicated_attributes)]
+#[transitive(from(UnboundHead, AtomHead))]
+#[transitive(from(Identifier<'_>, UnboundHead))]
+#[transitive(from(BoundHead, AtomHead))]
+#[transitive(from(Function, BoundHead))]
+#[transitive(from(Variable, Function))]
+#[transitive(from(Primitive, Function))]
+#[transitive(from(UserFunction, Function))]
+#[transitive(from(Declared, UserFunction))]
+#[transitive(from(Defined, UserFunction))]
+pub struct Atom {
+    pub head: AtomHead,
+    pub arguments: Arc<[Term]>,
+    pub span: Option<Span>,
+}
+
+impl From<AtomHead> for Atom {
+    fn from(head: AtomHead) -> Self {
+        Atom {
+            head,
+            arguments: Arc::default(),
+            span: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -211,23 +243,25 @@ pub struct Let {
 /// (currently only integer and rational numbers), and one for atoms. Variants will be added when
 /// supporting further syntactic elements of SMT-LIBv2 such as *let bindings*, *quantifiers* and
 /// *match expressions*.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, From, Located, Locatable, Transitive)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, From, Located, Locatable)]
 #[allow(clippy::duplicated_attributes)]
-#[transitive(from(Identifier<'_>, Atom))]
-#[transitive(from(Function, Atom))]
-#[transitive(from(Primitive, Function))]
-#[transitive(from(Declared, Atom))]
-#[transitive(from(Defined, Atom))]
 #[non_exhaustive]
 pub enum TermKind {
     /// A constant.
     Constant(Constant),
     /// An atom.
+    #[from(skip)]
     Atom(Atom),
     /// A quantified formula
     Quantified(Quantified),
     /// A `let` expression
     Let(Let),
+}
+
+impl<T: Into<Atom>> From<T> for TermKind {
+    fn from(atom: T) -> Self {
+        TermKind::Atom(atom.into())
+    }
 }
 
 /// An SMT term.
@@ -240,7 +274,6 @@ pub enum TermKind {
 ///
 /// Important operations on terms include *type checking* ([Term::type_check()] and equivalently
 /// [Sort::of()]), and *name resolution* ([Term::resolve()]).
-///
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Term(pub(crate) Nominal<Arc<TermInner>>);
 
@@ -277,18 +310,6 @@ impl From<bool> for TermKind {
         } else {
             TermKind::from(theories::Core::False())
         }
-    }
-}
-
-impl<T: Into<Reference>> From<T> for Atom {
-    fn from(value: T) -> Self {
-        Atom::Bound(BoundAtom::from(value))
-    }
-}
-
-impl From<Identifier<'_>> for Atom {
-    fn from(id: Identifier) -> Self {
-        Atom::Unbound(UnboundAtom::from(id))
     }
 }
 

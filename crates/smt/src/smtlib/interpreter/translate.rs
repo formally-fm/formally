@@ -100,11 +100,11 @@ impl Interpreter {
 
                 let syspan = symbol.span();
                 let head = Identifier::from(symbol.into_inner()).over(syspan);
-                let term = smt::TermKind::Atom(smt::Atom::Unbound(smt::UnboundAtom {
-                    head,
+                let term = smt::TermKind::Atom(smt::Atom {
+                    head: smt::AtomHead::Unbound(smt::UnboundHead::from(head)),
                     arguments: Arc::from(smtargs.into_boxed_slice()),
                     span: idspan,
-                }))
+                })
                 .over(span)
                 .into_term_in(solver);
 

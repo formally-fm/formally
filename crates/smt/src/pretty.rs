@@ -74,13 +74,11 @@ impl From<Term> for ast::Term {
         match term.kind() {
             TermKind::Constant(cnst) => ast::Term::Constant(ast::Constant::from(cnst.clone())),
             TermKind::Atom(atom) => {
-                let (id, arguments) = match atom {
-                    Atom::Bound(BoundAtom {
-                        head, arguments, ..
-                    }) => (head.function.name().clone(), arguments),
-                    Atom::Unbound(UnboundAtom {
-                        head, arguments, ..
-                    }) => (head.clone(), arguments),
+                let (id, arguments) = match &atom.head {
+                    AtomHead::Bound(BoundHead { function, .. }) => {
+                        (function.name().clone(), &*atom.arguments)
+                    }
+                    AtomHead::Unbound(UnboundHead { head, .. }) => (head.clone(), &*atom.arguments),
                 };
 
                 ast::Term::Application(ast::Application {

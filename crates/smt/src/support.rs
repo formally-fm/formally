@@ -144,19 +144,19 @@ impl ToTerm for support::Term<'_> {
                 }
                 match a.head {
                     AtomHead::Bound(BoundHead { function }) => {
-                        TermKind::Atom(smt::Atom::Bound(BoundAtom {
-                            head: Reference::from(function),
+                        TermKind::Atom(smt::Atom {
+                            head: smt::AtomHead::from(function),
                             arguments: Arc::from(arguments.into_boxed_slice()),
                             span: a.span,
-                        }))
+                        })
                         .into_term_in(pool)
                     }
                     AtomHead::Unbound(UnboundHead { name }) => {
-                        TermKind::Atom(smt::Atom::Unbound(UnboundAtom {
-                            head: Identifier::from(name.clone()),
+                        TermKind::Atom(smt::Atom {
+                            head: smt::AtomHead::from(Identifier::from(name.clone())),
                             arguments: Arc::from(arguments.into_boxed_slice()),
                             span: a.span,
-                        }))
+                        })
                         .into_term_in(pool)
                     }
                 }

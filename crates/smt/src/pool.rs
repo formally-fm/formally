@@ -191,13 +191,23 @@ impl ToTerm for Atom {
     }
 }
 
-impl ToTerm for BoundAtom {
+impl ToTerm for AtomHead {
     fn into_term_in(self, pool: &dyn TermPool) -> Term {
-        TermKind::Atom(Atom::Bound(self)).into_term_in(pool)
+        TermKind::Atom(Atom::from(self)).into_term_in(pool)
     }
 
     fn to_term_in(&self, pool: &dyn TermPool) -> Term {
-        TermKind::Atom(Atom::Bound(self.clone())).into_term_in(pool)
+        TermKind::Atom(Atom::from(self.clone())).into_term_in(pool)
+    }
+}
+
+impl ToTerm for BoundHead {
+    fn into_term_in(self, pool: &dyn TermPool) -> Term {
+        TermKind::Atom(Atom::from(self)).into_term_in(pool)
+    }
+
+    fn to_term_in(&self, pool: &dyn TermPool) -> Term {
+        TermKind::Atom(Atom::from(self.clone())).into_term_in(pool)
     }
 }
 
@@ -261,13 +271,13 @@ impl ToTerm for Defined {
     }
 }
 
-impl ToTerm for UnboundAtom {
+impl ToTerm for UnboundHead {
     fn into_term_in(self, pool: &dyn TermPool) -> Term {
-        TermKind::Atom(Atom::Unbound(self)).into_term_in(pool)
+        TermKind::Atom(Atom::from(self)).into_term_in(pool)
     }
 
     fn to_term_in(&self, pool: &dyn TermPool) -> Term {
-        TermKind::Atom(Atom::Unbound(self.clone())).into_term_in(pool)
+        TermKind::Atom(Atom::from(self.clone())).into_term_in(pool)
     }
 }
 
@@ -311,14 +321,11 @@ impl ToTerm for Sort {
                 SortArgument::Sort(s) => s.into_term_in(pool),
             })
             .collect();
-        TermKind::Atom(Atom::Bound(BoundAtom {
-            head: Reference {
-                function: self.head,
-                span: None,
-            },
+        TermKind::Atom(Atom {
+            head: AtomHead::Bound(BoundHead { function: self.head, span: None }),
             arguments,
             span: None,
-        }))
+        })
         .into_term_in(pool)
     }
 

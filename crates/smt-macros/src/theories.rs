@@ -592,7 +592,7 @@ impl ToTokens for Attributed<Theory> {
             atom_cases.push(quote!(#cap));
 
             atom_into.push(quote! {
-                #atomenum::#cap => formally::smt::BoundAtom {
+                #atomenum::#cap => formally::smt::Atom {
                     head: #module::#ident.clone().into(),
                     arguments: std::sync::Arc::default(),
                     span: Some(formally::support::Span::Builtin)
@@ -600,7 +600,9 @@ impl ToTokens for Attributed<Theory> {
             });
 
             atom_try_from.push(quote! {
-                else if atom.head.function == #module::#ident.clone().into() {
+                else if let AtomHead::Bound(BoundHead { function, .. }) = &atom.head
+                    && *function == #module::#ident.clone().into()
+                {
                     Ok(#atomenum::#cap)
                 }
             })
@@ -612,7 +614,7 @@ impl ToTokens for Attributed<Theory> {
             if get_flag_from_attrs(&func.attrs).is_some() {
                 atom_cases.push(quote!(#cap(&'t [formally::smt::Term])));
                 atom_into.push(quote! {
-                    #atomenum::#cap(arguments) => formally::smt::BoundAtom {
+                    #atomenum::#cap(arguments) => formally::smt::Atom {
                         head: #module::#ident.clone().into(),
                         arguments: std::sync::Arc::from(arguments.to_vec().into_boxed_slice()),
                         span: Some(formally::support::Span::Builtin)
@@ -620,7 +622,9 @@ impl ToTokens for Attributed<Theory> {
                 });
 
                 atom_try_from.push(quote! {
-                    else if atom.head.function == #module::#ident.clone().into() {
+                    else if let AtomHead::Bound(BoundHead { function, .. }) = &atom.head
+                        && *function == #module::#ident.clone().into()
+                    {
                         Ok(#atomenum::#cap(&*atom.arguments))
                     }
                 })
@@ -636,7 +640,7 @@ impl ToTokens for Attributed<Theory> {
                 atom_cases.push(quote!(#cap(#(#args),*)));
 
                 atom_into.push(quote! {
-                    #atomenum::#cap(#(#argnames),*) => formally::smt::BoundAtom {
+                    #atomenum::#cap(#(#argnames),*) => formally::smt::Atom {
                         head: #module::#ident.clone().into(),
                         arguments: std::sync::Arc::new([#(#argnames.clone()),*]),
                         span: Some(formally::support::Span::Builtin)
@@ -644,7 +648,9 @@ impl ToTokens for Attributed<Theory> {
                 });
 
                 atom_try_from.push(quote! {
-                    else if atom.head.function == #module::#ident.clone().into() {
+                    else if let AtomHead::Bound(BoundHead { function, .. }) = &atom.head
+                        && *function == #module::#ident.clone().into()
+                    {
                         if atom.arguments.len() == #argslen {
                             Ok(#atomenum::#cap(#(#argsvec),*))
                         } else {
@@ -778,18 +784,18 @@ impl ToTokens for Attributed<Theory> {
                 #(#atom_cases),*
             }
 
-            impl Into<formally::smt::BoundAtom> for #atomenum<'_> {
-                fn into(self) -> formally::smt::BoundAtom {
+            impl Into<formally::smt::Atom> for #atomenum<'_> {
+                fn into(self) -> formally::smt::Atom {
                     match self {
                         #(#atom_into),*
                     }
                 }
             }
 
-            impl<'t> TryFrom<&'t formally::smt::BoundAtom> for #atomenum<'t> {
-                type Error = &'t formally::smt::BoundAtom;
+            impl<'t> TryFrom<&'t formally::smt::Atom> for #atomenum<'t> {
+                type Error = &'t formally::smt::Atom;
 
-                fn try_from(atom: &'t formally::smt::BoundAtom) -> Result<#atomenum<'t>, Self::Error> {
+                fn try_from(atom: &'t formally::smt::Atom) -> Result<#atomenum<'t>, Self::Error> {
                     if false { unreachable!() }
                     #(#atom_try_from)* else {
                         Err(atom)

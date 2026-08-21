@@ -322,8 +322,8 @@ impl<M: Manager> ManagerFacade<M> {
     }
 
     fn atom(&self, atom: &smt::Atom, bindmap: &BindMap<M::Term>) -> Result<M::Term> {
-        match atom {
-            smt::Atom::Bound(atom) => match &atom.head.function {
+        match &atom.head {
+            smt::AtomHead::Bound(bound) => match &bound.function {
                 smt::Function::Variable(var) => {
                     if let Some(t) = bindmap.get(var) {
                         Ok(t.clone())
@@ -334,10 +334,10 @@ impl<M: Manager> ManagerFacade<M> {
                 smt::Function::Primitive(_) => self.primitive(atom, bindmap),
                 smt::Function::User(user) => self.user_func(user, &atom.arguments, bindmap),
             },
-            smt::Atom::Unbound(smt::UnboundAtom { head, .. }) => Err(backend::Error::new(
+            smt::AtomHead::Unbound(unbound) => Err(backend::Error::new(
                 self.manager.backend().name(),
                 backend::ErrorKind::ViolatedPrecondition(format!(
-                    "unbound variable in term: `{head}`"
+                    "unbound variable in term: `{}`", unbound.head
                 )),
             )),
         }
@@ -359,7 +359,7 @@ impl<M: Manager> ManagerFacade<M> {
         Ok(t)
     }
 
-    fn primitive(&self, atom: &smt::BoundAtom, bindmap: &BindMap<M::Term>) -> Result<M::Term> {
+    fn primitive(&self, atom: &smt::Atom, bindmap: &BindMap<M::Term>) -> Result<M::Term> {
         match <M::ALL as LogicEx>::Atom::try_from(atom) {
             Ok(atom) => {
                 self.manager
@@ -369,7 +369,7 @@ impl<M: Manager> ManagerFacade<M> {
                 self.manager.backend().name(),
                 backend::ErrorKind::ViolatedPrecondition(format!(
                     "unknown primitive symbol or mismatching arguments: `{}`",
-                    atom.head.function.name()
+                    atom.head
                 )),
             )),
         }

@@ -36,12 +36,12 @@ impl TypeCheck for Term {
     ///
     /// Typing rules are straightforward:
     /// 1. constants have their own natural sort,
-    /// 2. [bound atoms](BoundAtom) are checked to ensure their arguments match the function's
+    /// 2. [bound atoms](BoundHead) are checked to ensure their arguments match the function's
     ///    domain, and then their sort is just the function's range.
     ///
     /// This method is also aliased by [Sort::of()] which provides a clearer notation.
     ///
-    /// Note that type checking terms containing [unbound atoms](UnboundAtom) is not possible,
+    /// Note that type checking terms containing [unbound atoms](UnboundHead) is not possible,
     /// because typing information for unbound symbols is not available. In this case, the method
     /// emits an [internal error](internal). As a consequence, type checking is usually performed
     /// only after [name resolution](Term::resolve), unless the term is known to not have unbound
@@ -88,15 +88,15 @@ impl TypeCheck for Constant {
     }
 }
 
-impl TypeCheck for BoundAtom {
-    fn type_check(&self) -> Result<Sort> {
-        let domain = self.domain();
+impl BoundHead {
+    fn type_check(&self, arguments: &[Term]) -> Result<Sort> {
+        let domain = self.domain(arguments.len());
 
-        if domain.len() != self.arguments.len() {
+        if domain.len() != arguments.len() {
             error!(
-                self.head.span(),
+                self.function.span(),
                 "applied {} arguments to a function of {} parameters",
-                self.arguments.len(),
+                arguments.len(),
                 domain.len(),
             );
             return Err(DiagnosticEmitted);
@@ -104,7 +104,7 @@ impl TypeCheck for BoundAtom {
 
         #[allow(clippy::mutable_key_type)]
         let mut matches = HashMap::new();
-        for (sort, arg) in zip(domain, &*self.arguments) {
+        for (sort, arg) in zip(domain, arguments) {
             let argsort = Sort::of(arg)?;
 
             if !sort.matches_with(&argsort, &mut matches) {
@@ -116,24 +116,24 @@ impl TypeCheck for BoundAtom {
             }
         }
 
-        let range = self.head.function.range().instantiate(&matches)?;
+        let range = self.function.range().instantiate(&matches)?;
 
         Ok(range)
     }
 }
 
-impl BoundAtom {
-    pub(crate) fn domain(&self) -> Vec<Sort> {
-        let domain = self.head.function.domain();
+impl BoundHead {
+    pub(crate) fn domain(&self, nargs: usize) -> Vec<Sort> {
+        let domain = self.function.domain();
 
-        let Function::Primitive(prim) = &self.head.function else {
+        let Function::Primitive(prim) = &self.function else {
             return domain;
         };
 
         match prim.domain() {
             [first, second, ..] if prim.associativity().is_some() => {
                 if *first == *second {
-                    std::iter::repeat_n(first.clone(), self.arguments.len()).collect()
+                    std::iter::repeat_n(first.clone(), nargs).collect()
                 } else {
                     domain
                 }
@@ -143,18 +143,14 @@ impl BoundAtom {
     }
 }
 
-impl TypeCheck for UnboundAtom {
-    fn type_check(&self) -> Result<Sort> {
-        internal!(self.head.span(), "unresolved symbol `{}`", self.head);
-        Err(DiagnosticEmitted)
-    }
-}
-
 impl TypeCheck for Atom {
     fn type_check(&self) -> Result<Sort> {
-        match self {
-            Atom::Bound(bound) => bound.type_check(),
-            Atom::Unbound(unbound) => unbound.type_check(),
+        match &self.head {
+            AtomHead::Bound(bound) => bound.type_check(&self.arguments),
+            AtomHead::Unbound(_) => {
+                internal!(self.head.span(), "unresolved symbol `{}`", self.head);
+                Err(DiagnosticEmitted)
+            },
         }
     }
 }

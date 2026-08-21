@@ -28,6 +28,7 @@ use std::ops::Deref;
 use formally::support::*;
 
 use derive_more::{Deref, From};
+use transitive::Transitive;
 
 use std::{
     fmt::{Debug, Formatter},
@@ -508,15 +509,16 @@ impl Defined {
 ///
 /// Some accessor methods are provided to get fields in common between the variants avoiding
 /// redundant pattern matches.
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Located, From)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Located, From, Transitive)]
 #[allow(clippy::duplicated_attributes)]
+#[transitive(from(Declared, UserFunction))]
+#[transitive(from(Defined, UserFunction))]
 pub enum Function {
     /// A variable.
     Variable(Variable),
     /// A primitive function declared by some theory.
     Primitive(Primitive),
     /// A user function, i.e. either [Declared] or [Defined].
-    #[from(skip)]
     User(UserFunction),
 }
 
@@ -563,12 +565,6 @@ impl Function {
             Function::Primitive(prim) => prim.range(),
             Function::User(user) => user.range(),
         }
-    }
-}
-
-impl<T: Into<UserFunction>> From<T> for Function {
-    fn from(value: T) -> Self {
-        Function::User(value.into())
     }
 }
 

@@ -84,57 +84,50 @@ impl LogicRequirement for Linear {
     fn check_term(logic: &dyn Logic, term: &Term) -> Result<()> {
         match term.kind() {
             TermKind::Constant(_) => Ok(()),
-            TermKind::Atom(Atom::Unbound(UnboundAtom { arguments, .. })) => {
-                for arg in &**arguments {
-                    Linear::check_term(logic, arg)?;
-                }
-                Ok(())
-            }
-            TermKind::Atom(Atom::Bound(BoundAtom {
-                head, arguments, ..
-            })) => {
-                use theories::Ints;
-                use theories::Reals;
+            TermKind::Atom(atom) => {
+                if let AtomHead::Bound(bound) = &atom.head {
+                    use theories::Ints;
+                    use theories::Reals;
 
-                let forbidden = [
-                    Ints::mult(),
-                    Reals::mult(),
-                    Ints::div(),
-                    Reals::div(),
-                    Ints::mod_(),
-                    Ints::abs(),
-                ];
-                if let Function::Primitive(prim) = &head.function
-                    && forbidden.contains(prim)
-                {
-                    let nonlinear = arguments
-                        .iter()
-                        .filter(|arg| {
-                            !matches!(
+                    let forbidden = [
+                        Ints::mult(),
+                        Reals::mult(),
+                        Ints::div(),
+                        Reals::div(),
+                        Ints::mod_(),
+                        Ints::abs(),
+                    ];
+                    if let Function::Primitive(prim) = &bound.function
+                        && forbidden.contains(prim)
+                    {
+                        let nonlinear = atom.arguments
+                            .iter()
+                            .filter(|arg| {
+                                !matches!(
                                 arg.kind(),
                                 TermKind::Constant(
                                     Constant::Integer { .. } | Constant::Rational { .. }
                                 )
                             )
-                        })
-                        .count();
-                    if nonlinear > 1 {
-                        error!(
+                            })
+                            .count();
+                        if nonlinear > 1 {
+                            error!(
                             term.span(),
                             "non-linear terms are not admitted in logic `{}`",
                             logic.name()
                         );
-                        note!(
-                            head.span,
+                            note!(
+                            bound.span,
                             "function `{}` can only be used with a single non-constant argument, found {}",
-                            head.function.name(),
+                            bound.function.name(),
                             nonlinear
                         );
-                        return Err(DiagnosticEmitted);
+                            return Err(DiagnosticEmitted);
+                        }
                     }
                 }
-
-                for arg in &**arguments {
+                for arg in &*atom.arguments {
                     Linear::check_term(logic, arg)?;
                 }
                 Ok(())
@@ -154,15 +147,12 @@ impl LogicRequirement for QuantifierFree {
     fn check_term(logic: &dyn Logic, term: &Term) -> Result<()> {
         match term.kind() {
             TermKind::Constant(_) => Ok(()),
-            TermKind::Atom(atom) => match atom {
-                Atom::Bound(BoundAtom { arguments, .. })
-                | Atom::Unbound(UnboundAtom { arguments, .. }) => {
-                    for arg in &**arguments {
-                        QuantifierFree::check_term(logic, arg)?;
-                    }
-                    Ok(())
+            TermKind::Atom(atom) => {
+                for arg in &*atom.arguments {
+                    QuantifierFree::check_term(logic, arg)?;
                 }
-            },
+                Ok(())
+            }
             TermKind::Quantified(_) => {
                 error!(
                     term.span(),
