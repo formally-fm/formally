@@ -25,6 +25,7 @@
 use crate::*;
 use formally::support::*;
 
+use derive_more::Display;
 use transitive::Transitive;
 
 use std::{
@@ -107,7 +108,7 @@ impl<T: Into<Sort>> From<T> for SortArgument {
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct Sort {
     /// The sort constructor that is being applied.
-    pub head: Function,
+    pub head: FunctionRef,
     /// The sort's arguments.
     pub arguments: Vec<SortArgument>,
 }
@@ -115,7 +116,16 @@ pub struct Sort {
 impl<T: Into<Function>> From<T> for Sort {
     fn from(value: T) -> Self {
         Sort {
-            head: value.into(),
+            head: FunctionRef::from(value.into()),
+            arguments: Vec::new(),
+        }
+    }
+}
+
+impl From<Identifier<'_>> for Sort {
+    fn from(value: Identifier<'_>) -> Self {
+        Sort {
+            head: FunctionRef::Unbound(value.into()),
             arguments: Vec::new(),
         }
     }
@@ -131,56 +141,41 @@ impl Debug for Sort {
     }
 }
 
-impl Sort {
-    /// Alias for `term.type_check(ctx)` which provide a slightly better notation.
-    pub fn of(term: &Term) -> Result<Sort> {
-        term.type_check()
-    }
+#[derive(Debug, Clone, Located, Display)]
+#[display("sort term must be an atom")]
+pub struct InvalidSortTerm {
+    span: Option<Span>,
+}
 
-    /// Evaluate a term as a sort.
-    ///
-    /// A sort such as `(Array Int Real)` can be constructed using the term macro,
-    /// such as in `term!(Array Int Real)`, and then evaluated as a sort after
-    /// [name resolution](Term::resolve()).
-    ///
-    /// The evaluation checks that all the functions used have range [Sort::sort()] and that the
-    /// arguments are of the right kind (sort arguments or constants).
-    pub fn evaluate(term: &Term) -> Result<Sort> {
-        let sort = Sort::of(term)?;
-        if sort != Sort::sort() {
-            error!(term.span(), "expected sort, found term of sort `{}`", sort);
-            return Err(DiagnosticEmitted);
-        }
+impl Diagnosable for InvalidSortTerm {}
 
-        let TermKind::Atom(Atom {
-            head: AtomHead::Bound(BoundHead { function, .. }),
-            arguments,
-            ..
-        }) = term.kind()
-        else {
-            internal!(term.span(), "sort term does not evaluate to a sort");
-            return Err(DiagnosticEmitted);
+impl TryFrom<Term> for Sort {
+    type Error = InvalidSortTerm;
+
+    fn try_from(term: Term) -> Result<Sort, InvalidSortTerm> {
+        let TermKind::Atom(atom) = term.kind() else {
+            return Err(InvalidSortTerm { span: term.span() });
         };
 
-        let mut evaluated = Vec::new();
-        for (sort, arg) in zip(function.domain(), &**arguments) {
-            if sort == Sort::sort() {
-                evaluated.push(SortArgument::Sort(Sort::evaluate(arg)?))
-            } else {
-                match arg.kind() {
-                    TermKind::Constant(c) => evaluated.push(SortArgument::Value(c.clone())),
-                    _ => {
-                        error!(arg.span(), "sort arguments must be constant terms");
-                        return Err(DiagnosticEmitted);
-                    }
-                }
+        let mut arguments = Vec::new();
+        for arg in &*atom.arguments {
+            match arg.kind() {
+                TermKind::Constant(c) => arguments.push(SortArgument::Value(c.clone())),
+                _ => arguments.push(SortArgument::Sort(Sort::try_from(arg.clone())?)),
             }
         }
 
         Ok(Sort {
-            head: function.clone(),
-            arguments: evaluated,
+            head: atom.head.clone(),
+            arguments,
         })
+    }
+}
+
+impl Sort {
+    /// Alias for `term.type_check(ctx)` which provide a better notation.
+    pub fn of(term: &Term) -> Result<Sort> {
+        term.type_check()
     }
 
     #[allow(clippy::mutable_key_type)]
@@ -189,7 +184,15 @@ impl Sort {
         argument: &Sort,
         matches: &mut HashMap<Variable, Sort>,
     ) -> bool {
-        match (&self.head, &argument.head) {
+        let FunctionRef::Bound(head) = &self.head else {
+            return false;
+        };
+
+        let FunctionRef::Bound(arghead) = &argument.head else {
+            return false;
+        };
+
+        match (&head.function, &arghead.function) {
             (Function::Variable(this), _) => {
                 if let Some(this) = matches.get(this).cloned() {
                     this.head == argument.head
@@ -225,15 +228,18 @@ impl Sort {
 
     #[allow(clippy::mutable_key_type)]
     pub(crate) fn instantiate(&self, matches: &HashMap<Variable, Sort>) -> Result<Sort> {
-        if let Function::Variable(var) = &self.head {
-            return matches.get(var).cloned().ok_or_else(|| {
-                internal!(
-                    None,
-                    "usage of unconstrained sort parameter: {}",
-                    var.name()
-                );
-                DiagnosticEmitted
-            });
+        match &self.head {
+            FunctionRef::Bound(head) if let Function::Variable(var) = &head.function => {
+                return matches.get(var).cloned().ok_or_else(|| {
+                    internal!(
+                        None,
+                        "usage of unconstrained sort parameter: {}",
+                        var.name()
+                    );
+                    DiagnosticEmitted
+                });
+            }
+            _ => {}
         }
 
         let mut arguments = Vec::new();

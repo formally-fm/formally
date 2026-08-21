@@ -148,109 +148,11 @@ impl Sort {
     #[allow(clippy::self_named_constructors)]
     pub const fn sort() -> Sort {
         Sort {
-            head: Function::Primitive(Primitive(Nominal(SArc::Static(&SORT_DECL)))),
+            head: FunctionRef::Bound(BoundRef {
+                function: Function::Primitive(Primitive(Nominal(SArc::Static(&SORT_DECL)))),
+                span: Some(Span::Builtin),
+            }),
             arguments: Vec::new(),
         }
-    }
-}
-
-/// Trait for function types returning sorts.
-///
-/// Any `Fn` type accepting references to [SortArgument] and returning [Sort] (currently up to six
-/// arguments) implements this trait.
-///
-/// The [constructor()](SortConstructor::to_constructor()) method can be used to get the [Function]
-/// corresponding to a sort constructor. For example, the sort `(Array Int Int)` is represented
-/// by `Arrays::Array(Ints::Int(), Ints::Int())`, but the [Function] corresponding to the sort
-/// constructor `(Array X Y)` is `Arrays::Array.to_constructor()`. This is mainly needed in
-/// backends, so we refer to the documentation about [how to write a new backend](backend).
-pub trait SortConstructor<const ARITY: usize> {
-    /// Get the [Function] associated with this sort constructor.
-    fn to_constructor(&self) -> Function;
-}
-
-impl<F: Fn() -> Sort> SortConstructor<0> for F {
-    fn to_constructor(&self) -> Function {
-        self().head
-    }
-}
-
-impl<F: Fn(&SortArgument) -> Sort> SortConstructor<1> for F {
-    fn to_constructor(&self) -> Function {
-        self(&SortArgument::Sort(Sort::sort())).head
-    }
-}
-
-impl<F: Fn(&SortArgument, &SortArgument) -> Sort> SortConstructor<2> for F {
-    fn to_constructor(&self) -> Function {
-        self(
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-        )
-        .head
-    }
-}
-
-impl<F: Fn(&SortArgument, &SortArgument, &SortArgument) -> Sort> SortConstructor<3> for F {
-    fn to_constructor(&self) -> Function {
-        self(
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-        )
-        .head
-    }
-}
-
-impl<F: Fn(&SortArgument, &SortArgument, &SortArgument, &SortArgument) -> Sort> SortConstructor<4>
-    for F
-{
-    fn to_constructor(&self) -> Function {
-        self(
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-        )
-        .head
-    }
-}
-
-impl<F: Fn(&SortArgument, &SortArgument, &SortArgument, &SortArgument, &SortArgument) -> Sort>
-    SortConstructor<5> for F
-{
-    fn to_constructor(&self) -> Function {
-        self(
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-        )
-        .head
-    }
-}
-
-impl<
-    F: Fn(
-        &SortArgument,
-        &SortArgument,
-        &SortArgument,
-        &SortArgument,
-        &SortArgument,
-        &SortArgument,
-    ) -> Sort,
-> SortConstructor<6> for F
-{
-    fn to_constructor(&self) -> Function {
-        self(
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-            &SortArgument::Sort(Sort::sort()),
-        )
-        .head
     }
 }

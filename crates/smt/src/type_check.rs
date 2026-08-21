@@ -36,12 +36,12 @@ impl TypeCheck for Term {
     ///
     /// Typing rules are straightforward:
     /// 1. constants have their own natural sort,
-    /// 2. [bound atoms](BoundHead) are checked to ensure their arguments match the function's
+    /// 2. [bound atoms](BoundRef) are checked to ensure their arguments match the function's
     ///    domain, and then their sort is just the function's range.
     ///
     /// This method is also aliased by [Sort::of()] which provides a clearer notation.
     ///
-    /// Note that type checking terms containing [unbound atoms](UnboundHead) is not possible,
+    /// Note that type checking terms containing [unbound atoms](UnboundRef) is not possible,
     /// because typing information for unbound symbols is not available. In this case, the method
     /// emits an [internal error](internal). As a consequence, type checking is usually performed
     /// only after [name resolution](Term::resolve), unless the term is known to not have unbound
@@ -88,7 +88,7 @@ impl TypeCheck for Constant {
     }
 }
 
-impl BoundHead {
+impl BoundRef {
     fn type_check(&self, arguments: &[Term]) -> Result<Sort> {
         let domain = self.domain(arguments.len());
 
@@ -122,7 +122,7 @@ impl BoundHead {
     }
 }
 
-impl BoundHead {
+impl BoundRef {
     pub(crate) fn domain(&self, nargs: usize) -> Vec<Sort> {
         let domain = self.function.domain();
 
@@ -146,11 +146,11 @@ impl BoundHead {
 impl TypeCheck for Atom {
     fn type_check(&self) -> Result<Sort> {
         match &self.head {
-            AtomHead::Bound(bound) => bound.type_check(&self.arguments),
-            AtomHead::Unbound(_) => {
+            FunctionRef::Bound(bound) => bound.type_check(&self.arguments),
+            FunctionRef::Unbound(_) => {
                 internal!(self.head.span(), "unresolved symbol `{}`", self.head);
                 Err(DiagnosticEmitted)
-            },
+            }
         }
     }
 }
@@ -184,23 +184,30 @@ impl TypeCheck for Declaration {
 impl TypeCheck for Sort {
     /// Check the well-formedness of the sort.
     fn type_check(&self) -> Result<Sort> {
-        if *self.head.range() != Sort::sort() {
-            error!(
-                self.head.span(),
-                "expected sort, found term of sort `{}`",
-                self.head.range()
-            );
-        }
-
-        for arg in &self.arguments {
-            match arg {
-                SortArgument::Value(_) => {}
-                SortArgument::Sort(s) => {
-                    s.type_check()?;
-                }
-            }
-        }
-
-        Ok(self.clone())
+        todo!()
+        // let mut arguments = Vec::with_capacity(self.arguments.len());
+        // for arg in &self.arguments {
+        //     match arg {
+        //         SortArgument::Value(c) => arguments.push(SortArgument::Value(c.clone())),
+        //         SortArgument::Sort(s) => arguments.push(SortArgument::Sort(s.type_check()?)),
+        //     }
+        // }
+        //
+        // let FunctionRef::Bound(bound) = &self.head else {
+        //     return Ok(Sort {
+        //         head: self.head.clone(),
+        //         arguments,
+        //     });
+        // };
+        //
+        // for (sort, arg) in zip(bound.function.domain(), arguments) {
+        //     let argsort = match arg {
+        //         SortArgument::Value(c) => c.type_check()?,
+        //         SortArgument::Sort(_) => Sort::sort()
+        //     };
+        //     if sort != argsort {
+        //         error!()
+        //     }
+        // }
     }
 }

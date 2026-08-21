@@ -32,7 +32,7 @@ impl Env {
     /// Perform *name resolution*.
     ///
     /// Name resolution is the process of replacing all the [unbound atoms][UnboundAtom] in a term
-    /// with [bound](BoundHead) ones, i.e. replacing raw names with entities. This function should
+    /// with [bound](BoundRef) ones, i.e. replacing raw names with entities. This function should
     /// usually not be needed directly, since [Solver::declare()], [Solver::define()], and
     /// [Solver::require()] properly resolve the terms involved automatically.
     ///
@@ -60,8 +60,8 @@ impl Env {
 
     fn resolve_atom(&self, atom: &Atom, role: Role, pool: &dyn TermPool) -> Result<Atom> {
         match &atom.head {
-            AtomHead::Bound(bound) => self.resolve_bound(bound, &atom.arguments, pool),
-            AtomHead::Unbound(unbound) => {
+            FunctionRef::Bound(bound) => self.resolve_bound(bound, &atom.arguments, pool),
+            FunctionRef::Unbound(unbound) => {
                 self.resolve_unbound(unbound, &atom.arguments, role, pool)
             }
         }
@@ -69,7 +69,7 @@ impl Env {
 
     fn resolve_bound(
         &self,
-        head: &BoundHead,
+        head: &BoundRef,
         arguments: &[Term],
         pool: &dyn TermPool,
     ) -> Result<Atom> {
@@ -95,7 +95,7 @@ impl Env {
         }
 
         Ok(Atom {
-            head: AtomHead::Bound(head.clone()),
+            head: FunctionRef::Bound(head.clone()),
             arguments: Arc::from(resolved.into_boxed_slice()),
             span: head.span.clone(),
         })
@@ -103,7 +103,7 @@ impl Env {
 
     fn resolve_unbound(
         &self,
-        unbound: &UnboundHead,
+        unbound: &UnboundRef,
         arguments: &[Term],
         role: Role,
         pool: &dyn TermPool,
@@ -112,7 +112,7 @@ impl Env {
 
         self.lookup(head.clone(), role)
             .filter_map(move |f| {
-                let bound = BoundHead {
+                let bound = BoundRef {
                     function: f.clone(),
                     span: head.span(),
                 };

@@ -191,7 +191,7 @@ impl ToTerm for Atom {
     }
 }
 
-impl ToTerm for AtomHead {
+impl ToTerm for FunctionRef {
     fn into_term_in(self, pool: &dyn TermPool) -> Term {
         TermKind::Atom(Atom::from(self)).into_term_in(pool)
     }
@@ -201,7 +201,7 @@ impl ToTerm for AtomHead {
     }
 }
 
-impl ToTerm for BoundHead {
+impl ToTerm for BoundRef {
     fn into_term_in(self, pool: &dyn TermPool) -> Term {
         TermKind::Atom(Atom::from(self)).into_term_in(pool)
     }
@@ -271,7 +271,7 @@ impl ToTerm for Defined {
     }
 }
 
-impl ToTerm for UnboundHead {
+impl ToTerm for UnboundRef {
     fn into_term_in(self, pool: &dyn TermPool) -> Term {
         TermKind::Atom(Atom::from(self)).into_term_in(pool)
     }
@@ -313,19 +313,19 @@ impl ToTerm for Let {
 
 impl ToTerm for Sort {
     fn into_term_in(self, pool: &dyn TermPool) -> Term {
-        let arguments = self
-            .arguments
-            .into_iter()
-            .map(|arg| match arg {
-                SortArgument::Value(c) => TermKind::Constant(c).into_term_in(pool),
-                SortArgument::Sort(s) => s.into_term_in(pool),
-            })
-            .collect();
-        TermKind::Atom(Atom {
-            head: AtomHead::Bound(BoundHead { function: self.head, span: None }),
-            arguments,
+        let mut arguments = Vec::with_capacity(self.arguments.len());
+        for arg in self.arguments {
+            match arg {
+                SortArgument::Value(c) => arguments.push(c.into_term_in(pool)),
+                SortArgument::Sort(s) => arguments.push(s.into_term_in(pool)),
+            }
+        }
+
+        Atom {
+            head: self.head,
+            arguments: Arc::from(arguments.into_boxed_slice()),
             span: None,
-        })
+        }
         .into_term_in(pool)
     }
 

@@ -34,16 +34,16 @@ use quote::{ToTokens, TokenStreamExt, quote};
 use std::fmt::{Display, Formatter};
 
 #[derive(Clone)]
-pub enum Name {
+pub enum HeadName {
     Ident(syn::Ident),
     Punct(Vec<Punct>),
 }
 
-impl Display for Name {
+impl Display for HeadName {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Name::Ident(ident) => write!(f, "{ident}"),
-            Name::Punct(puncts) => {
+            HeadName::Ident(ident) => write!(f, "{ident}"),
+            HeadName::Punct(puncts) => {
                 let mut out = String::new();
                 for punct in puncts {
                     out.push_str(&punct.to_string());
@@ -58,14 +58,50 @@ impl Display for Name {
 pub enum Head {
     Int(syn::LitInt),
     Real(syn::LitFloat),
-    Unbound(Name),
+    Unbound(HeadName),
     Bound(syn::Ident),
 }
 
 #[derive(Clone)]
-pub struct Term {
+pub enum Term {
+    Atom(Atom),
+    Quantified(Quantified),
+}
+
+#[derive(Clone)]
+pub struct Atom {
     head: Head,
     args: Vec<TermArgument>,
+}
+
+#[derive(Clone, Copy)]
+pub enum Quantifier {
+    Forall,
+    Exists,
+}
+
+#[derive(Clone)]
+pub enum Name {
+    Bound(syn::Ident),
+    Unbound(syn::Ident),
+}
+
+#[derive(Clone)]
+pub struct Variable {
+    name: Name,
+    sort: Name,
+}
+
+#[derive(Clone)]
+pub struct Quantified {
+    quantifier: Quantifier,
+    variables: Vec<Variable>,
+    body: Box<Term>,
+}
+
+mod kw {
+    syn::custom_keyword!(forall);
+    syn::custom_keyword!(exists);
 }
 
 #[derive(Clone)]
@@ -78,7 +114,7 @@ fn peek_punct(input: ParseStream) -> bool {
     matches!(input.cursor().token_tree(), Some((TokenTree::Punct(punct), _)) if punct.as_char() != '#')
 }
 
-fn peek_term(input: ParseStream) -> bool {
+fn peek_atom(input: ParseStream) -> bool {
     input.peek(syn::Ident)
         || input.peek(Token![#])
         || peek_punct(input)
@@ -112,12 +148,12 @@ fn parse_punct_sequence(input: ParseStream) -> Result<Vec<Punct>> {
     })
 }
 
-impl Parse for Name {
-    fn parse(input: ParseStream) -> Result<Name> {
+impl Parse for HeadName {
+    fn parse(input: ParseStream) -> Result<HeadName> {
         if input.peek(syn::Ident) {
-            Ok(Name::Ident(input.parse()?))
+            Ok(HeadName::Ident(input.parse()?))
         } else if peek_punct(input) {
-            Ok(Name::Punct(parse_punct_sequence(input)?))
+            Ok(HeadName::Punct(parse_punct_sequence(input)?))
         } else {
             Err(syn::Error::new(
                 input.span(),
@@ -163,25 +199,89 @@ impl Parse for TermArgument {
             parenthesized!(content in input);
             Ok(TermArgument::Term(content.parse()?))
         } else {
-            Ok(TermArgument::Term(Term {
+            Ok(TermArgument::Term(Term::Atom(Atom {
                 head: input.parse()?,
                 args: Vec::new(),
-            }))
+            })))
         }
+    }
+}
+
+impl Parse for Atom {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let head = input.parse()?;
+        let mut args = Vec::new();
+
+        while !input.is_empty() {
+            args.push(input.parse()?);
+        }
+
+        Ok(Atom { head, args })
+    }
+}
+
+impl Parse for Quantifier {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let lh = input.lookahead1();
+        if lh.peek(kw::exists) {
+            input.parse::<kw::exists>()?;
+            Ok(Quantifier::Exists)
+        } else if lh.peek(kw::forall) {
+            input.parse::<kw::forall>()?;
+            Ok(Quantifier::Forall)
+        } else {
+            Err(lh.error())
+        }
+    }
+}
+
+impl Parse for Name {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let lh = input.lookahead1();
+        if lh.peek(Token![#]) {
+            input.parse::<Token![#]>()?;
+            Ok(Name::Bound(input.parse()?))
+        } else if lh.peek(syn::Ident) {
+            Ok(Name::Unbound(input.parse()?))
+        } else {
+            Err(lh.error())
+        }
+    }
+}
+
+impl Parse for Variable {
+    fn parse(input: ParseStream) -> Result<Self> {
+        Ok(Variable {
+            name: input.parse()?,
+            sort: input.parse()?,
+        })
+    }
+}
+
+impl Parse for Quantified {
+    fn parse(input: ParseStream) -> Result<Self> {
+        Ok(Quantified {
+            quantifier: input.parse()?,
+            variables: {
+                let content;
+                parenthesized!(content in input);
+                let mut vars = Vec::new();
+                while !input.is_empty() {
+                    vars.push(input.parse()?)
+                }
+                vars
+            },
+            body: Box::new(input.parse()?),
+        })
     }
 }
 
 impl Parse for Term {
     fn parse(input: ParseStream) -> Result<Self> {
-        if peek_term(input) {
-            let head = input.parse()?;
-            let mut args = Vec::new();
-
-            while !input.is_empty() {
-                args.push(input.parse()?);
-            }
-
-            Ok(Term { head, args })
+        if input.peek(kw::forall) || input.peek(kw::exists) {
+            Ok(Term::Quantified(input.parse()?))
+        } else if peek_atom(input) {
+            Ok(Term::Atom(input.parse()?))
         } else if input.peek(syn::token::Paren) {
             let content;
             parenthesized!(content in input);
@@ -214,6 +314,15 @@ impl ToTokens for TermArgument {
 }
 
 impl ToTokens for Term {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Term::Atom(atom) => atom.to_tokens(tokens),
+            Term::Quantified(_) => todo!(),
+        }
+    }
+}
+
+impl ToTokens for Atom {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match &self.head {
             Head::Int(lit) => tokens.append_all(quote! {

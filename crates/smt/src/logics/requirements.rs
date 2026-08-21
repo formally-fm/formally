@@ -85,7 +85,7 @@ impl LogicRequirement for Linear {
         match term.kind() {
             TermKind::Constant(_) => Ok(()),
             TermKind::Atom(atom) => {
-                if let AtomHead::Bound(bound) = &atom.head {
+                if let FunctionRef::Bound(bound) = &atom.head {
                     use theories::Ints;
                     use theories::Reals;
 
@@ -100,29 +100,30 @@ impl LogicRequirement for Linear {
                     if let Function::Primitive(prim) = &bound.function
                         && forbidden.contains(prim)
                     {
-                        let nonlinear = atom.arguments
+                        let nonlinear = atom
+                            .arguments
                             .iter()
                             .filter(|arg| {
                                 !matches!(
-                                arg.kind(),
-                                TermKind::Constant(
-                                    Constant::Integer { .. } | Constant::Rational { .. }
+                                    arg.kind(),
+                                    TermKind::Constant(
+                                        Constant::Integer { .. } | Constant::Rational { .. }
+                                    )
                                 )
-                            )
                             })
                             .count();
                         if nonlinear > 1 {
                             error!(
-                            term.span(),
-                            "non-linear terms are not admitted in logic `{}`",
-                            logic.name()
-                        );
+                                term.span(),
+                                "non-linear terms are not admitted in logic `{}`",
+                                logic.name()
+                            );
                             note!(
-                            bound.span,
-                            "function `{}` can only be used with a single non-constant argument, found {}",
-                            bound.function.name(),
-                            nonlinear
-                        );
+                                bound.span,
+                                "function `{}` can only be used with a single non-constant argument, found {}",
+                                bound.function.name(),
+                                nonlinear
+                            );
                             return Err(DiagnosticEmitted);
                         }
                     }

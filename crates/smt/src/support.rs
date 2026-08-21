@@ -71,11 +71,32 @@ pub struct Atom<'t> {
     pub span: Option<Span>,
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct UnboundVariable<'t> {
+    name: Cow<'static, str>,
+    sort: Term<'t>,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub enum Variable {
+    Bound(smt::Variable),
+    Unbound(Cow<'static, str>),
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
+pub struct Quantified<'t> {
+    pub quantifier: Quantifier,
+    pub variables: &'t [Variable],
+    pub body: &'t Term<'t>,
+    pub span: Option<Span>,
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub enum Term<'t> {
     Term(Loc<Nominal<&'t dyn ToTerm>>),
     Constant(Constant),
     Atom(Atom<'t>),
+    Quantified(Quantified<'t>),
 }
 
 impl Default for Term<'_> {
@@ -132,9 +153,9 @@ impl ToTerm for support::Term<'_> {
                 };
                 TermKind::Constant(c).into_term_in(pool)
             }
-            Term::Atom(a) => {
+            Term::Atom(atom) => {
                 let mut arguments = Vec::new();
-                for arg in a.arguments {
+                for arg in atom.arguments {
                     match arg {
                         TermArgument::Term(t) => arguments.push(t.to_term_in(pool)),
                         TermArgument::Seq(seq) => {
@@ -142,25 +163,22 @@ impl ToTerm for support::Term<'_> {
                         }
                     }
                 }
-                match a.head {
-                    AtomHead::Bound(BoundHead { function }) => {
-                        TermKind::Atom(smt::Atom {
-                            head: smt::AtomHead::from(function),
-                            arguments: Arc::from(arguments.into_boxed_slice()),
-                            span: a.span,
-                        })
-                        .into_term_in(pool)
-                    }
-                    AtomHead::Unbound(UnboundHead { name }) => {
-                        TermKind::Atom(smt::Atom {
-                            head: smt::AtomHead::from(Identifier::from(name.clone())),
-                            arguments: Arc::from(arguments.into_boxed_slice()),
-                            span: a.span,
-                        })
-                        .into_term_in(pool)
-                    }
+                match atom.head {
+                    AtomHead::Bound(BoundHead { function }) => TermKind::Atom(smt::Atom {
+                        head: smt::FunctionRef::from(function),
+                        arguments: Arc::from(arguments.into_boxed_slice()),
+                        span: atom.span,
+                    })
+                    .into_term_in(pool),
+                    AtomHead::Unbound(UnboundHead { name }) => TermKind::Atom(smt::Atom {
+                        head: smt::FunctionRef::from(Identifier::from(name.clone())),
+                        arguments: Arc::from(arguments.into_boxed_slice()),
+                        span: atom.span,
+                    })
+                    .into_term_in(pool),
                 }
             }
+            Term::Quantified(_) => todo!(),
         }
     }
 

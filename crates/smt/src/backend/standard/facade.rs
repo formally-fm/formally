@@ -197,7 +197,7 @@ impl<M: Manager> ManagerFacade<M> {
     }
 
     pub fn sort(&self, sort: &smt::Sort) -> Result<M::Sort> {
-        match &sort.head {
+        match &self.function(&sort.head)? {
             smt::Function::Variable(_) => unreachable!(),
             smt::Function::Primitive(_) => self.prim_sort(sort),
             smt::Function::User(user) => self.user_sort(sort, user),
@@ -268,6 +268,16 @@ impl<M: Manager> ManagerFacade<M> {
         Ok(())
     }
 
+    fn function<'f>(&self, func: &'f smt::FunctionRef) -> Result<&'f smt::Function> {
+        match func {
+            smt::FunctionRef::Bound(bound) => Ok(&bound.function),
+            smt::FunctionRef::Unbound(_) => Err(backend::Error::new(
+                self.manager.backend().name(),
+                backend::ErrorKind::ViolatedPrecondition("an unresolved".into()),
+            )),
+        }
+    }
+
     fn sort_argument_to_sort(&self, arg: &smt::SortArgument) -> Result<M::Sort> {
         match arg {
             smt::SortArgument::Sort(sort) => self.sort(sort),
@@ -323,7 +333,7 @@ impl<M: Manager> ManagerFacade<M> {
 
     fn atom(&self, atom: &smt::Atom, bindmap: &BindMap<M::Term>) -> Result<M::Term> {
         match &atom.head {
-            smt::AtomHead::Bound(bound) => match &bound.function {
+            smt::FunctionRef::Bound(bound) => match &bound.function {
                 smt::Function::Variable(var) => {
                     if let Some(t) = bindmap.get(var) {
                         Ok(t.clone())
@@ -334,10 +344,11 @@ impl<M: Manager> ManagerFacade<M> {
                 smt::Function::Primitive(_) => self.primitive(atom, bindmap),
                 smt::Function::User(user) => self.user_func(user, &atom.arguments, bindmap),
             },
-            smt::AtomHead::Unbound(unbound) => Err(backend::Error::new(
+            smt::FunctionRef::Unbound(unbound) => Err(backend::Error::new(
                 self.manager.backend().name(),
                 backend::ErrorKind::ViolatedPrecondition(format!(
-                    "unbound variable in term: `{}`", unbound.head
+                    "unbound variable in term: `{}`",
+                    unbound.head
                 )),
             )),
         }

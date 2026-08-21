@@ -531,7 +531,7 @@ impl ToTokens for Attributed<Theory> {
                 /// ```
                 pub fn #ident(#(#params: &(impl Clone + Into<formally::smt::SortArgument>)),*) -> formally::smt::Sort {
                     formally::smt::Sort {
-                        head: formally::smt::Function::Primitive(#module::#ident.clone()),
+                        head: #module::#ident.clone().into(),
                         arguments: vec![#(#params.clone().into()),*]
                     }
                 }
@@ -600,7 +600,7 @@ impl ToTokens for Attributed<Theory> {
             });
 
             atom_try_from.push(quote! {
-                else if let AtomHead::Bound(BoundHead { function, .. }) = &atom.head
+                else if let FunctionRef::Bound(BoundRef { function, .. }) = &atom.head
                     && *function == #module::#ident.clone().into()
                 {
                     Ok(#atomenum::#cap)
@@ -622,7 +622,7 @@ impl ToTokens for Attributed<Theory> {
                 });
 
                 atom_try_from.push(quote! {
-                    else if let AtomHead::Bound(BoundHead { function, .. }) = &atom.head
+                    else if let FunctionRef::Bound(BoundRef { function, .. }) = &atom.head
                         && *function == #module::#ident.clone().into()
                     {
                         Ok(#atomenum::#cap(&*atom.arguments))
@@ -648,7 +648,7 @@ impl ToTokens for Attributed<Theory> {
                 });
 
                 atom_try_from.push(quote! {
-                    else if let AtomHead::Bound(BoundHead { function, .. }) = &atom.head
+                    else if let FunctionRef::Bound(BoundRef { function, .. }) = &atom.head
                         && *function == #module::#ident.clone().into()
                     {
                         if atom.arguments.len() == #argslen {

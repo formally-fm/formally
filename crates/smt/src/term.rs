@@ -83,25 +83,25 @@ impl From<Rational> for Constant {
 /// [Solver::require()] already perform name resolution and type checking appropriately.
 ///
 /// Terms can usually better be constructed with the [term] macro, which can build both bound and
-/// [unbound](UnboundHead) atoms.
+/// [unbound](UnboundRef) atoms.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
-pub struct BoundHead {
+pub struct BoundRef {
     /// the function that is being applied.
     pub function: Function,
     /// the atom's source span.
     pub span: Option<Span>,
 }
 
-impl From<Function> for BoundHead {
+impl From<Function> for BoundRef {
     fn from(function: Function) -> Self {
-        BoundHead {
+        BoundRef {
             function,
             span: None,
         }
     }
 }
 
-impl Display for BoundHead {
+impl Display for BoundRef {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.function.name())
     }
@@ -118,24 +118,24 @@ impl Display for BoundHead {
 /// not usually be a concern because [Solver::declare()], [Solver::define()], and
 /// [Solver::require()] already perform name resolution and type checking appropriately.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
-pub struct UnboundHead {
+pub struct UnboundRef {
     /// the name of the function that is being applied.
     pub head: Identifier<'static>,
     /// the atom's source span.
     pub span: Option<Span>,
 }
 
-impl<'a, T: Into<Identifier<'a>>> From<T> for UnboundHead {
+impl<'a, T: Into<Identifier<'a>>> From<T> for UnboundRef {
     fn from(value: T) -> Self {
         let ident = value.into();
-        UnboundHead {
+        UnboundRef {
             span: ident.span(),
             head: ident.into_owned(),
         }
     }
 }
 
-impl Display for UnboundHead {
+impl Display for UnboundRef {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.head)
     }
@@ -143,53 +143,62 @@ impl Display for UnboundHead {
 
 /// An atom term.
 ///
-/// Atoms can be [bound](BoundHead) or [unbound](UnboundHead).
+/// Atoms can be [bound](BoundRef) or [unbound](UnboundRef).
 /// 1. bound atoms refer to a specific [Function] object and therefore can be type checked directly.
 /// 2. unbound atoms contain only an [Identifier] in place of the applied function, so [name
 ///    resolution](Term::resolve) has to be performed on an unbound term before it can be type
 ///    checked.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, From, Located, Locatable, Transitive)]
 #[allow(clippy::duplicated_attributes)]
-#[transitive(from(Identifier<'static>, UnboundHead))]
-#[transitive(from(Function, BoundHead))]
+#[transitive(from(Identifier<'static>, UnboundRef))]
+#[transitive(from(Function, BoundRef))]
 #[transitive(from(Variable, Function))]
 #[transitive(from(Primitive, Function))]
 #[transitive(from(UserFunction, Function))]
 #[transitive(from(Declared, UserFunction))]
 #[transitive(from(Defined, UserFunction))]
-pub enum AtomHead {
-    Bound(BoundHead),
-    Unbound(UnboundHead),
+pub enum FunctionRef {
+    Bound(BoundRef),
+    Unbound(UnboundRef),
 }
 
-impl Display for AtomHead {
+impl Display for FunctionRef {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            AtomHead::Bound(bound) => bound.fmt(f),
-            AtomHead::Unbound(unbound) => unbound.fmt(f),
+            FunctionRef::Bound(bound) => bound.fmt(f),
+            FunctionRef::Unbound(unbound) => unbound.fmt(f),
+        }
+    }
+}
+
+impl FunctionRef {
+    pub fn name(&self) -> &Identifier<'static> {
+        match self {
+            FunctionRef::Bound(bound) => bound.function.name(),
+            FunctionRef::Unbound(unbound) => &unbound.head
         }
     }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable, Transitive)]
 #[allow(clippy::duplicated_attributes)]
-#[transitive(from(UnboundHead, AtomHead))]
-#[transitive(from(Identifier<'_>, UnboundHead))]
-#[transitive(from(BoundHead, AtomHead))]
-#[transitive(from(Function, BoundHead))]
+#[transitive(from(UnboundRef, FunctionRef))]
+#[transitive(from(Identifier<'_>, UnboundRef))]
+#[transitive(from(BoundRef, FunctionRef))]
+#[transitive(from(Function, BoundRef))]
 #[transitive(from(Variable, Function))]
 #[transitive(from(Primitive, Function))]
 #[transitive(from(UserFunction, Function))]
 #[transitive(from(Declared, UserFunction))]
 #[transitive(from(Defined, UserFunction))]
 pub struct Atom {
-    pub head: AtomHead,
+    pub head: FunctionRef,
     pub arguments: Arc<[Term]>,
     pub span: Option<Span>,
 }
 
-impl From<AtomHead> for Atom {
-    fn from(head: AtomHead) -> Self {
+impl From<FunctionRef> for Atom {
+    fn from(head: FunctionRef) -> Self {
         Atom {
             head,
             arguments: Arc::default(),

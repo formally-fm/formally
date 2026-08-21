@@ -62,10 +62,7 @@ impl Interpreter {
     }
 
     pub(crate) fn sort_to_smt(solver: &smt::Solver, sort: &ast::Sort) -> Result<smt::Sort> {
-        let term = Interpreter::sort_to_smt_term(sort, solver);
-        let term = solver.env().resolve(&term, smt::Role::Sort, solver)?;
-
-        smt::Sort::evaluate(&term)
+        Ok(Interpreter::sort_to_smt_term(sort, solver).try_into()?)
     }
 
     fn constant_to_smt(solver: &smt::Solver, cnst: ast::Constant) -> smt::Term {
@@ -101,7 +98,7 @@ impl Interpreter {
                 let syspan = symbol.span();
                 let head = Identifier::from(symbol.into_inner()).over(syspan);
                 let term = smt::TermKind::Atom(smt::Atom {
-                    head: smt::AtomHead::Unbound(smt::UnboundHead::from(head)),
+                    head: smt::FunctionRef::Unbound(smt::UnboundRef::from(head)),
                     arguments: Arc::from(smtargs.into_boxed_slice()),
                     span: idspan,
                 })
