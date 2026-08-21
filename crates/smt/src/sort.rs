@@ -25,7 +25,7 @@
 use crate::*;
 use formally::support::*;
 
-use derive_more::Display;
+use derive_more::{Display, From};
 use transitive::Transitive;
 
 use std::{
@@ -90,6 +90,48 @@ impl<T: Into<Sort>> From<T> for SortArgument {
     }
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq, From, Transitive)]
+#[allow(clippy::duplicated_attributes)]
+#[transitive(from(Variable, Function))]
+#[transitive(from(Primitive, Function))]
+#[transitive(from(UserFunction, Function))]
+#[transitive(from(Declared, UserFunction))]
+#[transitive(from(Defined, UserFunction))]
+pub enum SortHead {
+    Bound(Function),
+    Unbound(Identifier<'static>),
+}
+
+impl SortHead {
+    pub fn name(&self) -> &Identifier<'static> {
+        match self {
+            SortHead::Bound(bound) => bound.name(),
+            SortHead::Unbound(name) => name,
+        }
+    }
+}
+
+impl From<FunctionRef> for SortHead {
+    fn from(funcref: FunctionRef) -> Self {
+        match funcref {
+            FunctionRef::Bound(bound) => SortHead::Bound(bound.function),
+            FunctionRef::Unbound(unbound) => SortHead::Unbound(unbound.name),
+        }
+    }
+}
+
+impl From<SortHead> for FunctionRef {
+    fn from(head: SortHead) -> Self {
+        match head {
+            SortHead::Bound(function) => FunctionRef::Bound(BoundRef {
+                function,
+                span: None,
+            }),
+            SortHead::Unbound(name) => FunctionRef::Unbound(UnboundRef { name, span: None }),
+        }
+    }
+}
+
 /// An SMT sort.
 ///
 /// Sorts are the types of terms in the SMT lingo, and the [Sort] type is the result of [type
@@ -108,7 +150,7 @@ impl<T: Into<Sort>> From<T> for SortArgument {
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct Sort {
     /// The sort constructor that is being applied.
-    pub head: FunctionRef,
+    pub head: SortHead,
     /// The sort's arguments.
     pub arguments: Vec<SortArgument>,
 }
@@ -116,7 +158,7 @@ pub struct Sort {
 impl<T: Into<Function>> From<T> for Sort {
     fn from(value: T) -> Self {
         Sort {
-            head: FunctionRef::from(value.into()),
+            head: SortHead::Bound(value.into()),
             arguments: Vec::new(),
         }
     }
@@ -125,7 +167,7 @@ impl<T: Into<Function>> From<T> for Sort {
 impl From<Identifier<'_>> for Sort {
     fn from(value: Identifier<'_>) -> Self {
         Sort {
-            head: FunctionRef::Unbound(value.into()),
+            head: SortHead::Unbound(value.into_owned()),
             arguments: Vec::new(),
         }
     }
@@ -165,10 +207,9 @@ impl TryFrom<Term> for Sort {
             }
         }
 
-        Ok(Sort {
-            head: atom.head.clone(),
-            arguments,
-        })
+        let head = SortHead::from(atom.head.clone());
+
+        Ok(Sort { head, arguments })
     }
 }
 
@@ -184,15 +225,15 @@ impl Sort {
         argument: &Sort,
         matches: &mut HashMap<Variable, Sort>,
     ) -> bool {
-        let FunctionRef::Bound(head) = &self.head else {
+        let SortHead::Bound(func) = &self.head else {
             return false;
         };
 
-        let FunctionRef::Bound(arghead) = &argument.head else {
+        let SortHead::Bound(argfunc) = &argument.head else {
             return false;
         };
 
-        match (&head.function, &arghead.function) {
+        match (&func, &argfunc) {
             (Function::Variable(this), _) => {
                 if let Some(this) = matches.get(this).cloned() {
                     this.head == argument.head
@@ -229,7 +270,7 @@ impl Sort {
     #[allow(clippy::mutable_key_type)]
     pub(crate) fn instantiate(&self, matches: &HashMap<Variable, Sort>) -> Result<Sort> {
         match &self.head {
-            FunctionRef::Bound(head) if let Function::Variable(var) = &head.function => {
+            SortHead::Bound(func) if let Function::Variable(var) = &func => {
                 return matches.get(var).cloned().ok_or_else(|| {
                     internal!(
                         None,

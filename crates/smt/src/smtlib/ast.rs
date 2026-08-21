@@ -201,6 +201,7 @@ pub struct SortApplication {
 pub enum Sort {
     Simple(Identifier),
     Application(SortApplication),
+    Term(Box<Term>),
 }
 
 /// A qualified identifier, e.g. `x` or `(as x Int)`

@@ -275,6 +275,42 @@ impl Solver {
         self.env.resolve(term, role, self)
     }
 
+    pub fn variable<'a, S: ToTerm>(
+        &self,
+        name: impl Into<Identifier<'a>>,
+        sort: S,
+        span: Option<Span>,
+    ) -> Result<Variable> {
+        let interned = sort.into_term_in(self);
+        let resolved = self.env.resolve(&interned, Role::Sort, self)?;
+        resolved.type_check()?;
+
+        let sort = Sort::try_from(resolved)?;
+
+        Ok(Variable::new(name.into(), sort, span))
+    }
+
+    pub fn binding<'a, T: ToTerm>(
+        &self,
+        name: impl Into<Identifier<'a>>,
+        def: T,
+        span: Option<Span>,
+    ) -> Result<Binding> {
+        let name = name.into();
+        let namespan = name.span();
+        let interned = def.into_term_in(self);
+        let def = self.resolve(&interned, Role::Function)?;
+        let sort = Sort::of(&def)?;
+
+        let variable = self.variable(name, sort, namespan)?;
+
+        Ok(Binding {
+            variable,
+            def,
+            span,
+        })
+    }
+
     /// Declare a function (or a constant, or a sort).
     ///
     /// As explained in the [overview](formally::smt), [declare()](Solver::declare) registers a
@@ -286,9 +322,18 @@ impl Solver {
     /// Remember that constants are seen as functions with no arguments, and sorts as constants of
     /// the special sort [Sort::sort()]. See also [Declaration::function()],
     /// [Declaration::constant()], and [Declaration::sort()] for details.
-    pub fn declare(&mut self, decl: Declaration) -> Result<Declared> {
-        decl.type_check()?;
-        let decl = Declared::new(decl);
+    pub fn declare<R: ToTerm, B: ToTerm>(&mut self, decl: Declaration<R, B>) -> Result<Declared> {
+        let mut decl = decl.intern(self);
+
+        decl.range = self.env.resolve(&decl.range, Role::Sort, self)?;
+        decl.range.type_check()?;
+
+        for d in &mut decl.domain {
+            *d = self.env.resolve(d, Role::Sort, self)?;
+            d.type_check()?;
+        }
+
+        let decl = Declared::new(decl.commit()?);
         self.backend_solver
             .logic()
             .check_function(&decl.clone().into())?;
@@ -314,12 +359,14 @@ impl Solver {
     /// Remember that constants are seen as functions with no arguments, and sorts as constants of
     /// the special sort [Sort::sort()]. See also [Definition::function()],
     /// [Definition::constant()], and [Definition::sort()] for details.
-    pub fn define<T: ToTerm>(&mut self, def: Definition<T>) -> Result<Defined> {
-        let mut def = def.map(|body| body.into_term_in(self));
+    pub fn define<R: ToTerm, B: ToTerm>(&mut self, def: Definition<R, B>) -> Result<Defined> {
+        let mut def = def.intern(self);
+
+        def.range = self.env().resolve(&def.range, Role::Sort, self)?;
+        def.range.type_check()?;
 
         let mut nested = Env::new().with_parent(self.env());
         for var in &def.domain {
-            var.sort().type_check()?;
             nested
                 .functions
                 .add(var.name(), Function::Variable(var.clone()));
@@ -328,7 +375,7 @@ impl Solver {
         def.body = nested.resolve(&def.body, Role::Function, self)?;
         def.body.type_check()?;
 
-        let def = Defined::new(def);
+        let def = Defined::new(def.commit()?);
         self.backend_solver
             .logic()
             .check_function(&def.clone().into())?;

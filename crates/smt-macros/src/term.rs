@@ -69,6 +69,9 @@ pub enum Term {
 }
 
 #[derive(Clone)]
+pub struct Sort(Atom);
+
+#[derive(Clone)]
 pub struct Atom {
     head: Head,
     args: Vec<TermArgument>,
@@ -81,15 +84,15 @@ pub enum Quantifier {
 }
 
 #[derive(Clone)]
-pub enum Name {
-    Bound(syn::Ident),
-    Unbound(syn::Ident),
+pub struct UnboundVariable {
+    name: syn::Ident,
+    sort: Sort,
 }
 
 #[derive(Clone)]
-pub struct Variable {
-    name: Name,
-    sort: Name,
+pub enum Variable {
+    Bound(syn::Ident),
+    Unbound(UnboundVariable),
 }
 
 #[derive(Clone)]
@@ -220,6 +223,12 @@ impl Parse for Atom {
     }
 }
 
+impl Parse for Sort {
+    fn parse(input: ParseStream) -> Result<Self> {
+        Ok(Sort(input.parse()?))
+    }
+}
+
 impl Parse for Quantifier {
     fn parse(input: ParseStream) -> Result<Self> {
         let lh = input.lookahead1();
@@ -235,25 +244,23 @@ impl Parse for Quantifier {
     }
 }
 
-impl Parse for Name {
+impl Parse for Variable {
     fn parse(input: ParseStream) -> Result<Self> {
-        let lh = input.lookahead1();
-        if lh.peek(Token![#]) {
-            input.parse::<Token![#]>()?;
-            Ok(Name::Bound(input.parse()?))
-        } else if lh.peek(syn::Ident) {
-            Ok(Name::Unbound(input.parse()?))
+        if input.peek(Token![#]) {
+            Ok(Variable::Bound(input.parse()?))
         } else {
-            Err(lh.error())
+            Ok(Variable::Unbound(input.parse()?))
         }
     }
 }
 
-impl Parse for Variable {
+impl Parse for UnboundVariable {
     fn parse(input: ParseStream) -> Result<Self> {
-        Ok(Variable {
-            name: input.parse()?,
-            sort: input.parse()?,
+        let content;
+        parenthesized!(content in input);
+        Ok(UnboundVariable {
+            name: content.parse()?,
+            sort: content.parse()?,
         })
     }
 }
@@ -266,8 +273,8 @@ impl Parse for Quantified {
                 let content;
                 parenthesized!(content in input);
                 let mut vars = Vec::new();
-                while !input.is_empty() {
-                    vars.push(input.parse()?)
+                while !content.is_empty() {
+                    vars.push(content.parse()?)
                 }
                 vars
             },
@@ -317,8 +324,59 @@ impl ToTokens for Term {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Term::Atom(atom) => atom.to_tokens(tokens),
-            Term::Quantified(_) => todo!(),
+            Term::Quantified(quant) => quant.to_tokens(tokens),
         }
+    }
+}
+
+impl ToTokens for Sort {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.0.to_tokens(tokens)
+    }
+}
+
+impl ToTokens for Variable {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Variable::Bound(bound) => tokens.extend(quote! {
+                formally::smt::support::Variable::Bound(#bound)
+            }),
+            Variable::Unbound(unbound) => {
+                let name = unbound.name.to_string();
+                let sort = &unbound.sort;
+
+                tokens.extend(quote! {
+                    formally::smt::support::Variable::Unbound(
+                        formally::smt::support::UnboundVariable {
+                            name: std::borrow::Cow::Borrowed(#name),
+                            sort: #sort
+                        }
+                    )
+                })
+            }
+        }
+    }
+}
+
+impl ToTokens for Quantified {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let quant = match self.quantifier {
+            Quantifier::Forall => quote!(formally::smt::Quantifier::Forall),
+            Quantifier::Exists => quote!(formally::smt::Quantifier::Exists),
+        };
+        let vars = &self.variables;
+        let body = &*self.body;
+
+        tokens.extend(quote! {
+            formally::smt::support::Term::Quantified(
+                formally::smt::support::Quantified {
+                    quantifier: #quant,
+                    variables: &[#(#vars),*],
+                    body: &#body,
+                    span: None
+                }
+            )
+        })
     }
 }
 

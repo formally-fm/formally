@@ -78,7 +78,7 @@ impl From<Term> for ast::Term {
                     FunctionRef::Bound(BoundRef { function, .. }) => {
                         (function.name().clone(), &*atom.arguments)
                     }
-                    FunctionRef::Unbound(UnboundRef { head, .. }) => {
+                    FunctionRef::Unbound(UnboundRef { name: head, .. }) => {
                         (head.clone(), &*atom.arguments)
                     }
                 };
@@ -125,12 +125,25 @@ impl From<Term> for ast::Term {
     }
 }
 
-impl From<Variable> for ast::SortedVar {
-    fn from(var: Variable) -> Self {
-        ast::SortedVar {
-            name: ast::Symbol::from(var.name().clone()),
-            sort: ast::Sort::from(var.sort().clone()),
-            span: var.span().clone(),
+impl From<QuantifiedVariable> for ast::SortedVar {
+    fn from(var: QuantifiedVariable) -> Self {
+        match var {
+            QuantifiedVariable::Bound(bound) => ast::SortedVar {
+                name: ast::Symbol::from(bound.name().clone()),
+                sort: ast::Sort::from(bound.sort().clone()),
+                span: bound.span().clone(),
+            },
+            QuantifiedVariable::Unbound(unbound) => {
+                let sort = match Sort::try_from(unbound.sort.clone()) {
+                    Ok(sort) => ast::Sort::from(sort),
+                    Err(_) => ast::Sort::Term(Box::new(ast::Term::from(unbound.sort.clone()))),
+                };
+                ast::SortedVar {
+                    name: ast::Symbol::from(unbound.name.clone()),
+                    sort,
+                    span: None,
+                }
+            }
         }
     }
 }

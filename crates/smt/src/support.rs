@@ -73,20 +73,20 @@ pub struct Atom<'t> {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct UnboundVariable<'t> {
-    name: Cow<'static, str>,
-    sort: Term<'t>,
+    pub name: Cow<'static, str>,
+    pub sort: Term<'t>,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub enum Variable {
+pub enum Variable<'t> {
     Bound(smt::Variable),
-    Unbound(Cow<'static, str>),
+    Unbound(UnboundVariable<'t>),
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Quantified<'t> {
     pub quantifier: Quantifier,
-    pub variables: &'t [Variable],
+    pub variables: &'t [Variable<'t>],
     pub body: &'t Term<'t>,
     pub span: Option<Span>,
 }
@@ -164,21 +164,44 @@ impl ToTerm for support::Term<'_> {
                     }
                 }
                 match atom.head {
-                    AtomHead::Bound(BoundHead { function }) => TermKind::Atom(smt::Atom {
+                    AtomHead::Bound(BoundHead { function }) => smt::Atom {
                         head: smt::FunctionRef::from(function),
                         arguments: Arc::from(arguments.into_boxed_slice()),
                         span: atom.span,
-                    })
+                    }
                     .into_term_in(pool),
-                    AtomHead::Unbound(UnboundHead { name }) => TermKind::Atom(smt::Atom {
+                    AtomHead::Unbound(UnboundHead { name }) => smt::Atom {
                         head: smt::FunctionRef::from(Identifier::from(name.clone())),
                         arguments: Arc::from(arguments.into_boxed_slice()),
                         span: atom.span,
-                    })
+                    }
                     .into_term_in(pool),
                 }
             }
-            Term::Quantified(_) => todo!(),
+            Term::Quantified(quant) => {
+                let mut variables = Vec::with_capacity(quant.variables.len());
+                for var in quant.variables {
+                    match var {
+                        Variable::Bound(var) => {
+                            variables.push(QuantifiedVariable::Bound(var.clone()))
+                        }
+                        Variable::Unbound(unbound) => {
+                            variables.push(QuantifiedVariable::Unbound(smt::UnboundVariable {
+                                name: Identifier::from(unbound.name.clone()),
+                                sort: unbound.sort.to_term_in(pool),
+                                span: None,
+                            }))
+                        }
+                    }
+                }
+                smt::Quantified {
+                    quantifier: quant.quantifier,
+                    variables: Arc::from(variables.into_boxed_slice()),
+                    body: quant.body.into_term_in(pool),
+                    span: None,
+                }
+                .into_term_in(pool)
+            }
         }
     }
 

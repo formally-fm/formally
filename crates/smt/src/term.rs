@@ -120,7 +120,7 @@ impl Display for BoundRef {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct UnboundRef {
     /// the name of the function that is being applied.
-    pub head: Identifier<'static>,
+    pub name: Identifier<'static>,
     /// the atom's source span.
     pub span: Option<Span>,
 }
@@ -130,14 +130,14 @@ impl<'a, T: Into<Identifier<'a>>> From<T> for UnboundRef {
         let ident = value.into();
         UnboundRef {
             span: ident.span(),
-            head: ident.into_owned(),
+            name: ident.into_owned(),
         }
     }
 }
 
 impl Display for UnboundRef {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.head)
+        write!(f, "{}", self.name)
     }
 }
 
@@ -175,7 +175,7 @@ impl FunctionRef {
     pub fn name(&self) -> &Identifier<'static> {
         match self {
             FunctionRef::Bound(bound) => bound.function.name(),
-            FunctionRef::Unbound(unbound) => &unbound.head
+            FunctionRef::Unbound(unbound) => &unbound.name,
         }
     }
 }
@@ -214,9 +214,22 @@ pub enum Quantifier {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
+pub struct UnboundVariable {
+    pub name: Identifier<'static>,
+    pub sort: Term,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located)]
+pub enum QuantifiedVariable {
+    Bound(Variable),
+    Unbound(UnboundVariable),
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Quantified {
     pub quantifier: Quantifier,
-    pub variables: Arc<[Variable]>,
+    pub variables: Arc<[QuantifiedVariable]>,
     pub body: Term,
     pub span: Option<Span>,
 }

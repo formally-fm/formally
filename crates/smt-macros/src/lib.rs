@@ -90,6 +90,13 @@ pub fn term(input: TokenStream) -> TokenStream {
     quote!(#term).into()
 }
 
+#[proc_macro]
+pub fn sort(input: TokenStream) -> TokenStream {
+    let sort = parse_macro_input!(input as term::Sort);
+
+    quote!(#sort).into()
+}
+
 /// Declare a new SMT-LIBv2 theory.
 ///
 /// This macro automates the process of defining a type suitably implementing the

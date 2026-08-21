@@ -231,18 +231,18 @@ impl Primitive {
 /// provided ([function()](Declaration::function), [constant()](Declaration::constant), and
 /// [sort()](Declaration::sort)), for common cases.
 #[derive(Clone, Debug, Located, Locatable)]
-pub struct Declaration {
+pub struct Declaration<D: ToTerm, R: ToTerm> {
     /// The name of the declared function.
     pub name: Identifier<'static>,
     /// The domain of the declared function, i.e. the sorts of its arguments.
-    pub domain: Vec<Sort>,
+    pub domain: Vec<D>,
     /// The range of the declared function, i.e. its return type.
-    pub range: Sort,
+    pub range: R,
     /// The optional source span the declaration comes from.
     pub span: Option<Span>,
 }
 
-impl Declaration {
+impl<D: ToTerm, R: ToTerm> Declaration<D, R> {
     /// Declare a function (or a constant, or a sort).
     ///
     /// This is the most general constructor. It is more convenient than directly constructing the
@@ -265,9 +265,9 @@ impl Declaration {
     /// ```
     pub fn function<'a>(
         name: impl Into<Identifier<'a>>,
-        domain: impl IntoIterator<Item: Into<Sort>>,
-        range: impl Into<Sort>,
-    ) -> Declaration {
+        domain: impl IntoIterator<Item = D>,
+        range: R,
+    ) -> Declaration<D, R> {
         Declaration {
             name: name.into().into_owned(),
             domain: domain.into_iter().map(Into::into).collect(),
@@ -275,50 +275,89 @@ impl Declaration {
             span: None,
         }
     }
+}
 
+impl<D: ToTerm> Declaration<D, Sort> {
     /// Declare a predicate (i.e. a function returning [Core::Bool()](theories::Core::Bool()).
     ///
     /// This is equivalent to `Declaration::function(name, domain, theories::Core::Bool())`.
     pub fn predicate<'a>(
         name: impl Into<Identifier<'a>>,
-        domain: impl IntoIterator<Item: Into<Sort>>,
-    ) -> Declaration {
+        domain: impl IntoIterator<Item = D>,
+    ) -> Declaration<D, Sort> {
         Declaration::function(name, domain, theories::Core::Bool())
     }
+}
 
+impl<R: ToTerm> Declaration<Sort, R> {
     /// Declare a constant (i.e. a function with no arguments).
     ///
     /// This is equivalent to `Declaration::function(name, Vec::<Sort>::new(), sort)`.
-    pub fn constant<'a>(name: impl Into<Identifier<'a>>, sort: impl Into<Sort>) -> Declaration {
+    pub fn constant<'a>(name: impl Into<Identifier<'a>>, sort: R) -> Declaration<Sort, R> {
         Declaration::function(name, Vec::<Sort>::new(), sort)
     }
+}
 
+impl Declaration<Sort, Sort> {
     /// Declare a sort (i.e. a constant of the special sort [Sort::sort()]).
     ///
     /// This is equivalent to `Declaration::constant(name, Sort::sort())`.
-    pub fn sort<'a>(name: impl Into<Identifier<'a>>) -> Declaration {
+    pub fn sort<'a>(name: impl Into<Identifier<'a>>) -> Declaration<Sort, Sort> {
         Declaration::constant(name, Sort::sort())
     }
 
     /// Declare a Boolean constant (i.e. a constant of sort [Core::Bool()](theories::Core::Bool()).
     ///
     /// This is equivalent to `Declaration::constant(name, theories::Core::Bool())`.
-    pub fn boolean<'a>(name: impl Into<Identifier<'a>>) -> Declaration {
+    pub fn boolean<'a>(name: impl Into<Identifier<'a>>) -> Declaration<Sort, Sort> {
         Declaration::constant(name, theories::Core::Bool())
     }
 
     /// Declare an integer constant (i.e. a constant of sort [Ints::Int()](theories::Ints::Int()).
     ///
     /// This is equivalent to `Declaration::constant(name, theories::Ints::Int())`.
-    pub fn integer<'a>(name: impl Into<Identifier<'a>>) -> Declaration {
+    pub fn integer<'a>(name: impl Into<Identifier<'a>>) -> Declaration<Sort, Sort> {
         Declaration::constant(name, theories::Ints::Int())
     }
 
     /// Declare a real constant (i.e. a constant of sort [Reals::Real()](theories::Reals::Real()).
     ///
     /// This is equivalent to `Declaration::constant(name, theories::Reals::Real())`.
-    pub fn real<'a>(name: impl Into<Identifier<'a>>) -> Declaration {
+    pub fn real<'a>(name: impl Into<Identifier<'a>>) -> Declaration<Sort, Sort> {
         Declaration::constant(name, theories::Reals::Real())
+    }
+}
+
+impl<D: ToTerm, R: ToTerm> Declaration<D, R> {
+    pub(crate) fn intern(self, pool: &dyn TermPool) -> Declaration<Term, Term> {
+        let mut domain = Vec::with_capacity(self.domain.len());
+        for s in self.domain {
+            domain.push(s.into_term_in(pool));
+        }
+        let range = self.range.into_term_in(pool);
+        Declaration {
+            name: self.name,
+            domain,
+            range,
+            span: None,
+        }
+    }
+}
+
+impl Declaration<Term, Term> {
+    pub(crate) fn commit(self) -> Result<Declaration<Sort, Sort>> {
+        let mut domain = Vec::with_capacity(self.domain.len());
+        for s in self.domain {
+            domain.push(Sort::try_from(s)?);
+        }
+        let range = Sort::try_from(self.range)?;
+
+        Ok(Declaration {
+            name: self.name,
+            domain,
+            range,
+            span: None,
+        })
     }
 }
 
@@ -336,10 +375,10 @@ impl Declaration {
 /// *equal* to the first. Under the hood, this is the behavior of `Nominal<Arc<Declaration>>`, so we
 /// also refer to the [Nominal] type for details.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located, Deref)]
-pub struct Declared(Nominal<Arc<Declaration>>);
+pub struct Declared(Nominal<Arc<Declaration<Sort, Sort>>>);
 
 impl Declared {
-    pub(crate) fn new(decl: Declaration) -> Declared {
+    pub(crate) fn new(decl: Declaration<Sort, Sort>) -> Declared {
         Declared(Nominal(Arc::new(decl)))
     }
 }
@@ -355,15 +394,15 @@ impl Declared {
 /// provided ([function()](Definition::function), [constant()](Definition::constant), and
 /// [sort()](Definition::sort)), for common cases.
 #[derive(Clone, Debug, Located, Locatable)]
-pub struct Definition<T: ToTerm> {
+pub struct Definition<R: ToTerm, B: ToTerm> {
     pub name: Identifier<'static>,
     pub domain: Vec<Variable>,
-    pub range: Sort,
-    pub body: T,
+    pub range: R,
+    pub body: B,
     pub span: Option<Span>,
 }
 
-impl<T: ToTerm> Definition<T> {
+impl<R: ToTerm, B: ToTerm> Definition<R, B> {
     /// Define a function (or a constant, or a sort).
     ///
     /// This is the most general constructor. It is more convenient than directly constructing the
@@ -401,38 +440,36 @@ impl<T: ToTerm> Definition<T> {
     pub fn function<'a>(
         name: impl Into<Identifier<'a>>,
         domain: impl IntoIterator<Item = Variable>,
-        range: impl Into<Sort>,
-        body: T,
-    ) -> Definition<T> {
+        range: R,
+        body: B,
+    ) -> Definition<R, B> {
         Definition {
             name: name.into().into_owned(),
             domain: domain.into_iter().collect(),
-            range: range.into(),
+            range,
             body,
             span: None,
         }
     }
 
+    /// Define a constant (i.e. a function with no arguments).
+    ///
+    /// This is equivalent to `Definition::function(name, [], sort, body)`.
+    pub fn constant<'a>(name: impl Into<Identifier<'a>>, sort: R, body: B) -> Definition<R, B> {
+        Definition::function(name, [], sort, body)
+    }
+}
+
+impl<B: ToTerm> Definition<Sort, B> {
     /// Define a predicate (i.e. a function returning [Core::Bool()](theories::Core::Bool()).
     ///
     /// This is equivalent to `Definition::function(name, domain, theories::Core::Bool(), body)`.
     pub fn predicate<'a>(
         name: impl Into<Identifier<'a>>,
         domain: impl IntoIterator<Item = Variable>,
-        body: T,
-    ) -> Definition<T> {
+        body: B,
+    ) -> Definition<Sort, B> {
         Definition::function(name, domain, theories::Core::Bool(), body)
-    }
-
-    /// Define a constant (i.e. a function with no arguments).
-    ///
-    /// This is equivalent to `Definition::function(name, [], sort, body)`.
-    pub fn constant<'a>(
-        name: impl Into<Identifier<'a>>,
-        sort: impl Into<Sort>,
-        body: T,
-    ) -> Definition<T> {
-        Definition::function(name, [], sort, body)
     }
 
     /// Define a parametric sort (i.e. a function returning the special sort [Sort::sort()]).
@@ -441,40 +478,54 @@ impl<T: ToTerm> Definition<T> {
     pub fn sort<'a>(
         name: impl Into<Identifier<'a>>,
         domain: impl IntoIterator<Item = Variable>,
-        body: T,
-    ) -> Definition<T> {
+        body: B,
+    ) -> Definition<Sort, B> {
         Definition::function(name, domain, Sort::sort(), body)
     }
 
     /// Define a Boolean constant (i.e. a constant of sort [Core::Bool()](theories::Core::Bool()).
     ///
     /// This is equivalent to `Definition::constant(name, theories::Core::Bool(), value)`.
-    pub fn boolean<'a>(name: impl Into<Identifier<'a>>, value: T) -> Definition<T> {
+    pub fn boolean<'a>(name: impl Into<Identifier<'a>>, value: B) -> Definition<Sort, B> {
         Definition::constant(name, theories::Core::Bool(), value)
     }
 
     /// Define an integer constant (i.e. a constant of sort [Ints::Int()](theories::Ints::Int()).
     ///
     /// This is equivalent to `Definition::constant(name, theories::Ints::Int(), value)`.
-    pub fn integer<'a>(name: impl Into<Identifier<'a>>, value: T) -> Definition<T> {
+    pub fn integer<'a>(name: impl Into<Identifier<'a>>, value: B) -> Definition<Sort, B> {
         Definition::constant(name, theories::Ints::Int(), value)
     }
 
     /// Define a real constant (i.e. a constant of sort [Reals::Real()](theories::Reals::Real()).
     ///
     /// This is equivalent to `Definition::constant(name, theories::Reals::Real(), value)`.
-    pub fn real<'a>(name: impl Into<Identifier<'a>>, value: T) -> Definition<T> {
+    pub fn real<'a>(name: impl Into<Identifier<'a>>, value: B) -> Definition<Sort, B> {
         Definition::constant(name, theories::Reals::Real(), value)
     }
+}
 
-    pub fn map<U: ToTerm>(self, f: impl FnOnce(T) -> U) -> Definition<U> {
+impl<R: ToTerm, B: ToTerm> Definition<R, B> {
+    pub(crate) fn intern(self, pool: &dyn TermPool) -> Definition<Term, Term> {
         Definition {
             name: self.name,
             domain: self.domain,
-            range: self.range,
-            body: f(self.body),
+            range: self.range.into_term_in(pool),
+            body: self.body.into_term_in(pool),
             span: self.span,
         }
+    }
+}
+
+impl Definition<Term, Term> {
+    pub(crate) fn commit(self) -> Result<Definition<Sort, Term>> {
+        Ok(Definition {
+            name: self.name,
+            domain: self.domain,
+            range: Sort::try_from(self.range)?,
+            body: self.body,
+            span: self.span,
+        })
     }
 }
 
@@ -492,10 +543,10 @@ impl<T: ToTerm> Definition<T> {
 /// *equal* to the first. Under the hood, this is the behavior of `Nominal<Arc<Definition>>`, so we
 /// also refer to the [Nominal] type for details.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located, Deref)]
-pub struct Defined(Nominal<Arc<Definition<Term>>>);
+pub struct Defined(Nominal<Arc<Definition<Sort, Term>>>);
 
 impl Defined {
-    pub(crate) fn new(def: Definition<Term>) -> Defined {
+    pub(crate) fn new(def: Definition<Sort, Term>) -> Defined {
         Defined(Nominal(Arc::new(def)))
     }
 }
@@ -524,7 +575,7 @@ pub enum Function {
 
 impl Function {
     /// Get the name of the function.
-    pub fn name(&self) -> &Identifier<'_> {
+    pub fn name(&self) -> &Identifier<'static> {
         match self {
             Function::Variable(var) => var.name(),
             Function::Primitive(prim) => prim.name(),
@@ -582,7 +633,7 @@ pub enum UserFunction {
 
 impl UserFunction {
     /// Get the name of the function.
-    pub fn name(&self) -> &Identifier<'_> {
+    pub fn name(&self) -> &Identifier<'static> {
         match self {
             UserFunction::Declared(decl) => &decl.name,
             UserFunction::Defined(def) => &def.name,

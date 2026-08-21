@@ -322,7 +322,7 @@ impl ToTerm for Sort {
         }
 
         Atom {
-            head: self.head,
+            head: FunctionRef::from(self.head.clone()),
             arguments: Arc::from(arguments.into_boxed_slice()),
             span: None,
         }

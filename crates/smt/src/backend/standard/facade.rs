@@ -22,7 +22,7 @@
 // SOFTWARE.
 //
 
-use crate::formally;
+use crate::{QuantifiedVariable, formally};
 use formally::smt::{
     self,
     backend::{
@@ -197,10 +197,18 @@ impl<M: Manager> ManagerFacade<M> {
     }
 
     pub fn sort(&self, sort: &smt::Sort) -> Result<M::Sort> {
-        match &self.function(&sort.head)? {
-            smt::Function::Variable(_) => unreachable!(),
-            smt::Function::Primitive(_) => self.prim_sort(sort),
-            smt::Function::User(user) => self.user_sort(sort, user),
+        match &sort.head {
+            smt::SortHead::Bound(func) => match func {
+                smt::Function::Variable(_) => unreachable!(),
+                smt::Function::Primitive(_) => self.prim_sort(sort),
+                smt::Function::User(user) => self.user_sort(sort, user),
+            },
+            smt::SortHead::Unbound(name) => Err(backend::Error::new(
+                self.manager.backend().name(),
+                backend::ErrorKind::ViolatedPrecondition(format!(
+                    "an unresolved symbol reached the backend: `{name}`"
+                )),
+            )),
         }
     }
 
@@ -266,16 +274,6 @@ impl<M: Manager> ManagerFacade<M> {
         self.defs.borrow_mut().insert(def, func);
 
         Ok(())
-    }
-
-    fn function<'f>(&self, func: &'f smt::FunctionRef) -> Result<&'f smt::Function> {
-        match func {
-            smt::FunctionRef::Bound(bound) => Ok(&bound.function),
-            smt::FunctionRef::Unbound(_) => Err(backend::Error::new(
-                self.manager.backend().name(),
-                backend::ErrorKind::ViolatedPrecondition("an unresolved".into()),
-            )),
-        }
     }
 
     fn sort_argument_to_sort(&self, arg: &smt::SortArgument) -> Result<M::Sort> {
@@ -347,8 +345,8 @@ impl<M: Manager> ManagerFacade<M> {
             smt::FunctionRef::Unbound(unbound) => Err(backend::Error::new(
                 self.manager.backend().name(),
                 backend::ErrorKind::ViolatedPrecondition(format!(
-                    "unbound variable in term: `{}`",
-                    unbound.head
+                    "an unresolved symbol reached the backend: `{}`",
+                    unbound.name
                 )),
             )),
         }
@@ -445,8 +443,20 @@ impl<M: Manager> ManagerFacade<M> {
 
         let mut vars = Vec::new();
         for var in &*quant.variables {
-            vars.push(self.variable(var)?);
-            bindmap.remove_mut(var);
+            match var {
+                QuantifiedVariable::Bound(var) => {
+                    vars.push(self.variable(var)?);
+                    bindmap.remove_mut(var);
+                }
+                QuantifiedVariable::Unbound(_) => {
+                    return Err(backend::Error::new(
+                        self.manager.backend().name(),
+                        backend::ErrorKind::ViolatedPrecondition(
+                            "an unbound quantified variable reached the backend".into(),
+                        ),
+                    ));
+                }
+            }
         }
 
         let body = self.term(&quant.body, &bindmap)?;

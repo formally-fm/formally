@@ -31,8 +31,8 @@ fn solve() -> Result<()> {
     let config = Config::new().produce_models(true);
     let mut solver = Solver::new_with_manager(&config, manager)?;
 
-    let p = solver.declare(Declaration::constant("p", theories::Core::Bool()))?;
-    let q = solver.declare(Declaration::constant("q", theories::Core::Bool()))?;
+    let p = solver.declare(Declaration::constant("p", sort!(Bool)))?;
+    let q = solver.declare(Declaration::constant("q", sort!(Bool)))?;
 
     solver.require(term!(=> #p #q))?;
 
@@ -55,6 +55,19 @@ fn solve() -> Result<()> {
         },
         _ => panic!("wrong answer: {answer:?}"),
     }
+
+    Ok(())
+}
+
+#[test]
+fn quantified() -> Result<()> {
+    let manager = TermManager::new(Z3);
+    let config = Config::new().logic("LIA");
+    let mut solver = Solver::new_with_manager(&config, manager)?;
+
+    solver.require(term!(forall ((x Int)) (exists ((y Int)) (> x y))))?;
+
+    assert_eq!(solver.check()?, Answer::Yes);
 
     Ok(())
 }

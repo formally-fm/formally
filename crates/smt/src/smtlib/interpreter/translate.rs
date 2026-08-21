@@ -22,7 +22,7 @@
 // SOFTWARE.
 //
 
-use crate::formally;
+use crate::{QuantifiedVariable, formally};
 use formally::{
     smt::{
         self, ToTerm,
@@ -69,7 +69,7 @@ impl Interpreter {
         let span = cnst.span();
         let cnst = match cnst {
             ast::Constant::Numeral(n) => smt::Constant::from(n.value),
-            ast::Constant::Decimal(_) => todo!(),
+            ast::Constant::Decimal(d) => smt::Constant::from(d.value),
             ast::Constant::Hexadecimal(n) => smt::Constant::from(n.value),
             ast::Constant::Binary(n) => smt::Constant::from(n.value),
             ast::Constant::String(_) => todo!(),
@@ -124,14 +124,18 @@ impl Interpreter {
             ast::Term::Let(let_) => {
                 let mut bindings = Vec::new();
                 for bind in let_.bindings {
-                    bindings.push(Interpreter::binding_to_binding(solver, bind)?)
+                    bindings.push(solver.binding(
+                        bind.name.inner(),
+                        Interpreter::term_to_smt(solver, bind.body)?,
+                        bind.span.clone(),
+                    )?)
                 }
                 let body = Interpreter::term_to_smt(solver, *let_.body)?;
-                let term = smt::TermKind::Let(smt::Let {
+                let term = smt::Let {
                     bindings: Arc::from(bindings.into_boxed_slice()),
                     body,
                     span: let_.span.clone(),
-                })
+                }
                 .into_term_in(solver);
 
                 Ok(term)
@@ -140,15 +144,17 @@ impl Interpreter {
             ast::Term::Exists(exists) => {
                 let mut variables = Vec::new();
                 for var in exists.bindings {
-                    variables.push(Interpreter::sorted_var_to_variable(solver, var)?)
+                    variables.push(QuantifiedVariable::Unbound(
+                        Interpreter::sorted_var_to_variable(solver, var)?,
+                    ))
                 }
                 let body = Interpreter::term_to_smt(solver, *exists.body)?;
-                let term = smt::TermKind::Quantified(smt::Quantified {
+                let term = smt::Quantified {
                     quantifier: smt::Quantifier::Exists,
                     variables: Arc::from(variables.into_boxed_slice()),
                     body,
                     span: exists.span.clone(),
-                })
+                }
                 .into_term_in(solver);
 
                 Ok(term)
@@ -156,7 +162,9 @@ impl Interpreter {
             ast::Term::Forall(forall) => {
                 let mut variables = Vec::new();
                 for var in forall.bindings {
-                    variables.push(Interpreter::sorted_var_to_variable(solver, var)?)
+                    variables.push(QuantifiedVariable::Unbound(
+                        Interpreter::sorted_var_to_variable(solver, var)?,
+                    ))
                 }
                 let body = Interpreter::term_to_smt(solver, *forall.body)?;
                 let term = smt::TermKind::Quantified(smt::Quantified {
@@ -174,26 +182,14 @@ impl Interpreter {
         }
     }
 
-    fn sorted_var_to_variable(solver: &smt::Solver, var: ast::SortedVar) -> Result<smt::Variable> {
-        Ok(smt::Variable::new(
-            Identifier::from(var.name.inner()),
-            Interpreter::sort_to_smt(solver, &var.sort)?,
-            var.span.clone(),
-        ))
-    }
-
-    fn binding_to_binding(solver: &smt::Solver, bind: ast::Binding) -> Result<smt::Binding> {
-        let def = Interpreter::term_to_smt(solver, bind.body)?;
-        let sort = smt::Sort::of(&def)?;
-
-        Ok(smt::Binding {
-            variable: smt::Variable::new(
-                Identifier::from(bind.name.inner()),
-                sort,
-                bind.name.span(),
-            ),
-            def,
-            span: bind.span.clone(),
+    fn sorted_var_to_variable(
+        solver: &smt::Solver,
+        var: ast::SortedVar,
+    ) -> Result<smt::UnboundVariable> {
+        Ok(smt::UnboundVariable {
+            name: Identifier::from(var.name.inner().to_string()),
+            sort: Interpreter::sort_to_smt_term(&var.sort, solver),
+            span: var.span.clone(),
         })
     }
 }

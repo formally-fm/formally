@@ -108,7 +108,7 @@ impl Env {
         role: Role,
         pool: &dyn TermPool,
     ) -> Result<Atom> {
-        let head = Identifier::from(unbound.head.name()).over(unbound.head.span());
+        let head = Identifier::from(unbound.name.name()).over(unbound.name.span());
 
         self.lookup(head.clone(), role)
             .filter_map(move |f| {
@@ -149,16 +149,33 @@ impl Env {
     ) -> Result<Quantified> {
         let mut env = Env::new().with_parent(self.clone());
 
+        let mut variables = Vec::with_capacity(quant.variables.len());
         for var in &*quant.variables {
-            env.functions
-                .add(var.name().name(), Function::from(var.clone()));
+            match var {
+                QuantifiedVariable::Bound(var) => {
+                    variables.push(QuantifiedVariable::Bound(var.clone()));
+                    env.functions
+                        .add(var.name().name(), Function::from(var.clone()));
+                }
+                QuantifiedVariable::Unbound(unbound) => {
+                    let resolved = self.resolve(&unbound.sort, Role::Sort, pool)?;
+                    resolved.type_check()?;
+                    let sort = Sort::try_from(resolved)?;
+
+                    let var = Variable::new(unbound.name.clone(), sort, unbound.span.clone());
+
+                    variables.push(QuantifiedVariable::Bound(var.clone()));
+                    env.functions
+                        .add(var.name().name(), Function::from(var.clone()));
+                }
+            }
         }
 
         let body = env.resolve(&quant.body, role, pool)?;
 
         Ok(Quantified {
             quantifier: quant.quantifier,
-            variables: quant.variables.clone(),
+            variables: Arc::from(variables.into_boxed_slice()),
             body,
             span: quant.span.clone(),
         })
