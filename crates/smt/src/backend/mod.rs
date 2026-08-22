@@ -29,7 +29,7 @@
 //! *Currently* only the [Z3](z3::Z3) is provided, but other ones will follow soon.
 //!
 //! The backend is chosen when instantiating a [TermManager](smt::TermManager) or, as a shortcut,
-//! with the [Solver::new_with_backend()](smt::Solver::new_with_backend) function when constructing
+//! with the [Solver::new_with_backend()](smt::Solver::with_backend) function when constructing
 //! a [Solver](smt::Solver).
 //!
 //! ```
@@ -42,7 +42,7 @@
 //! # fn main() -> Result<()> {
 //! let config = Config::default();
 //! let manager = TermManager::new(Z3);
-//! let solver = Solver::new_with_manager(&config, manager)?;
+//! let solver = Solver::with_manager(&config, manager)?;
 //!
 //! // ...
 //!

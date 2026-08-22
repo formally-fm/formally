@@ -270,8 +270,8 @@ impl<D: ToTerm, R: ToTerm> Declaration<D, R> {
     ) -> Declaration<D, R> {
         Declaration {
             name: name.into().into_owned(),
-            domain: domain.into_iter().map(Into::into).collect(),
-            range: range.into(),
+            domain: domain.into_iter().collect(),
+            range,
             span: None,
         }
     }

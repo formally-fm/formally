@@ -190,6 +190,7 @@ impl standard::Manager for Manager {
     type FuncDecl = cvc5::Term;
     type Sort = cvc5::Sort;
     type Term = cvc5::Term;
+    const FUNC_DEF_SUPPORTED: bool = true;
 
     fn backend(&self) -> &Self::Backend {
         &Cvc5

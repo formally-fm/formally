@@ -346,7 +346,7 @@ impl Context {
         Ast::new(self, unsafe { Z3_mk_is_int(self.ctx, arg.ast).unwrap() })
     }
 
-    pub fn mk_rec_func_decl(&self, name: &str, domain: &[Sort], range: Sort) -> FuncDecl {
+    pub fn _mk_rec_func_decl(&self, name: &str, domain: &[Sort], range: Sort) -> FuncDecl {
         let name = CString::new(name.as_bytes()).unwrap();
         let domain = domain.iter().map(|s| s.sort).collect_vec();
 
@@ -362,7 +362,7 @@ impl Context {
         })
     }
 
-    pub fn add_rec_def(&self, func: &FuncDecl, args: &[Ast], body: Ast) {
+    pub fn _add_rec_def(&self, func: &FuncDecl, args: &[Ast], body: Ast) {
         let mut args = args.iter().map(|arg| arg.ast).collect_vec();
         unsafe {
             Z3_add_rec_def(
@@ -415,6 +415,10 @@ impl Context {
             )
             .unwrap()
         })
+    }
+
+    pub fn simplify(&self, ast: Ast) -> Ast {
+        Ast::new(self, unsafe { Z3_simplify(self.ctx, ast.ast).unwrap() })
     }
 }
 

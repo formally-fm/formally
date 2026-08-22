@@ -166,7 +166,7 @@
 //! [Solver], in turn, does not handle terms itself, but uses an instance of [TermManager]. The
 //! latter is a type with the purpose of handling terms and their corresponding handles in the
 //! currently selected SMT backend. A [TermManager] instance can be shared between multiple
-//! [Solver]s created with the [Solver::new_with_manager()] constructor. The terms obtained through
+//! [Solver]s created with the [Solver::with_manager()] constructor. The terms obtained through
 //! the same [TermManager] can be freely used in different solvers and are converted to the
 //! underlying SMT backend handles only once.
 //!
@@ -229,7 +229,7 @@
 //!
 //! assert_eq!(solver.check()?, Answer::Yes);
 //!
-//! assert_eq!(solver.model()?.unwrap().value(p), Some(ModelValue::Boolean(true)));
+//! assert_eq!(solver.model()?.unwrap().value(p)?, Some(ModelValue::Boolean(true)));
 //! # Ok(())
 //! # }
 //! ```

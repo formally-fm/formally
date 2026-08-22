@@ -22,7 +22,7 @@
 // SOFTWARE.
 //
 
-use crate::{QuantifiedVariable, formally};
+use crate::formally;
 use formally::smt::{
     self,
     backend::{
@@ -165,6 +165,14 @@ impl<S: Solver> SolverFacade<S> {
 
 impl<'s, S: 's + Solver> backend::ModelProvider for ModelFacade<'s, S> {
     fn value(&self, term: &smt::Term) -> Option<smt::ModelValue> {
+        if let smt::TermKind::Atom(atom) = term.kind()
+            && let smt::FunctionRef::Bound(bound) = &atom.head
+            && let smt::BoundRef { function, .. } = bound
+            && let smt::Function::User(smt::UserFunction::Defined(def)) = function
+        {
+            return self.value(&def.body);
+        }
+
         let term = self
             .solver
             .manager
@@ -254,6 +262,10 @@ impl<M: Manager> ManagerFacade<M> {
     }
 
     pub fn define(&self, solver: &M::Solver, def: smt::Defined) -> Result<()> {
+        if !M::FUNC_DEF_SUPPORTED {
+            return Ok(());
+        }
+
         if self.defs.borrow().contains_key(&def) {
             return Ok(());
         }
@@ -270,7 +282,6 @@ impl<M: Manager> ManagerFacade<M> {
         let func = self
             .manager
             .func_def(solver, def.name.name(), &sorts, range, &args, body)?;
-
         self.defs.borrow_mut().insert(def, func);
 
         Ok(())
@@ -423,19 +434,22 @@ impl<M: Manager> ManagerFacade<M> {
         arguments: &[smt::Term],
         bindmap: &BindMap<M::Term>,
     ) -> Result<M::Term> {
-        let arguments = self.terms(arguments, bindmap)?;
-
-        if let Some(func) = self.defs.borrow().get(def) {
-            return self.manager.application(func, &arguments);
+        if M::FUNC_DEF_SUPPORTED {
+            let arguments = self.terms(arguments, bindmap)?;
+            if let Some(func) = self.defs.borrow().get(def) {
+                self.manager.application(func, &arguments)
+            } else {
+                Err(backend::Error::new(
+                    self.manager.backend().name(),
+                    backend::ErrorKind::ViolatedPrecondition(format!(
+                        "use of unknown function declaration: `{}`",
+                        def.name
+                    )),
+                ))
+            }
+        } else {
+            self.term(&def.body, &BindMap::new())
         }
-
-        Err(backend::Error::new(
-            self.manager.backend().name(),
-            backend::ErrorKind::ViolatedPrecondition(format!(
-                "use of unknown function declaration: `{}`",
-                def.name
-            )),
-        ))
     }
 
     fn quant(&self, quant: &smt::Quantified, bindmap: &BindMap<M::Term>) -> Result<M::Term> {
@@ -444,11 +458,11 @@ impl<M: Manager> ManagerFacade<M> {
         let mut vars = Vec::new();
         for var in &*quant.variables {
             match var {
-                QuantifiedVariable::Bound(var) => {
+                smt::QuantifiedVariable::Bound(var) => {
                     vars.push(self.variable(var)?);
                     bindmap.remove_mut(var);
                 }
-                QuantifiedVariable::Unbound(_) => {
+                smt::QuantifiedVariable::Unbound(_) => {
                     return Err(backend::Error::new(
                         self.manager.backend().name(),
                         backend::ErrorKind::ViolatedPrecondition(

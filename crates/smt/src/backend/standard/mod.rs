@@ -44,6 +44,7 @@ pub trait Manager: Default + Sized {
     type FuncDecl: Clone;
     type Sort: Clone;
     type Term: Clone;
+    const FUNC_DEF_SUPPORTED: bool = false;
 
     fn backend(&self) -> &Self::Backend;
 
@@ -57,6 +58,7 @@ pub trait Manager: Default + Sized {
         range: Self::Sort,
     ) -> Result<Self::FuncDecl>;
 
+    #[allow(unused)]
     fn func_def(
         &self,
         solver: &Self::Solver,
@@ -65,7 +67,9 @@ pub trait Manager: Default + Sized {
         range: Self::Sort,
         bindings: &[Self::Term],
         body: Self::Term,
-    ) -> Result<Self::FuncDecl>;
+    ) -> Result<Self::FuncDecl> {
+        unreachable!()
+    }
 
     fn variable(&self, name: &str, sort: Self::Sort) -> Result<Self::Term>;
 

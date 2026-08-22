@@ -451,7 +451,7 @@ impl Interpreter {
                                 let symbol = Identifier::from(symbol.inner()).over(symbol.span());
                                 let functions = state.solver.functions();
                                 let function = functions.lookup(symbol.clone()).one()?;
-                                let value = model.value(function);
+                                let value = model.value(function)?;
 
                                 if let Some(value) = value {
                                     values.push((

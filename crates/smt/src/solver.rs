@@ -31,10 +31,11 @@ use formally::{
     support::*,
 };
 
-use crate::type_check::TypeCheck;
 use derive_more::From;
+use transitive::Transitive;
+
 use std::{
-    fmt::{Debug, Formatter},
+    fmt::{Debug, Display, Formatter},
     rc::Rc,
 };
 
@@ -222,7 +223,7 @@ pub struct Solver {
 }
 
 impl Solver {
-    pub fn new_with_manager(
+    pub fn with_manager(
         config: &Config,
         manager: impl Into<Rc<TermManager>>,
     ) -> Result<Solver> {
@@ -238,12 +239,12 @@ impl Solver {
         })
     }
 
-    pub fn new_with_backend(config: &Config, backend: impl Backend) -> Result<Solver> {
-        Solver::new_with_manager(config, TermManager::new(backend))
+    pub fn with_backend(config: &Config, backend: impl Backend) -> Result<Solver> {
+        Solver::with_manager(config, TermManager::new(backend))
     }
 
     pub fn new(config: &Config) -> Result<Solver> {
-        Solver::new_with_manager(config, TermManager::default())
+        Solver::with_manager(config, TermManager::default())
     }
 
     /// Get the currently selected [Logic].
@@ -275,19 +276,25 @@ impl Solver {
         self.env.resolve(term, role, self)
     }
 
+    pub fn lookup(&self, term: impl ToTerm, role: Role) -> Result<Term> {
+        let interned = term.into_term_in(self);
+        let resolved = self.resolve(&interned, role)?;
+        resolved.type_check()?;
+
+        Ok(resolved)
+    }
+
     pub fn variable<'a, S: ToTerm>(
         &self,
         name: impl Into<Identifier<'a>>,
         sort: S,
         span: Option<Span>,
     ) -> Result<Variable> {
-        let interned = sort.into_term_in(self);
-        let resolved = self.env.resolve(&interned, Role::Sort, self)?;
-        resolved.type_check()?;
-
-        let sort = Sort::try_from(resolved)?;
-
-        Ok(Variable::new(name.into(), sort, span))
+        Ok(Variable::new(
+            name.into(),
+            Sort::try_from(self.lookup(sort, Role::Sort)?)?,
+            span,
+        ))
     }
 
     pub fn binding<'a, T: ToTerm>(
@@ -298,8 +305,7 @@ impl Solver {
     ) -> Result<Binding> {
         let name = name.into();
         let namespan = name.span();
-        let interned = def.into_term_in(self);
-        let def = self.resolve(&interned, Role::Function)?;
+        let def = self.lookup(def, Role::Function)?;
         let sort = Sort::of(&def)?;
 
         let variable = self.variable(name, sort, namespan)?;
@@ -473,7 +479,10 @@ impl Stack for Solver {
 }
 
 /// Represent a value from a model.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, From)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, From, Transitive)]
+#[allow(clippy::duplicated_attributes)]
+#[transitive(from(Integer, Constant))]
+#[transitive(from(Rational, Constant))]
 pub enum ModelValue {
     /// A Boolean value, model (assignment) of a Boolean declaration.
     Boolean(bool),
@@ -487,6 +496,17 @@ impl From<ModelValue> for TermKind {
         match value {
             ModelValue::Boolean(b) => TermKind::from(b),
             ModelValue::Constant(c) => TermKind::from(c),
+        }
+    }
+}
+
+impl Display for ModelValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ModelValue::Boolean(true) => write!(f, "True"),
+            ModelValue::Boolean(false) => write!(f, "False"),
+            ModelValue::Constant(Constant::Integer { value, .. }) => write!(f, "{value}"),
+            ModelValue::Constant(Constant::Rational { value, .. }) => write!(f, "{value}"),
         }
     }
 }
@@ -535,7 +555,9 @@ pub struct Model<'s> {
 }
 
 impl Model<'_> {
-    pub fn value(&self, term: impl ToTerm) -> Option<ModelValue> {
-        self.provider.value(&term.into_term_in(self.solver))
+    pub fn value(&self, term: impl ToTerm) -> Result<Option<ModelValue>> {
+        Ok(self
+            .provider
+            .value(&self.solver.lookup(term, Role::Function)?))
     }
 }

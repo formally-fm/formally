@@ -178,7 +178,7 @@ impl standard::Model for Model<'_> {
     type Term = z3::Ast;
 
     fn value(&self, term: Self::Term) -> Option<smt::ModelValue> {
-        let result = self.model.eval(&term)?;
+        let result = self.solver.z3context.simplify(self.model.eval(&term)?);
 
         match self.solver.z3context.get_bool_value(result.clone()) {
             z3::Z3_L_FALSE => {
@@ -190,18 +190,19 @@ impl standard::Model for Model<'_> {
             _ => {}
         }
 
-        if result.kind() != z3::AstKind::Numeral {
-            return None;
-        }
+        match result.kind() {
+            z3::AstKind::Numeral => {
+                let string = result.get_numeral_string();
 
-        let string = result.get_numeral_string();
-
-        match rug::Integer::from_str_radix(&string, 10) {
-            Ok(int) => Some(smt::ModelValue::from(smt::Constant::from(int))),
-            Err(_) => match rug::Rational::from_str_radix(&string, 10) {
-                Ok(rat) => Some(smt::ModelValue::from(smt::Constant::from(rat))),
-                Err(_) => None,
-            },
+                match rug::Integer::from_str_radix(&string, 10) {
+                    Ok(int) => Some(smt::ModelValue::from(smt::Constant::from(int))),
+                    Err(_) => match rug::Rational::from_str_radix(&string, 10) {
+                        Ok(rat) => Some(smt::ModelValue::from(smt::Constant::from(rat))),
+                        Err(_) => None,
+                    },
+                }
+            }
+            _ => None,
         }
     }
 }
@@ -238,21 +239,6 @@ impl standard::Manager for Manager {
         range: z3::Sort,
     ) -> Result<z3::FuncDecl> {
         Ok(self.z3context.mk_func_decl(name, sorts, range))
-    }
-
-    fn func_def(
-        &self,
-        _solver: &z3::Solver,
-        name: &str,
-        sorts: &[z3::Sort],
-        range: z3::Sort,
-        variables: &[z3::Ast],
-        body: z3::Ast,
-    ) -> Result<z3::FuncDecl> {
-        let def = self.z3context.mk_rec_func_decl(name, sorts, range);
-        self.z3context.add_rec_def(&def, variables, body);
-
-        Ok(def)
     }
 
     fn variable(&self, name: &str, sort: z3::Sort) -> Result<z3::Ast> {
