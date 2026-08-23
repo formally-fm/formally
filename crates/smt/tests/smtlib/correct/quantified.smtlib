@@ -1,5 +1,5 @@
 (set-logic LIA)
 
-(assert (forall ((x Int)) (exists ((y Int)) (> x y)) ))
+(assert (not (forall ((x Real) (y Real)) (=> (< x y) (exists ((z Real)) (and (> z x) (< z y)))))))
 
 (check-sat)

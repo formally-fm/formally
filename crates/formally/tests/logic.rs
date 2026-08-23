@@ -65,9 +65,12 @@ fn quantified(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
     let config = Config::new();
     let mut solver = Solver::with_backend(&config, backend)?;
 
-    solver.require(term!(forall ((x Int)) (exists ((y Int)) (> x y))))?;
+    let density = term!(
+        (forall ((x Real) (y Real)) (=> (< x y) (exists ((z Real)) (and (> z x) (< z y)))))
+    );
+    solver.require(term!(not #density))?;
 
-    assert_eq!(solver.check()?, Answer::Yes);
+    assert_eq!(solver.check()?, Answer::No);
 
     Ok(())
 }

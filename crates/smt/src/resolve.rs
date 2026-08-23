@@ -110,6 +110,14 @@ impl Env {
     ) -> Result<Atom> {
         let head = Identifier::from(unbound.name.name()).over(unbound.name.span());
 
+        let mut resolved = Vec::with_capacity(arguments.len());
+        let mut argsorts = Vec::with_capacity(arguments.len());
+        for arg in arguments {
+            let t = self.resolve(arg, role, pool)?;
+            argsorts.push(Sort::of(&t)?);
+            resolved.push(t);
+        }
+
         self.lookup(head.clone(), role)
             .filter_map(move |f| {
                 let bound = BoundRef {
@@ -118,19 +126,14 @@ impl Env {
                 };
                 let atom = Diagnostic::with(
                     NullEmitter,
-                    AssertUnwindSafe(|| self.resolve_bound(&bound, arguments, pool)),
+                    AssertUnwindSafe(|| self.resolve_bound(&bound, &resolved, pool)),
                 )
                 .ok()?;
-
-                let mut arguments = Vec::new();
-                for arg in &*atom.arguments {
-                    arguments.push(Sort::of(arg).ok()?);
-                }
 
                 #[allow(clippy::mutable_key_type)]
                 let mut matches = HashMap::new();
                 let domain = bound.domain(arguments.len());
-                for (sort, arg) in zip(domain, &arguments) {
+                for (sort, arg) in zip(domain, &argsorts) {
                     if !sort.matches_with(arg, &mut matches) {
                         return None;
                     }

@@ -76,8 +76,7 @@
 //!
 //! Terms are built on top of [Function] objects which can be either:
 //! 1. [Primitive] entities such as the ones defined by a theory, e.g. [theories::Ints::plus()].
-//! 2. [Variable] entities used in function definitions to represent function parameters, quantified
-//!    variables, etc.
+//! 2. [Variables](Variable) used to represent function parameters, quantified variables, etc.
 //! 3. [Declared] entities, which are the unknowns of the SMT problem, which the solver has to find
 //!    values of.
 //! 2. [Defined] entities, which have a known definition and are mostly just shortcuts to repeat
@@ -100,13 +99,17 @@
 //! [Declared] and [Defined] objects can then be used to build more complex [Term] objects, either
 //! directly or with the [term!] macro, which can then be asserted using [Solver::require()].
 //!
+//! Each declared and defined entity has a *sort*, a type in the logical lingo, which is represented
+//! by the [Sort] type. Sorts can be created directly or with the [sort!] macro, as in the example
+//! above.
+//!
 //! In the above example we used the [Declaration::integer()] function which is a shortcut to call
-//! [Declaration::constant()] with sort [theories::Ints::Int()]. In turn, [Declaration::constant()]
+//! [Declaration::constant()] with sort `sort!(Int)`. In turn, [Declaration::constant()]
 //! is a shortcut to call [Declaration::function()] with an empty domain. [Declaration::predicate()]
-//! also exists to declare functions that return [theories::Core::Bool()]. Similar shortcuts exist
+//! also exists to declare functions that return `sort!(Bool)`. Similar shortcuts exist
 //! for [Definition].
 //!
-//! ## Building terms
+//! ## Building terms and sorts
 //!
 //! SMT terms are represented by the [Term] type, which is a shared reference to a [TermKind] enum.
 //! The latter is a simple enum which is either a constant (such as `42` or `3.14`), an atom that
@@ -123,7 +126,13 @@
 //! argument to any method that accepts a [ToTerm] instance, such as the [Solver::require()] method
 //! used in the above example. The macro supports specifying both arbitrary names
 //! which will be looked-up by the [Solver] later, or expanding previously declared [ToTerm]
-//! objects.
+//! objects. The [term!] macro only describes the term with an allocation-free local object, which
+//! needs a [Solver] or another instance of [TermPool] to be reified into a [Term].
+//!
+//! The [sort!] macro is similar, accepting a subset of the SMT-LIBv2 syntax for sorts. It also
+//! returns a temporary object implementing [ToTerm], because sorts can be seen as terms applying
+//! some arguments to sort constructors. Using the macro, sorts can be just mentioned by name and
+//! they will be looked up in the theory currently selected for the solver.
 //!
 //! Example:
 //! ```
@@ -136,8 +145,8 @@
 //! let config = Config::default().logic("LIA");
 //! let mut solver = Solver::new(&config)?;
 //!
-//! solver.declare(Declaration::integer("x"))?;
-//! solver.declare(Declaration::integer("y"))?;
+//! solver.declare(Declaration::constant("x", sort!(Int)))?;
+//! solver.declare(Declaration::constant("y", sort!(Int)))?;
 //!
 //! // here, `x` and `y` are looked up by `require()` in the solver's scope
 //! solver.require(term!(= (+ x y) 0));
@@ -157,35 +166,6 @@
 //! # }
 //! ```
 //!
-//! [Term] objects are obtained by uniquing a [TermKind] inside an instance of the
-//! [TermPool] trait. As in most other SMT interfaces, uniquing terms (also called "hash-consing")
-//! ensures that comparisons and hashing is cheap and common subterms are shared. [Solver]
-//! implements [TermPool], so its [Solver::term()] method can be used to turn into a [Term] any
-//! instance of [ToTerm] (including invocations of the [term!] macro).
-//!
-//! [Solver], in turn, does not handle terms itself, but uses an instance of [TermManager]. The
-//! latter is a type with the purpose of handling terms and their corresponding handles in the
-//! currently selected SMT backend. A [TermManager] instance can be shared between multiple
-//! [Solver]s created with the [Solver::with_manager()] constructor. The terms obtained through
-//! the same [TermManager] can be freely used in different solvers and are converted to the
-//! underlying SMT backend handles only once.
-//!
-//! Under the hood they use the [HashPool] type which is based on a
-//! common hash table. For concurrent uses, [DashPool] is also provided, which is based on
-//! [dashmap::DashSet].
-//!
-//! Theories do not need to be declared upfront by this crate, but can be declared at any time, by
-//! solver backends or by client code, using the [theories!] macro. This design provides maximum
-//! flexibility for each backend to support any available theory without being limited to only the
-//! theories this crate knows about in advance. See the [mod@theories] module for more details on
-//! theories.
-//!
-//! Despite this flexibility, building terms is straightforward thanks to the [term!] macro, which
-//! directly accepts a convenient subset of the SMT-LIBv2 syntax for terms. Inside terms, the macro
-//! supports both specifying arbitrary names which will be looked-up by the [Solver] later, or
-//! expanding previously declared  [Term] objects.
-//!
-//!
 //! ## Asserting terms and extracting models
 //!
 //! Terms can be asserted with the [require()](Solver::require()) method of [Solver]. Then, the
@@ -199,15 +179,16 @@
 //! [Solver] implements [Stack](formally::support::Stack), so assertions can be stacked with
 //! [push()](formally::support::Stack::push()) and [pop()](formally::support::Stack::pop()) as is
 //! customary in most SAT/SMT solvers. Currently, these methods stack declarations and definitions
-//! as well (the SMT-LIBv2 standard admits an option to select this behavior, which is not yet
+//! as well (the SMT-LIBv2 standard admits an option to select this behavior, but it is not yet
 //! supported).
 //!
-//! After a call to [check()](Solver::check()) returned `Ok(Answer::Yes)`, a model can be extracted
-//! with the [model()](Solver::model()) method. This method returns `Result<Option<Model>>`, so
-//! again we can distinguish the case where there is no model (because the last call to
-//! [check()](Solver::check()) was unsuccessful) from the case where an error occurred while
-//! extracting the model itself. The [Model] object can be used to extract values for single
-//! [Declared] entities using the [value()](ModelProvider::value()) method, which returns
+//! After a call to [check()](Solver::check()) returned `Ok(Answer::Yes)`, and only if the
+//! `produce_models` option has been set to `true` in the [Solver]'s configuration, a model can be
+//! extracted with the [model()](Solver::model()) method. This method returns
+//! `Result<Option<Model>>`, so again we can distinguish the case where there is no model (because
+//! the last call to [check()](Solver::check()) was unsuccessful) from the case where an error
+//! occurred while extracting the model itself. The [Model] object can be used to extract the value
+//! of [ToTerm] objects using the [value()](ModelProvider::value()) method, which returns
 //! `Option<ModelValue>`. The way values are represented is still under revision, and currently it
 //! is only possible to extract booleans ([ModelValue::Boolean]) or constant terms representing
 //! integer or real values ([ModelValue::Constant]).
@@ -271,23 +252,34 @@
 //! [formally::smt] strictly follows the categories of theories and logics defined in the SMT-LIBv2
 //! standard. In this respect, theories (instances of the [Theory](theories::Theory) trait) describe
 //! the symbols (constants, functions and sorts) provided by the theory, while logics (instances of
-//! the [Logic](logics::Logic) trait) combine a few of theories with a set of syntactic
-//! constraints. For example, [LIA](logics::LIA) combines the theories [Core](theories::Core) and
-//! [Ints](theories::Ints) and enforces the linearity of the terms, while [QF_ALIA](logics::QF_LIA)
+//! the [Logic](logics::Logic) trait) combine a few theories with a set of syntactic constraints.
+//! For example, [LIA](logics::LIA) combines the theories [Core](theories::Core) and
+//! [Ints](theories::Ints) and enforces the linearity of the terms, while [QF_ALIA](logics::QF_ALIA)
 //! combines [Core](theories::Core), [Ints](theories::Ints) and [Arrays](theories::Arrays) and
 //! enforces both linearity and the absense of quantifiers.
-//! Standard theories and logics declared in this way are unit structs (i.e. an instance of
+//!
+//! Most SMT interfaces provide some number of functions to create all the different kind of
+//! supported primitives (e.g., an integer sum, or an array `select`). This means that an interface
+//! cannot support a theory which was not foreseen when the interface was designed. In
+//! [formally::smt], we adopt a different approach. In [TermKind], atoms are represented as just a
+//! [Function] applied to a number of [Term] arguments. The function, among other things, can be a
+//! [Primitive]. The latter are provided by theories, and theories can be declared by any backend
+//! solver independently of which other theories were foreseen in advance by the framework.
+//!
+//! Theories are declare using the `theories!{}` macro, which allows one to declare its sorts,
+//! constants and functions. Logics are declared similarly with the `logic!{}` macro. Standard
+//! theories and logics declared in this way are unit structs (i.e. an instance of
 //! [LIA](logics::LIA) is just `LIA`, not `LIA {}`), which provide one associated function for each
 //! symbol provided by the theory. For example, the `Ints` theory in SMT-LIBv2 provides the "+"
 //! binary function, which is accessible here as [Ints::plus()](theories::Ints::plus()). Note that
 //! naming these methods directly is seldom necessary because the symbols can be looked up by name
-//! when using the [term] macro.
+//! when using the [term!] macro.
 //!
 //! For example, a term `term!(+ x y)` will contain an unbound name `"+"` which will be resolved by
 //! the solver when the term is used (e.g. in an assertion or a definition), and found to correspond
-//! to [Ints::plus()](theories::Ints::plus()) or any other symbol matching its arguments (e.g.
-//! [Reals::plus()](theories::Reals::plus()) if `x` and `y` resolve to reals) in the theories
-//! combined by the logic selected in the current backend.
+//! to [Ints::plus()](theories::Ints::plus()) or any other symbol matching its arguments in the
+//! theories combined by the logic selected in the current backend (e.g.
+//! [Reals::plus()](theories::Reals::plus()) if `x` and `y` resolve to reals).
 //!
 //! The crate provides a set (currently incomplete) of standard theories and logics extracted from
 //! the SMT-LIBv2 standard, but new ones can be declared with the help of the [theory] and [logic]
@@ -296,7 +288,9 @@
 //! ## SMT backends
 //!
 //! Backends are types implementing the [Backend](backend::Backend) trait. Currently, we only
-//! provide the [backend::z3::Z3] backend, implemented on top of the [z3_sys] crate.
+//! provide two backends:
+//!  - [backend::z3::Z3], implemented on top of the [z3_sys] crate.
+//!  - [backend::z3::Cvc5], implemented on top of the [cvc5_sys] crate.
 //!
 //! See the documentation of the [Backend](backend::Solver) trait for information about how to
 //! implement new backends.
@@ -309,12 +303,11 @@
 //! [smtlib] module so we refer to that module's documentation for details.
 //!
 //! ## Error handling
+//!
 //! [formally::smt] integrates with the error handling schema of `formally` by emitting diagnostics
-//! using the [Emitter](formally::support::Emitter) currently set in the
-//! [Context](formally::support::Context) currently selected in [Solver] (which is a
-//! [Contextual](formally::support::Contextual) type). Almost all methods of [Solver] return a
-//! [Result](formally::support::Result) to account for possible failures which are detailed in the
-//! emitted diagnostics. See the documentation of [Result](formally::support::Result) and
+//! using the current global [Emitter](formally::support::Emitter). Almost all methods of [Solver]
+//! return a [Result](formally::support::Result) to account for possible failures which are detailed
+//! in the emitted diagnostics. See the documentation of [Result](formally::support::Result) and
 //! [Emitter](formally::support::Emitter) for details.
 //!
 //! ## Current limitations
@@ -323,16 +316,15 @@
 //! are missing or incomplete. Here is a list of currently unimplemented or partially implemented
 //! features that are needed for a fully compliant support of SMT-LIBv2:
 //! 1. recursive function definitions
-//! 2. sort definitions
+//! 2. user-defined sort
 //! 3. enumerated sorts and algebraic data types
-//! 4. let expressions, quantifiers, and match expressions
+//! 4. match expressions
 //! 5. proper representation of models and values coming from models
 //! 6. the complete taxonomy of standard SMT-LIBv2 theories and logics
 //! 7. many SMT-LIBv2 commands in [Interpreter](smtlib::interpreter::Interpreter)
 //! 8. many other little things...
 //!
-//! On top of that, more backends will be needed, probably starting from
-//! [cvc5](https://cvc5.github.io).
+//! On top of that, more backends will be needed.
 //!
 //! The project as a whole also currently lacks a proper test suite for correctness and compliance
 //! with the language specification, so those features that are already implemented will have bugs.
@@ -349,8 +341,6 @@ pub mod exports {
     pub use paste::paste;
 }
 
-pub use formally_smt_macros::*;
-
 mod decl;
 mod pool;
 mod pretty;
@@ -362,6 +352,11 @@ mod type_check;
 
 #[doc(hidden)]
 pub mod support;
+
+#[doc(hidden)]
+pub mod macros;
+
+pub use macros::*;
 
 pub mod backend;
 pub mod logics;

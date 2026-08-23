@@ -221,7 +221,7 @@ pub type Result<T, E = DiagnosticEmitted> = std::result::Result<T, E>;
 /// Currently, we have:
 /// - [StdErrEmitter], to direct formatted messages to the standard error stream. This is currently
 ///   the default global emitter.
-/// - [BatchedEmitter], to group diagnostics and emitting them all at once when requested
+/// - [BatchEmitter], to group diagnostics and emitting them all at once when requested
 /// - [NullEmitter], to suppress any diagnostic.
 ///
 /// [Diagnostic] objects are usually not constructed and emitted directly but using the [debug],
