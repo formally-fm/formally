@@ -120,8 +120,6 @@
 //! arguments, and the functions are objects provided by the different theories to represent what
 //! the theory supports.
 //!
-//! ### The [term!] macro
-//!
 //! The most straightforward way of building a term is the [term!] macro, which
 //! directly accepts a convenient subset of the SMT-LIBv2 syntax for terms. The macro constructs a
 //! temporary object which implements the [ToTerm] trait, so the [term!] macro can be used as
@@ -167,59 +165,6 @@
 //! # Ok(())
 //! # }
 //! ```
-//!
-//! ### Subterm sharing, [TermPool], and [TermManager]
-//!
-//! As in most other SMT APIs, [formally::smt] implements automatic subterm sharing. For this
-//! reason, to obtain an actual [Term] from a [ToTerm] object (e.g. from the result of the [term!]
-//! macro) one needs an instance of a type implementing [TermPool]. This instance can usually be
-//! obtained by [Solver:pool()].
-//!
-//! Example:
-//! ```
-//! # mod formally {
-//! #    pub extern crate formally_support as support;
-//! #    pub extern crate formally_smt as smt;
-//! # }
-//! # use formally::{smt::*, support::*};
-//! # fn main() -> Result<()> {
-//! let config = Config::default();
-//! let mut solver = Solver::new(&config)?;
-//!
-//! let x = solver.declare(Declaration::integer("x"))?;
-//! let y = solver.declare(Declaration::integer("y"))?;
-//!
-//! let term = term!(> x y).into_term_in(solver.pool());
-//!
-//! solver.require(term)?;
-//!
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! Inside each [Solver], an instance of [TermManager] is responsible for providing a [TermPool] and
-//! for the conversion of [terms][Term] to the corresponding internal representation of the given
-//! backend (e.g. to [Z3_ast](z3_sys::Z3_ast) in the case of Z3). The [Solver::with_manager()]
-//! constructor can be used to instantiate a [Solver] with a specific instance of [TermManager],
-//! which can be shared between multiple solvers. Terms created over the same [TermManager] are
-//! usable interchangeably with every [Solver] instantiated over it, and will be converted to the
-//! underlying backend representation only once.
-//!
-//! [TermManager], in turn, relies on a specific data structure implementing the [TermPool] trait.
-//! By default, it uses an instance of [HashPool], which is based on standard hash tables.
-//!
-//! ### Multi-threading
-//!
-//! The [Term] type is [Send]+[Sync], since it is based on [Arc](std::sync::Arc), so terms can be
-//! safelty shared and accessed between multiple threads.
-//!
-//! However, since solvers and term managers of most backend SMT APIs are not thread safe, [Solver]
-//! and [TermManager] are *not* [Send] nor [Sync], and can therefore be used by a single thread at
-//! the time. Nevertheless, the [TermManager::with_pool] constructor can be used to instantiate a
-//! [TermManager] over a thread-safe term pool such as [DashPool], which is implemented on top of
-//! the concurrent hash table [DashMap](dashmap::DashMap). In this way, subterm sharing at the
-//! front-end level can be made to work concurrently, while different threads will instantiate their
-//! specific [TermManagers](TermManager) and [Solvers](Solver).
 //!
 //! ## Asserting terms and extracting models
 //!
@@ -274,37 +219,51 @@
 //! # }
 //! ```
 //!
-//! ## Declaring sorts
+//! ## Parsing and executing SMT-LIBv2 scripts
 //!
-//! Sorts can be declared or defined in the same way as functions. Indeed, sorts are seen as just
-//! constants of the special sort [Sort::sort()]. A shortcut [Declaration::sort()] exists in place
-//! of calling `Declaration::constant(name, Sort::sort())`.
+//! This crate provides full support for parsing and executing scripts in the SMT-LIBv2 language as
+//! defined by the [official specification document](https://smt-lib.org/language.shtml), currently
+//! updated to version 2.7. Everything that regards the SMT-LIBv2 language is contained in the
+//! [smtlib] module so we refer to that module's documentation for details.
+//! 
+//! ## SMT backends
 //!
-//! Example:
-//! ```
-//! # mod formally {
-//! #    pub extern crate formally_support as support;
-//! #    pub extern crate formally_smt as smt;
-//! # }
-//! # use formally::{smt::*, support::*};
-//! # fn main() -> Result<()> {
-//! let config = Config::default().logic("UFLIA");
-//! let mut solver = Solver::new(&config)?;
+//! Backends are types implementing the [Backend](backend::Backend) trait. Currently, we only
+//! provide two backends:
+//!  - [backend::z3::Z3], implemented on top of the [z3_sys] crate.
+//!  - [backend::z3::Cvc5], implemented on top of the [cvc5_sys] crate.
 //!
-//! let people = solver.declare(Declaration::sort("People"))?;
-//! let food = solver.declare(Declaration::sort("Food"))?;
-//! let likes = solver.declare(Declaration::predicate("likes", [people.clone(), food.clone()]))?;
+//! See the documentation of the [Backend](backend::Solver) trait for information about how to
+//! implement new backends.
 //!
-//! solver.declare(Declaration::constant("mike", people))?;
-//! solver.declare(Declaration::constant("cake", food))?;
+//! ## Error handling
 //!
-//! solver.require(term!(not (likes mike cake)))?;
+//! [formally::smt] integrates with the error handling schema of `formally` by emitting diagnostics
+//! using the current global [Emitter](formally::support::Emitter). Almost all methods of [Solver]
+//! return a [Result](formally::support::Result) to account for possible failures which are detailed
+//! in the emitted diagnostics. See the documentation of [Result](formally::support::Result) and
+//! [Emitter](formally::support::Emitter) for details.
 //!
-//! # Ok(())
-//! # }
-//! ```
+//! ## Current limitations
 //!
-//! Enumerated sorts and algebraic data types are not yet supported, but will be soon.
+//! [formally::smt], like the rest of the framework, is under active development and many features
+//! are missing or incomplete. Here is a list of currently unimplemented or partially implemented
+//! features that are needed for a fully compliant support of SMT-LIBv2:
+//! 1. recursive function definitions
+//! 2. user-defined sort
+//! 3. enumerated sorts and algebraic data types
+//! 4. match expressions
+//! 5. proper representation of models and values coming from models
+//! 6. the complete taxonomy of standard SMT-LIBv2 theories and logics
+//! 7. many SMT-LIBv2 commands in [Interpreter](smtlib::interpreter::Interpreter)
+//! 8. many other little things...
+//!
+//! On top of that, more backends will be needed.
+//!
+//! The project as a whole also currently lacks a proper test suite for correctness and compliance
+//! with the language specification, so those features that are already implemented will have bugs.
+//!
+//! # Details
 //!
 //! ## Theories and logics
 //!
@@ -344,49 +303,90 @@
 //! the SMT-LIBv2 standard, but new ones can be declared with the help of the [theory] and [logic]
 //! macros, so we refer to their documentation for details.
 //!
-//! ## SMT backends
+//! ## Declaring sorts
 //!
-//! Backends are types implementing the [Backend](backend::Backend) trait. Currently, we only
-//! provide two backends:
-//!  - [backend::z3::Z3], implemented on top of the [z3_sys] crate.
-//!  - [backend::z3::Cvc5], implemented on top of the [cvc5_sys] crate.
+//! Sorts can be declared or defined in the same way as functions. Indeed, sorts are seen as just
+//! constants of the special sort [Sort::sort()]. A shortcut [Declaration::sort()] exists in place
+//! of calling `Declaration::constant(name, Sort::sort())`.
 //!
-//! See the documentation of the [Backend](backend::Solver) trait for information about how to
-//! implement new backends.
+//! Example:
+//! ```
+//! # mod formally {
+//! #    pub extern crate formally_support as support;
+//! #    pub extern crate formally_smt as smt;
+//! # }
+//! # use formally::{smt::*, support::*};
+//! # fn main() -> Result<()> {
+//! let config = Config::default().logic("UFLIA");
+//! let mut solver = Solver::new(&config)?;
 //!
-//! ## Parsing and executing SMT-LIBv2 scripts
+//! let people = solver.declare(Declaration::sort("People"))?;
+//! let food = solver.declare(Declaration::sort("Food"))?;
+//! let likes = solver.declare(Declaration::predicate("likes", [people.clone(), food.clone()]))?;
 //!
-//! This crate provides full support for parsing and executing scripts in the SMT-LIBv2 language as
-//! defined by the [official specification document](https://smt-lib.org/language.shtml), currently
-//! updated to version 2.7. Everything that regards the SMT-LIBv2 language is contained in the
-//! [smtlib] module so we refer to that module's documentation for details.
+//! solver.declare(Declaration::constant("mike", people))?;
+//! solver.declare(Declaration::constant("cake", food))?;
 //!
-//! ## Error handling
+//! solver.require(term!(not (likes mike cake)))?;
 //!
-//! [formally::smt] integrates with the error handling schema of `formally` by emitting diagnostics
-//! using the current global [Emitter](formally::support::Emitter). Almost all methods of [Solver]
-//! return a [Result](formally::support::Result) to account for possible failures which are detailed
-//! in the emitted diagnostics. See the documentation of [Result](formally::support::Result) and
-//! [Emitter](formally::support::Emitter) for details.
+//! # Ok(())
+//! # }
+//! ```
 //!
-//! ## Current limitations
+//! Enumerated sorts and algebraic data types are not yet supported, but will be soon.
+//! 
+//! ## Subterm sharing, [TermPool], and [TermManager]
 //!
-//! [formally::smt], like the rest of the framework, is under active development and many features
-//! are missing or incomplete. Here is a list of currently unimplemented or partially implemented
-//! features that are needed for a fully compliant support of SMT-LIBv2:
-//! 1. recursive function definitions
-//! 2. user-defined sort
-//! 3. enumerated sorts and algebraic data types
-//! 4. match expressions
-//! 5. proper representation of models and values coming from models
-//! 6. the complete taxonomy of standard SMT-LIBv2 theories and logics
-//! 7. many SMT-LIBv2 commands in [Interpreter](smtlib::interpreter::Interpreter)
-//! 8. many other little things...
+//! As in most other SMT APIs, [formally::smt] implements automatic subterm sharing. For this
+//! reason, to obtain an actual [Term] from a [ToTerm] object (e.g. from the result of the [term!]
+//! macro) one needs an instance of a type implementing [TermPool]. This instance can usually be
+//! obtained by [Solver:pool()].
 //!
-//! On top of that, more backends will be needed.
+//! Example:
+//! ```
+//! # mod formally {
+//! #    pub extern crate formally_support as support;
+//! #    pub extern crate formally_smt as smt;
+//! # }
+//! # use formally::{smt::*, support::*};
+//! # fn main() -> Result<()> {
+//! let config = Config::default();
+//! let mut solver = Solver::new(&config)?;
 //!
-//! The project as a whole also currently lacks a proper test suite for correctness and compliance
-//! with the language specification, so those features that are already implemented will have bugs.
+//! let x = solver.declare(Declaration::integer("x"))?;
+//! let y = solver.declare(Declaration::integer("y"))?;
+//!
+//! let term = term!(> x y).into_term_in(solver.pool());
+//!
+//! solver.require(term)?;
+//!
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Inside each [Solver], an instance of [TermManager] is responsible for providing a [TermPool] and
+//! for the conversion of [terms][Term] to the corresponding internal representation of the given
+//! backend (e.g. to [Z3_ast](z3_sys::Z3_ast) in the case of Z3). The [Solver::with_manager()]
+//! constructor can be used to instantiate a [Solver] with a specific instance of [TermManager],
+//! which can be shared between multiple solvers. Terms created over the same [TermManager] are
+//! usable interchangeably with every [Solver] instantiated over it, and will be converted to the
+//! underlying backend representation only once.
+//!
+//! [TermManager], in turn, relies on a specific data structure implementing the [TermPool] trait.
+//! By default, it uses an instance of [HashPool], which is based on standard hash tables.
+//!
+//! ## Multi-threading
+//!
+//! The [Term] type is [Send]+[Sync], since it is based on [Arc](std::sync::Arc), so terms can be
+//! safelty shared and accessed between multiple threads.
+//!
+//! However, since solvers and term managers of most backend SMT APIs are not thread safe, [Solver]
+//! and [TermManager] are *not* [Send] nor [Sync], and can therefore be used by a single thread at
+//! the time. Nevertheless, the [TermManager::with_pool] constructor can be used to instantiate a
+//! [TermManager] over a thread-safe term pool such as [DashPool], which is implemented on top of
+//! the concurrent hash table [DashMap](dashmap::DashMap). In this way, subterm sharing at the
+//! front-end level can be made to work concurrently, while different threads will instantiate their
+//! specific [TermManagers](TermManager) and [Solvers](Solver).
 
 mod formally {
     pub use formally_io as io;
