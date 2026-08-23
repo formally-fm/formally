@@ -168,6 +168,10 @@
 //!
 //! ## Asserting terms and extracting models
 //!
+//! [Solvers](Solver) are instantiated with a reference to a [Config] object selecting, among other
+//! things, the required SMT logic. A specific SMT backend can be selected by instantiating
+//! the solver with the [Solver::new_with_backend()] constructor.
+//!
 //! Terms can be asserted with the [require()](Solver::require()) method of [Solver]. Then, the
 //! solver can be asked to check the current assertions for satisfiability by calling
 //! [check()](Solver::check()), which returns a [Result](formally::support::Result) holding a
@@ -284,6 +288,59 @@
 //! The crate provides a set (currently incomplete) of standard theories and logics extracted from
 //! the SMT-LIBv2 standard, but new ones can be declared with the help of the [theory] and [logic]
 //! macros, so we refer to their documentation for details.
+//!
+//! ## Subterm sharing, [TermPool], and [TermManager]
+//!
+//! As in most other SMT APIs, [formally::smt] implements automatic subterm sharing. For this
+//! reason, to obtain an actual [Term] from a [ToTerm] object (e.g. from the result of the [term!]
+//! macro) one needs an instance of a type implementing [TermPool]. This instance can usually be
+//! obtained by [Solver:pool()].
+//!
+//! Example:
+//! ```
+//! # mod formally {
+//! #    pub extern crate formally_support as support;
+//! #    pub extern crate formally_smt as smt;
+//! # }
+//! # use formally::{smt::*, support::*};
+//! # fn main() -> Result<()> {
+//! let config = Config::default();
+//! let mut solver = Solver::new(&config)?;
+//!
+//! let x = solver.declare(Declaration::integer("x"))?;
+//! let y = solver.declare(Declaration::integer("y"))?;
+//!
+//! let term = term!(> x y).into_term_in(solver.pool());
+//!
+//! solver.require(term)?;
+//!
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Inside each [Solver], an instance of [TermManager] is responsible for providing a [TermPool] and
+//! for the conversion of [terms][Term] to the corresponding internal representation of the given
+//! backend (e.g. to [Z3_ast](z3_sys::Z3_ast) in the case of Z3). The [Solver::with_manager()]
+//! constructor can be used to instantiate a [Solver] with a specific instance of [TermManager],
+//! which can be shared between multiple solvers. Terms created over the same [TermManager] are
+//! usable interchangeably with every [Solver] instantiated over it, and will be converted to the
+//! underlying backend representation only once.
+//!
+//! [TermManager], in turn, relies on a specific data structure implementing the [TermPool] trait.
+//! By default, it uses an instance of [HashPool], which is based on standard hash tables.
+//!
+//! ## Multi-threading
+//!
+//! The [Term] type is [Send]+[Sync], since it is based on [Arc](std::sync::Arc), so terms can be
+//! safelty shared and accessed between multiple threads.
+//!
+//! However, since solvers and term managers of most backend SMT APIs are not thread safe, [Solver]
+//! and [TermManager] are *not* [Send] nor [Sync], and can therefore be used by a single thread at
+//! the time. Nevertheless, the [TermManager::with_pool] constructor can be used to instantiate a
+//! [TermManager] over a thread-safe term pool such as [DashPool], which is implemented on top of
+//! the concurrent hash table [DashMap](dashmap::DashMap). In this way, subterm sharing at the
+//! front-end level can be made to work concurrently, while different threads will instantiate their
+//! specific [TermManagers](TermManager) and [Solvers](Solver).
 //!
 //! ## SMT backends
 //!

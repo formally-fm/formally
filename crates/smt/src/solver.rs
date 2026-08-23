@@ -172,15 +172,15 @@ impl Default for TermManager {
     }
 }
 
-impl TermPool for TermManager {
-    fn shared(&self, kind: TermKind) -> Term {
-        self.pool.shared(kind)
-    }
-
-    fn shared_ref(&self, kind: &TermKind) -> Term {
-        self.pool.shared_ref(kind)
-    }
-}
+// impl TermPool for TermManager {
+//     fn shared(&self, kind: TermKind) -> Term {
+//         self.pool.shared(kind)
+//     }
+//
+//     fn shared_ref(&self, kind: &TermKind) -> Term {
+//         self.pool.shared_ref(kind)
+//     }
+// }
 
 impl TermManager {
     pub fn new(backend: impl Backend) -> TermManager {
@@ -190,11 +190,15 @@ impl TermManager {
         }
     }
 
-    pub fn new_with_pool(backend: impl Backend, pool: Rc<dyn TermPool>) -> TermManager {
+    pub fn with_pool(backend: impl Backend, pool: Rc<dyn TermPool>) -> TermManager {
         TermManager {
             backend_manager: Rc::from(backend.manager()),
             pool,
         }
+    }
+    
+    pub fn pool(&self) -> &dyn TermPool {
+        &*self.pool
     }
 }
 
@@ -223,10 +227,7 @@ pub struct Solver {
 }
 
 impl Solver {
-    pub fn with_manager(
-        config: &Config,
-        manager: impl Into<Rc<TermManager>>,
-    ) -> Result<Solver> {
+    pub fn with_manager(config: &Config, manager: impl Into<Rc<TermManager>>) -> Result<Solver> {
         let manager = manager.into();
         let backend_solver = manager
             .backend_manager
@@ -255,7 +256,7 @@ impl Solver {
     pub fn config(&self, config: &Config) -> Result<()> {
         Ok(self.backend_solver.config(config)?)
     }
-
+    
     /// Get the [Env] object holding the current scopes for functions and sorts declared and defined
     /// in the solver.
     pub fn env(&self) -> Env {
@@ -272,12 +273,16 @@ impl Solver {
         self.env.sorts.clone()
     }
 
+    pub fn pool(&self) -> &dyn TermPool {
+        self.manager.pool()
+    }
+    
     pub fn resolve(&self, term: &Term, role: Role) -> Result<Term> {
-        self.env.resolve(term, role, self)
+        self.env.resolve(term, role, self.manager.pool())
     }
 
     pub fn lookup(&self, term: impl ToTerm, role: Role) -> Result<Term> {
-        let interned = term.into_term_in(self);
+        let interned = term.into_term_in(self.manager.pool());
         let resolved = self.resolve(&interned, role)?;
         resolved.type_check()?;
 
@@ -329,13 +334,13 @@ impl Solver {
     /// the special sort [Sort::sort()]. See also [Declaration::function()],
     /// [Declaration::constant()], and [Declaration::sort()] for details.
     pub fn declare<R: ToTerm, B: ToTerm>(&mut self, decl: Declaration<R, B>) -> Result<Declared> {
-        let mut decl = decl.intern(self);
+        let mut decl = decl.intern(self.manager.pool());
 
-        decl.range = self.env.resolve(&decl.range, Role::Sort, self)?;
+        decl.range = self.env.resolve(&decl.range, Role::Sort, self.manager.pool())?;
         decl.range.type_check()?;
 
         for d in &mut decl.domain {
-            *d = self.env.resolve(d, Role::Sort, self)?;
+            *d = self.env.resolve(d, Role::Sort, self.manager.pool())?;
             d.type_check()?;
         }
 
@@ -366,9 +371,9 @@ impl Solver {
     /// the special sort [Sort::sort()]. See also [Definition::function()],
     /// [Definition::constant()], and [Definition::sort()] for details.
     pub fn define<R: ToTerm, B: ToTerm>(&mut self, def: Definition<R, B>) -> Result<Defined> {
-        let mut def = def.intern(self);
+        let mut def = def.intern(self.manager.pool());
 
-        def.range = self.env().resolve(&def.range, Role::Sort, self)?;
+        def.range = self.env().resolve(&def.range, Role::Sort, self.manager.pool())?;
         def.range.type_check()?;
 
         let mut nested = Env::new().with_parent(self.env());
@@ -378,7 +383,7 @@ impl Solver {
                 .add(var.name(), Function::Variable(var.clone()));
         }
 
-        def.body = nested.resolve(&def.body, Role::Function, self)?;
+        def.body = nested.resolve(&def.body, Role::Function, self.manager.pool())?;
         def.body.type_check()?;
 
         let def = Defined::new(def.commit()?);
@@ -401,7 +406,7 @@ impl Solver {
     /// The term undergoes [name resolution](Term::resolve()) and must be well-typed and be of
     /// sort [Core::Bool()](theories::Core::Bool()).
     pub fn require<T: ToTerm>(&mut self, term: T) -> Result<()> {
-        let term = self.resolve(&term.into_term_in(&*self.manager), Role::Function)?;
+        let term = self.resolve(&term.into_term_in(self.manager.pool()), Role::Function)?;
         self.backend_solver.logic().check_term(&term)?;
         let sort = Sort::of(&term)?;
 
@@ -450,15 +455,15 @@ impl Solver {
     }
 }
 
-impl TermPool for Solver {
-    fn shared(&self, kind: TermKind) -> Term {
-        self.manager.shared(kind)
-    }
-
-    fn shared_ref(&self, kind: &TermKind) -> Term {
-        self.manager.shared_ref(kind)
-    }
-}
+// impl TermPool for Solver {
+//     fn shared(&self, kind: TermKind) -> Term {
+//         self.manager.shared(kind)
+//     }
+//
+//     fn shared_ref(&self, kind: &TermKind) -> Term {
+//         self.manager.shared_ref(kind)
+//     }
+// }
 
 impl Stack for Solver {
     /// Push a new frame in the assertions stack.

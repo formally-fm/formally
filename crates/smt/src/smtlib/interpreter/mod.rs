@@ -456,7 +456,7 @@ impl Interpreter {
                                 if let Some(value) = value {
                                     values.push((
                                         ast::Term::from(ast::Symbol::new(function.name()).unwrap()),
-                                        ast::Term::from(value.into_term_in(&state.solver)),
+                                        ast::Term::from(value.into_term_in(state.solver.pool())),
                                     ))
                                 } else {
                                     error!(
