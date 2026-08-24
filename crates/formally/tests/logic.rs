@@ -102,6 +102,27 @@ fn definitions(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
 }
 
 #[rstest]
+fn variables(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
+    let config = Config::new().produce_models(true);
+    let mut solver = Solver::with_backend(&config, backend)?;
+
+    let x = Variable::new("x", sort!(Int), None);
+    let y = Variable::new("y", sort!(Int), None);
+
+    solver.define(Definition::function("f", [x, y], sort!(Int), term!(+ x y)))?;
+    let x = solver.declare(Declaration::constant("x", sort!(Int)))?;
+
+    solver.require(term!(= x (f 30 12)))?;
+
+    assert_eq!(solver.check()?, Answer::Yes);
+
+    let value = solver.model()?.unwrap().value(x)?;
+    assert_eq!(value, Some(ModelValue::from(Integer::from(42))));
+
+    Ok(())
+}
+
+#[rstest]
 fn arrays(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
     let config = Config::new().produce_models(true);
     let mut solver = Solver::with_backend(&config, backend)?;
