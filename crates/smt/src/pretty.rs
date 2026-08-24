@@ -166,7 +166,7 @@ impl From<Sort> for ast::Sort {
             ast::Sort::Simple(head)
         } else {
             let mut args = Vec::new();
-            for arg in value.arguments {
+            for arg in &*value.arguments {
                 match arg {
                     SortArgument::Value(_) => todo!(),
                     SortArgument::Sort(arg) => args.push(ast::Sort::from(arg.clone())),

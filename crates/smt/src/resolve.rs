@@ -176,10 +176,11 @@ impl Term {
                         .add(var.name().name(), Function::from(var.clone()));
                 }
                 QuantifiedVariable::Unbound(unbound) => {
-                    let resolved = unbound.sort.resolve(&env, pool)?;
+                    let resolved = unbound.sort.resolve(&env, pool, Role::Sort)?;
                     resolved.type_check()?;
+                    let sort = Sort::try_from(resolved)?;
 
-                    let var = Variable::new(unbound.name.clone(), resolved, unbound.span.clone());
+                    let var = Variable::new(unbound.name.clone(), sort, unbound.span.clone());
 
                     variables.push(QuantifiedVariable::Bound(var.clone()));
                     nested

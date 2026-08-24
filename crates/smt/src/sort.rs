@@ -28,7 +28,11 @@ use formally::support::*;
 use derive_more::{Display, From};
 use transitive::Transitive;
 
-use std::{collections::HashMap, fmt::Debug, iter::zip, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Formatter},
+    iter::zip,
+};
 
 /// An argument in a parametric sort such as `Int` and `Real` in `(Array Int Real)`.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Transitive)]
@@ -148,14 +152,14 @@ pub struct Sort {
     /// The sort constructor that is being applied.
     pub head: SortHead,
     /// The sort's arguments.
-    pub arguments: Arc<[SortArgument]>,
+    pub arguments: Vec<SortArgument>,
 }
 
 impl<T: Into<Function>> From<T> for Sort {
     fn from(value: T) -> Self {
         Sort {
             head: SortHead::Bound(value.into()),
-            arguments: Arc::default(),
+            arguments: Vec::new(),
         }
     }
 }
@@ -164,7 +168,7 @@ impl From<Identifier<'_>> for Sort {
     fn from(value: Identifier<'_>) -> Self {
         Sort {
             head: SortHead::Unbound(value.into_owned()),
-            arguments: Arc::default(),
+            arguments: Vec::new(),
         }
     }
 }
@@ -205,10 +209,7 @@ impl TryFrom<Term> for Sort {
 
         let head = SortHead::from(atom.head.clone());
 
-        Ok(Sort {
-            head,
-            arguments: Arc::from(arguments.into_boxed_slice()),
-        })
+        Ok(Sort { head, arguments })
     }
 }
 
@@ -294,7 +295,7 @@ impl Sort {
 
         Ok(Sort {
             head: self.head.clone(),
-            arguments: Arc::from(arguments.into_boxed_slice()),
+            arguments,
         })
     }
 }

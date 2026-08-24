@@ -28,13 +28,7 @@ use formally::{
     smt::*,
     support::{Identifier, Nominal},
 };
-use std::{
-    borrow::Borrow,
-    cell::RefCell,
-    collections::HashSet,
-    fmt::Debug,
-    sync::{Arc, Mutex},
-};
+use std::{borrow::Borrow, cell::RefCell, collections::HashSet, fmt::Debug, sync::Arc};
 
 pub trait TermPool {
     fn shared(&self, kind: TermKind) -> Term;
@@ -151,11 +145,11 @@ impl ToTerm for Term {
 
 impl ToTerm for TermKind {
     fn into_term_in(self, pool: &dyn TermPool) -> Term {
-        pool.shared_term(self)
+        pool.shared(self)
     }
 
     fn to_term_in(&self, pool: &dyn TermPool) -> Term {
-        pool.shared_term_ref(self)
+        pool.shared_ref(self)
     }
 }
 
@@ -302,10 +296,10 @@ impl ToTerm for Let {
 impl ToTerm for Sort {
     fn into_term_in(self, pool: &dyn TermPool) -> Term {
         let mut arguments = Vec::with_capacity(self.arguments.len());
-        for arg in self.arguments {
+        for arg in &*self.arguments {
             match arg {
-                SortArgument::Value(c) => arguments.push(c.into_term_in(pool)),
-                SortArgument::Sort(s) => arguments.push(s.into_term_in(pool)),
+                SortArgument::Value(c) => arguments.push(c.to_term_in(pool)),
+                SortArgument::Sort(s) => arguments.push(s.to_term_in(pool)),
             }
         }
 
