@@ -394,11 +394,11 @@ impl Interpreter {
     fn define_fun(state: &mut State, def: ast::FunctionDef) -> Result<()> {
         let mut domain = Vec::new();
         for arg in def.domain {
-            domain.push(state.solver.variable(smt::Variable::new(
+            domain.push(smt::Variable::new(
                 Identifier::from(arg.name.inner()).over(arg.name.span()),
                 Interpreter::sort_to_smt_term(&state.solver, &arg.sort),
                 arg.span.clone(),
-            ))?);
+            ));
         }
 
         let id = Identifier::from(def.name.inner()).over(def.name.span());

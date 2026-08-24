@@ -283,7 +283,7 @@ impl Solver {
         Ok(resolved.try_into()?)
     }
 
-    pub fn variable<'a, S: ToSort>(&self, variable: Variable<S>) -> Result<Variable> {
+    pub fn lookup_var<S: ToSort>(&self, variable: &Variable<S>) -> Result<Variable> {
         Ok(Variable::new(
             variable.name().clone(),
             self.lookup_sort(variable.sort())?,
@@ -291,23 +291,20 @@ impl Solver {
         ))
     }
 
-    pub fn binding<'a, T: ToTerm>(
-        &self,
-        name: impl Into<Identifier<'a>>,
-        def: T,
-        span: Option<Span>,
-    ) -> Result<Binding> {
-        let name = name.into();
-        let namespan = name.span();
-        let def = self.lookup(def, Role::Function)?;
+    pub fn lookup_binding<T: ToTerm>(&self, binding: Binding<Infer, T>) -> Result<Binding> {
+        let def = self.lookup(&binding.def, Role::Function)?;
         let sort = Sort::of(&def)?;
 
-        let variable = self.variable(Variable::new(name, sort, namespan))?;
+        let variable = Variable::new(
+            binding.variable.name().clone(),
+            sort,
+            binding.variable.span(),
+        );
 
         Ok(Binding {
             variable,
             def,
-            span,
+            span: binding.span,
         })
     }
 
@@ -361,10 +358,15 @@ impl Solver {
     /// Remember that constants are seen as functions with no arguments, and sorts as constants of
     /// the special sort [Sort::sort()]. See also [Definition::function()],
     /// [Definition::constant()], and [Definition::sort()] for details.
-    pub fn define<R: ToSort, B: ToTerm>(&mut self, def: Definition<R, B>) -> Result<Defined> {
+    pub fn define<V: ToSort, R: ToSort, B: ToTerm>(
+        &mut self,
+        def: Definition<V, R, B>,
+    ) -> Result<Defined> {
         let mut nested = Env::new().with_parent(self.env().clone());
+        let mut domain = Vec::with_capacity(def.domain.len());
         for var in &def.domain {
-            var.sort().type_check()?;
+            let var = self.lookup_var(var)?;
+            domain.push(var.clone());
             nested
                 .functions
                 .add(var.name(), Function::Variable(var.clone()));
@@ -401,7 +403,7 @@ impl Solver {
 
         let def = Definition {
             name: def.name,
-            domain: def.domain,
+            domain,
             range,
             body,
             span: None,

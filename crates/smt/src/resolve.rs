@@ -174,26 +174,11 @@ impl Term {
 
         let mut variables = Vec::with_capacity(quant.variables.len());
         for var in &*quant.variables {
-            match var {
-                QuantifiedVariable::Bound(var) => {
-                    variables.push(QuantifiedVariable::Bound(var.clone()));
-                    nested
-                        .functions
-                        .add(var.name().name(), Function::from(var.clone()));
-                }
-                QuantifiedVariable::Unbound(unbound) => {
-                    let resolved = unbound.sort.resolve(&env, pool, Role::Sort)?;
-                    resolved.type_check()?;
-                    let sort = Sort::try_from(resolved)?;
-
-                    let var = Variable::new(unbound.name.clone(), sort, unbound.span.clone());
-
-                    variables.push(QuantifiedVariable::Bound(var.clone()));
-                    nested
-                        .functions
-                        .add(var.name().name(), Function::from(var.clone()));
-                }
-            }
+            let var = var.resolve(env, pool, role)?;
+            variables.push(var.clone());
+            nested
+                .functions
+                .add(var.name().name(), Function::from(var.clone()));
         }
 
         let body = quant.body.resolve(&nested, pool, role)?;
@@ -223,6 +208,16 @@ impl Term {
             body,
             span: let_.span.clone(),
         })
+    }
+}
+
+impl Resolve for Variable {
+    fn resolve(&self, env: &Env, pool: &dyn TermPool, _role: Role) -> Result<Self> {
+        Ok(Variable::new(
+            self.name().clone(),
+            self.sort().resolve(env, pool, Role::Sort)?,
+            self.span(),
+        ))
     }
 }
 

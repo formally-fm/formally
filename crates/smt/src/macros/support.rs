@@ -182,16 +182,12 @@ impl ToTerm for Term<'_> {
                 let mut variables = Vec::with_capacity(quant.variables.len());
                 for var in quant.variables {
                     match var {
-                        Variable::Bound(var) => {
-                            variables.push(QuantifiedVariable::Bound(var.clone()))
-                        }
-                        Variable::Unbound(unbound) => {
-                            variables.push(QuantifiedVariable::Unbound(smt::UnboundVariable {
-                                name: Identifier::from(unbound.name.clone()),
-                                sort: unbound.sort.clone(),
-                                span: None,
-                            }))
-                        }
+                        Variable::Bound(var) => variables.push(var.clone()),
+                        Variable::Unbound(unbound) => variables.push(smt::Variable::new(
+                            Identifier::from(unbound.name.clone()),
+                            unbound.sort.clone(),
+                            None,
+                        )),
                     }
                 }
                 smt::Quantified {

@@ -112,6 +112,13 @@ impl Emit for Infallible {
     }
 }
 
+impl Emit for Diagnostic {
+    fn emit(&self) -> DiagnosticEmitted {
+        Diagnostic::emitter().emit(Level::Error, self.clone());
+        DiagnosticEmitted
+    }
+}
+
 /// Trait for types that contain all the necessary information to implement the [Emit] trait.
 ///
 /// Implementing [Diagnosable] for an error type requires it to be [Display] (required by

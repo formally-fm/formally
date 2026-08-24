@@ -96,11 +96,6 @@ pub enum Associativity {
 /// [Variable] represents a free variable in a term that can be bound by `let` expressions,
 /// quantified by `forall` or `exists` quantifiers, or bound to function parameters.
 ///
-/// Variables can be created with the [Variable::new()] constructor but most often one wants to
-/// obtain one by the [Solver::variable()] function which accepts a [ToTerm] instance as sort and
-/// applies name resolution to the sort argument, or one does not create variables explicitly but
-/// uses the [term!] macro to directly form quantified formulas and `let` expressions.
-///
 /// For example:
 /// ```
 /// # mod formally {
@@ -112,7 +107,7 @@ pub enum Associativity {
 /// let config = Config::default();
 /// let mut solver = Solver::new(&config)?;
 ///
-/// let x = solver.variable("x", sort!(Int), None)?;
+/// let x = Variable::new("x", sort!(Int), None);
 ///
 /// solver.define(Definition::function("f", [x], sort!(Int), term!(* x 2)));
 ///
@@ -388,15 +383,15 @@ impl Declared {
 /// provided ([function()](Definition::function), [constant()](Definition::constant), and
 /// [sort()](Definition::sort)), for common cases.
 #[derive(Clone, Debug, Located, Locatable)]
-pub struct Definition<R: ToSort, B: ToTerm> {
+pub struct Definition<V: ToSort, R: ToSort, B: ToTerm> {
     pub name: Identifier<'static>,
-    pub domain: Vec<Variable>,
+    pub domain: Vec<Variable<V>>,
     pub range: R,
     pub body: B,
     pub span: Option<Span>,
 }
 
-impl<R: ToSort, B: ToTerm> Definition<R, B> {
+impl<V: ToSort, R: ToSort, B: ToTerm> Definition<V, R, B> {
     /// Define a function (or a constant, or a sort).
     ///
     /// This is the most general constructor. It is more convenient than directly constructing the
@@ -433,10 +428,10 @@ impl<R: ToSort, B: ToTerm> Definition<R, B> {
     /// ```
     pub fn function<'a>(
         name: impl Into<Identifier<'a>>,
-        domain: impl IntoIterator<Item = Variable>,
+        domain: impl IntoIterator<Item = Variable<V>>,
         range: R,
         body: B,
-    ) -> Definition<R, B> {
+    ) -> Definition<V, R, B> {
         Definition {
             name: name.into().into_owned(),
             domain: domain.into_iter().collect(),
@@ -445,24 +440,17 @@ impl<R: ToSort, B: ToTerm> Definition<R, B> {
             span: None,
         }
     }
-
-    /// Define a constant (i.e. a function with no arguments).
-    ///
-    /// This is equivalent to `Definition::function(name, [], sort, body)`.
-    pub fn constant<'a>(name: impl Into<Identifier<'a>>, sort: R, body: B) -> Definition<R, B> {
-        Definition::function(name, [], sort, body)
-    }
 }
 
-impl<B: ToTerm> Definition<Sort, B> {
+impl<V: ToSort, B: ToTerm> Definition<V, Sort, B> {
     /// Define a predicate (i.e. a function returning [Core::Bool()](theories::Core::Bool()).
     ///
     /// This is equivalent to `Definition::function(name, domain, theories::Core::Bool(), body)`.
     pub fn predicate<'a>(
         name: impl Into<Identifier<'a>>,
-        domain: impl IntoIterator<Item = Variable>,
+        domain: impl IntoIterator<Item = Variable<V>>,
         body: B,
-    ) -> Definition<Sort, B> {
+    ) -> Definition<V, Sort, B> {
         Definition::function(name, domain, theories::Core::Bool(), body)
     }
 
@@ -471,30 +459,45 @@ impl<B: ToTerm> Definition<Sort, B> {
     /// This is equivalent to `Definition::function(name, domain, Sort::sort(), body)`.
     pub fn sort<'a>(
         name: impl Into<Identifier<'a>>,
-        domain: impl IntoIterator<Item = Variable>,
+        domain: impl IntoIterator<Item = Variable<V>>,
         body: B,
-    ) -> Definition<Sort, B> {
+    ) -> Definition<V, Sort, B> {
         Definition::function(name, domain, Sort::sort(), body)
     }
+}
 
+impl<R: ToSort, B: ToTerm> Definition<Sort, R, B> {
+    /// Define a constant (i.e. a function with no arguments).
+    ///
+    /// This is equivalent to `Definition::function(name, [], sort, body)`.
+    pub fn constant<'a>(
+        name: impl Into<Identifier<'a>>,
+        sort: R,
+        body: B,
+    ) -> Definition<Sort, R, B> {
+        Definition::function(name, [], sort, body)
+    }
+}
+
+impl<B: ToTerm> Definition<Sort, Sort, B> {
     /// Define a Boolean constant (i.e. a constant of sort [Core::Bool()](theories::Core::Bool()).
     ///
     /// This is equivalent to `Definition::constant(name, theories::Core::Bool(), value)`.
-    pub fn boolean<'a>(name: impl Into<Identifier<'a>>, value: B) -> Definition<Sort, B> {
+    pub fn boolean<'a>(name: impl Into<Identifier<'a>>, value: B) -> Definition<Sort, Sort, B> {
         Definition::constant(name, theories::Core::Bool(), value)
     }
 
     /// Define an integer constant (i.e. a constant of sort [Ints::Int()](theories::Ints::Int()).
     ///
     /// This is equivalent to `Definition::constant(name, theories::Ints::Int(), value)`.
-    pub fn integer<'a>(name: impl Into<Identifier<'a>>, value: B) -> Definition<Sort, B> {
+    pub fn integer<'a>(name: impl Into<Identifier<'a>>, value: B) -> Definition<Sort, Sort, B> {
         Definition::constant(name, theories::Ints::Int(), value)
     }
 
     /// Define a real constant (i.e. a constant of sort [Reals::Real()](theories::Reals::Real()).
     ///
     /// This is equivalent to `Definition::constant(name, theories::Reals::Real(), value)`.
-    pub fn real<'a>(name: impl Into<Identifier<'a>>, value: B) -> Definition<Sort, B> {
+    pub fn real<'a>(name: impl Into<Identifier<'a>>, value: B) -> Definition<Sort, Sort, B> {
         Definition::constant(name, theories::Reals::Real(), value)
     }
 }
@@ -513,10 +516,10 @@ impl<B: ToTerm> Definition<Sort, B> {
 /// *equal* to the first. Under the hood, this is the behavior of `Nominal<Arc<Definition>>`, so we
 /// also refer to the [Nominal] type for details.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located, Deref)]
-pub struct Defined(Nominal<Arc<Definition<Sort, Term>>>);
+pub struct Defined(Nominal<Arc<Definition<Sort, Sort, Term>>>);
 
 impl Defined {
-    pub(crate) fn new(def: Definition<Sort, Term>) -> Defined {
+    pub(crate) fn new(def: Definition<Sort, Sort, Term>) -> Defined {
         Defined(Nominal(Arc::new(def)))
     }
 }

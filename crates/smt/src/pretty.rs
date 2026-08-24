@@ -125,22 +125,12 @@ impl From<Term> for ast::Term {
     }
 }
 
-impl From<QuantifiedVariable> for ast::SortedVar {
-    fn from(var: QuantifiedVariable) -> Self {
-        match var {
-            QuantifiedVariable::Bound(bound) => ast::SortedVar {
-                name: ast::Symbol::from(bound.name().clone()),
-                sort: ast::Sort::from(bound.sort().clone()),
-                span: bound.span().clone(),
-            },
-            QuantifiedVariable::Unbound(unbound) => {
-                let sort = ast::Sort::from(unbound.sort);
-                ast::SortedVar {
-                    name: ast::Symbol::from(unbound.name.clone()),
-                    sort,
-                    span: None,
-                }
-            }
+impl From<Variable> for ast::SortedVar {
+    fn from(var: Variable) -> Self {
+        ast::SortedVar {
+            name: ast::Symbol::from(var.name().clone()),
+            sort: ast::Sort::from(var.sort().clone()),
+            span: var.span().clone(),
         }
     }
 }

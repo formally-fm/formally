@@ -214,31 +214,29 @@ pub enum Quantifier {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
-pub struct UnboundVariable {
-    pub name: Identifier<'static>,
-    pub sort: Sort,
-    pub span: Option<Span>,
-}
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Located)]
-pub enum QuantifiedVariable {
-    Bound(Variable),
-    Unbound(UnboundVariable),
-}
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Quantified {
     pub quantifier: Quantifier,
-    pub variables: Arc<[QuantifiedVariable]>,
+    pub variables: Arc<[Variable]>,
     pub body: Term,
     pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
-pub struct Binding<T: ToTerm = Term> {
-    pub variable: Variable,
+pub struct Binding<V: ToSort = Sort, T: ToTerm = Term> {
+    pub variable: Variable<V>,
     pub def: T,
     pub span: Option<Span>,
+}
+
+impl<T: TypeCheck + ToTerm> Binding<Infer, T> {
+    pub fn new(name: Identifier<'_>, def: T, span: Option<Span>) -> Binding<Infer, T> {
+        let namespan = name.span();
+        Binding {
+            variable: Variable::new(name, Infer, namespan),
+            def,
+            span,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]

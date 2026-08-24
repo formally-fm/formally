@@ -473,20 +473,8 @@ impl<M: Manager> ManagerFacade<M> {
 
         let mut vars = Vec::new();
         for var in &*quant.variables {
-            match var {
-                smt::QuantifiedVariable::Bound(var) => {
-                    vars.push(self.variable(var)?);
-                    bindmap.remove_mut(var);
-                }
-                smt::QuantifiedVariable::Unbound(_) => {
-                    return Err(backend::Error::new(
-                        self.manager.backend().name(),
-                        backend::ErrorKind::ViolatedPrecondition(
-                            "an unbound quantified variable reached the backend".into(),
-                        ),
-                    ));
-                }
-            }
+            vars.push(self.variable(var)?);
+            bindmap.remove_mut(var);
         }
 
         let body = self.term(&quant.body, &bindmap)?;

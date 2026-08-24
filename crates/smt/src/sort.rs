@@ -38,6 +38,33 @@ pub trait ToSort: Resolve + TypeCheck + TryInto<Sort, Error: Emit> {}
 
 impl<T: Resolve + TypeCheck + TryInto<Sort, Error: Emit>> ToSort for T {}
 
+#[derive(Clone, Copy)]
+pub struct Infer;
+
+impl Resolve for Infer {
+    fn resolve(&self, _env: &Env, _pool: &dyn TermPool, _role: Role) -> Result<Self> {
+        Ok(*self)
+    }
+}
+
+impl TypeCheck for Infer {
+    fn type_check(&self) -> Result<Sort> {
+        internal!(None, "type checking of an inference place holder");
+        Err(DiagnosticEmitted)
+    }
+}
+
+impl TryFrom<Infer> for Sort {
+    type Error = Diagnostic;
+
+    fn try_from(_value: Infer) -> Result<Self, Diagnostic> {
+        Err(Diagnostic::new(
+            None,
+            "type checking of an inference place holder".to_string(),
+        ))
+    }
+}
+
 /// An argument in a parametric sort such as `Int` and `Real` in `(Array Int Real)`.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Transitive)]
 #[allow(clippy::duplicated_attributes)]
