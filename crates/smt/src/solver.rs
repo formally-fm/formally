@@ -22,11 +22,12 @@
 // SOFTWARE.
 //
 
-use crate::*;
+use crate::formally;
 use formally::{
     smt::{
         backend::{Backend, z3::Z3},
         logics::Logic,
+        *,
     },
     support::*,
 };
@@ -267,7 +268,7 @@ impl Solver {
         self.manager.pool()
     }
 
-    pub fn lookup(&self, term: impl ToTerm, role: Role) -> Result<Term> {
+    pub fn lookup<T: ToTerm>(&self, term: T, role: Role) -> Result<Term> {
         let interned = term.into_term_in(self.manager.pool());
         let resolved = interned.resolve(self.env(), self.manager.pool(), role)?;
         resolved.type_check()?;
@@ -275,21 +276,18 @@ impl Solver {
         Ok(resolved)
     }
 
-    pub fn lookup_sort(&self, sort: impl ToTerm) -> Result<Sort> {
-        let term = self.lookup(sort, Role::Sort)?;
-        Ok(Sort::try_from(term)?)
+    pub fn lookup_sort<S: ToSort>(&self, sort: &S) -> Result<Sort> {
+        let resolved = sort.resolve(self.env(), self.manager.pool(), Role::Sort)?;
+        resolved.type_check()?;
+
+        Ok(resolved.try_into()?)
     }
 
-    pub fn variable<'a, S: ToTerm>(
-        &self,
-        name: impl Into<Identifier<'a>>,
-        sort: S,
-        span: Option<Span>,
-    ) -> Result<Variable> {
+    pub fn variable<'a, S: ToSort>(&self, variable: Variable<S>) -> Result<Variable> {
         Ok(Variable::new(
-            name.into(),
-            Sort::try_from(self.lookup(sort, Role::Sort)?)?,
-            span,
+            variable.name().clone(),
+            self.lookup_sort(variable.sort())?,
+            variable.span(),
         ))
     }
 
@@ -304,7 +302,7 @@ impl Solver {
         let def = self.lookup(def, Role::Function)?;
         let sort = Sort::of(&def)?;
 
-        let variable = self.variable(name, sort, namespan)?;
+        let variable = self.variable(Variable::new(name, sort, namespan))?;
 
         Ok(Binding {
             variable,
@@ -324,20 +322,20 @@ impl Solver {
     /// Remember that constants are seen as functions with no arguments, and sorts as constants of
     /// the special sort [Sort::sort()]. See also [Declaration::function()],
     /// [Declaration::constant()], and [Declaration::sort()] for details.
-    pub fn declare<R: ToTerm, B: ToTerm>(&mut self, decl: Declaration<R, B>) -> Result<Declared> {
-        let mut decl = decl.intern(self.manager.pool());
-
-        decl.range = decl
-            .range
-            .resolve(self.env(), self.manager.pool(), Role::Sort)?;
-        decl.range.type_check()?;
-
-        for d in &mut decl.domain {
-            *d = d.resolve(&self.env, self.manager.pool(), Role::Sort)?;
-            d.type_check()?;
+    pub fn declare<R: ToSort, B: ToSort>(&mut self, decl: Declaration<R, B>) -> Result<Declared> {
+        let mut domain = Vec::with_capacity(decl.domain.len());
+        for d in &decl.domain {
+            domain.push(self.lookup_sort(d)?);
         }
 
-        let decl = Declared::new(decl.commit()?);
+        let decl = Declaration {
+            name: decl.name,
+            domain,
+            range: self.lookup_sort(&decl.range)?,
+            span: decl.span,
+        };
+
+        let decl = Declared::new(decl);
         self.backend_solver
             .logic()
             .check_function(&decl.clone().into())?;
@@ -363,27 +361,53 @@ impl Solver {
     /// Remember that constants are seen as functions with no arguments, and sorts as constants of
     /// the special sort [Sort::sort()]. See also [Definition::function()],
     /// [Definition::constant()], and [Definition::sort()] for details.
-    pub fn define<R: ToTerm, B: ToTerm>(&mut self, def: Definition<R, B>) -> Result<Defined> {
-        let mut def = def.intern(self.manager.pool());
-
-        def.range = def
-            .range
-            .resolve(self.env(), self.manager.pool(), Role::Sort)?;
-        def.range.type_check()?;
-
+    pub fn define<R: ToSort, B: ToTerm>(&mut self, def: Definition<R, B>) -> Result<Defined> {
         let mut nested = Env::new().with_parent(self.env().clone());
         for var in &def.domain {
+            var.sort().type_check()?;
             nested
                 .functions
                 .add(var.name(), Function::Variable(var.clone()));
         }
 
-        def.body = def
-            .body
-            .resolve(&nested, self.manager.pool(), Role::Function)?;
-        def.body.type_check()?;
+        let range = self.lookup_sort(&def.range)?;
+        let body = def.body.into_term_in(self.manager.pool()).resolve(
+            &nested,
+            self.manager.pool(),
+            Role::Function,
+        )?;
+        let bodysort = body.type_check()?;
 
-        let def = Defined::new(def.commit()?);
+        if range == Sort::sort() {
+            if bodysort != Sort::sort() {
+                error!(
+                    body.span(),
+                    "expected sort in definition of `{}`, found `{}`", def.name, bodysort
+                );
+                return Err(DiagnosticEmitted);
+            }
+        } else {
+            if bodysort != range {
+                error!(
+                    body.span(),
+                    "expected term of sort `{}` in definition of `{}`, found `{}`",
+                    range,
+                    def.name,
+                    bodysort
+                );
+                return Err(DiagnosticEmitted);
+            }
+        }
+
+        let def = Definition {
+            name: def.name,
+            domain: def.domain,
+            range,
+            body,
+            span: None,
+        };
+
+        let def = Defined::new(def);
         self.backend_solver
             .logic()
             .check_function(&def.clone().into())?;

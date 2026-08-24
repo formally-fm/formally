@@ -330,7 +330,7 @@ impl Interpreter {
     }
 
     fn declare_const(state: &mut State, decl: ast::DeclareConst) -> Result<()> {
-        let sort = Interpreter::sort_to_smt(&state.solver, &decl.sort)?;
+        let sort = Interpreter::sort_to_smt_term(&state.solver, &decl.sort);
         let id = Identifier::from(decl.name.inner()).over(decl.name.span());
         state
             .solver
@@ -344,9 +344,9 @@ impl Interpreter {
     fn declare_fun(state: &mut State, decl: ast::DeclareFun) -> Result<()> {
         let mut sorts = Vec::new();
         for sort in decl.domain {
-            sorts.push(Interpreter::sort_to_smt(&state.solver, &sort)?);
+            sorts.push(Interpreter::sort_to_smt_term(&state.solver, &sort));
         }
-        let range = Interpreter::sort_to_smt(&state.solver, &decl.range)?;
+        let range = Interpreter::sort_to_smt_term(&state.solver, &decl.range);
         let id = Identifier::from(decl.name.inner()).over(decl.name.span());
 
         state
@@ -380,7 +380,7 @@ impl Interpreter {
     fn define_const(state: &mut State, def: ast::DefineConst) -> Result<()> {
         let id = Identifier::from(def.name.inner()).over(def.name.span());
         let value = Interpreter::term_to_smt(&state.solver, def.body)?;
-        let sort = Interpreter::sort_to_smt(&state.solver, &def.sort)?;
+        let sort = Interpreter::sort_to_smt_term(&state.solver, &def.sort);
 
         state
             .solver
@@ -394,16 +394,16 @@ impl Interpreter {
     fn define_fun(state: &mut State, def: ast::FunctionDef) -> Result<()> {
         let mut domain = Vec::new();
         for arg in def.domain {
-            domain.push(state.solver.variable(
+            domain.push(state.solver.variable(smt::Variable::new(
                 Identifier::from(arg.name.inner()).over(arg.name.span()),
-                Interpreter::sort_to_smt(&state.solver, &arg.sort)?,
+                Interpreter::sort_to_smt_term(&state.solver, &arg.sort),
                 arg.span.clone(),
-            )?);
+            ))?);
         }
 
         let id = Identifier::from(def.name.inner()).over(def.name.span());
         let body = Interpreter::term_to_smt(&state.solver, def.body)?;
-        let range = Interpreter::sort_to_smt(&state.solver, &def.range)?;
+        let range = Interpreter::sort_to_smt_term(&state.solver, &def.range);
 
         state
             .solver

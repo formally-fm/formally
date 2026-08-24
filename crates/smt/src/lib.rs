@@ -419,6 +419,7 @@ pub mod theories;
 
 pub use decl::*;
 pub use pool::*;
+pub use resolve::*;
 pub use solver::*;
 pub use sort::*;
 pub use term::*;

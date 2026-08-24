@@ -35,7 +35,7 @@ use formally::{
 use std::sync::Arc;
 
 impl Interpreter {
-    fn sort_to_smt_term(sort: &ast::Sort, solver: &smt::Solver) -> smt::Term {
+    pub(crate) fn sort_to_smt_term(solver: &smt::Solver, sort: &ast::Sort) -> smt::Term {
         match sort {
             ast::Sort::Simple(ast::Identifier::Symbol(name)) => Identifier::from(name.inner())
                 .over(name.span())
@@ -50,7 +50,7 @@ impl Interpreter {
                     .over(head.span());
                 let args: Vec<_> = args
                     .iter()
-                    .map(|s| Interpreter::sort_to_smt_term(s, solver))
+                    .map(|s| Interpreter::sort_to_smt_term(solver, s))
                     .collect();
 
                 term!(#head #(#args)*)
@@ -59,10 +59,6 @@ impl Interpreter {
             }
             _ => todo!(),
         }
-    }
-
-    pub(crate) fn sort_to_smt(solver: &smt::Solver, sort: &ast::Sort) -> Result<smt::Sort> {
-        Ok(Interpreter::sort_to_smt_term(sort, solver).try_into()?)
     }
 
     fn constant_to_smt(solver: &smt::Solver, cnst: ast::Constant) -> smt::Term {
@@ -186,9 +182,10 @@ impl Interpreter {
         solver: &smt::Solver,
         var: ast::SortedVar,
     ) -> Result<smt::UnboundVariable> {
+        let sort = solver.lookup_sort(&Interpreter::sort_to_smt_term(solver, &var.sort))?;
         Ok(smt::UnboundVariable {
             name: Identifier::from(var.name.inner().to_string()),
-            sort: Interpreter::sort_to_smt_term(&var.sort, solver),
+            sort,
             span: var.span.clone(),
         })
     }

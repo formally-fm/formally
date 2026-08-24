@@ -148,7 +148,11 @@ impl TypeCheck for Atom {
         match &self.head {
             FunctionRef::Bound(bound) => bound.type_check(&self.arguments),
             FunctionRef::Unbound(_) => {
-                internal!(self.head.span(), "unresolved symbol `{}`", self.head);
+                internal!(
+                    self.head.span(),
+                    "unresolved symbol `{}` during type checking",
+                    self.head
+                );
                 Err(DiagnosticEmitted)
             }
         }
@@ -164,5 +168,53 @@ impl TypeCheck for Quantified {
 impl TypeCheck for Let {
     fn type_check(&self) -> Result<Sort> {
         self.body.type_check()
+    }
+}
+
+impl TypeCheck for Declared {
+    fn type_check(&self) -> Result<Sort> {
+        Ok(self.range.clone())
+    }
+}
+
+impl TypeCheck for Defined {
+    fn type_check(&self) -> Result<Sort> {
+        Ok(self.range.clone())
+    }
+}
+
+impl TypeCheck for Sort {
+    fn type_check(&self) -> Result<Sort> {
+        match &self.head {
+            SortHead::Bound(f) => {
+                for (param, arg) in zip(f.domain().iter(), self.arguments.iter()) {
+                    let argsort = arg.type_check()?;
+                    if *param != argsort {
+                        error!(
+                            None,
+                            "unresolved symbol `{}` during type checking", self.head
+                        );
+                    }
+                }
+                Ok(Sort::sort())
+            }
+            SortHead::Unbound(_) => {
+                internal!(
+                    None,
+                    "unresolved symbol `{}` during type checking",
+                    self.head
+                );
+                Err(DiagnosticEmitted)
+            }
+        }
+    }
+}
+
+impl TypeCheck for SortArgument {
+    fn type_check(&self) -> Result<Sort> {
+        match self {
+            SortArgument::Value(_) => Ok(theories::Ints::Int()),
+            SortArgument::Sort(s) => s.type_check(),
+        }
     }
 }

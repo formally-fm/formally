@@ -69,7 +69,22 @@ pub enum Term {
 }
 
 #[derive(Clone)]
-pub struct Sort(Atom);
+pub struct Sort {
+    head: SortHead,
+    args: Vec<SortArgument>,
+}
+
+#[derive(Clone)]
+pub enum SortHead {
+    Bound(syn::Ident),
+    Unbound(syn::Ident),
+}
+
+#[derive(Clone)]
+pub enum SortArgument {
+    Integer(syn::LitInt),
+    Sort(Sort),
+}
 
 #[derive(Clone)]
 pub struct Atom {
@@ -223,12 +238,6 @@ impl Parse for Atom {
     }
 }
 
-impl Parse for Sort {
-    fn parse(input: ParseStream) -> Result<Self> {
-        Ok(Sort(input.parse()?))
-    }
-}
-
 impl Parse for Quantifier {
     fn parse(input: ParseStream) -> Result<Self> {
         let lh = input.lookahead1();
@@ -299,6 +308,52 @@ impl Parse for Term {
     }
 }
 
+impl Parse for SortHead {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if input.peek(Token![#]) {
+            input.parse::<Token![#]>()?;
+            Ok(SortHead::Bound(input.parse()?))
+        } else {
+            Ok(SortHead::Unbound(input.parse()?))
+        }
+    }
+}
+
+impl Parse for SortArgument {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if input.peek(syn::LitInt) {
+            Ok(SortArgument::Integer(input.parse()?))
+        } else if input.peek(syn::token::Paren) {
+            let content;
+            parenthesized!(content in input);
+            Ok(SortArgument::Sort(content.parse()?))
+        } else {
+            Ok(SortArgument::Sort(Sort {
+                head: input.parse()?,
+                args: Vec::new(),
+            }))
+        }
+    }
+}
+
+impl Parse for Sort {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if input.peek(Token![_]) {
+            input.parse::<Token![_]>()?;
+        }
+        Ok(Sort {
+            head: input.parse()?,
+            args: {
+                let mut args = Vec::new();
+                while !input.is_empty() {
+                    args.push(input.parse()?)
+                }
+                args
+            },
+        })
+    }
+}
+
 impl ToTokens for TermArgument {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
@@ -331,7 +386,46 @@ impl ToTokens for Term {
 
 impl ToTokens for Sort {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        self.0.to_tokens(tokens)
+        let head = &self.head;
+        let args = &self.args;
+
+        tokens.extend(quote! {
+            formally::smt::Sort {
+                head: #head,
+                arguments: vec![#(#args),*]
+            }
+        })
+    }
+}
+
+impl ToTokens for SortHead {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            SortHead::Bound(ident) => tokens.extend(quote! {
+                formally::smt::SortHead::Bound(#ident.clone().into()),
+            }),
+            SortHead::Unbound(ident) => {
+                let ident = ident.to_string();
+                tokens.extend(quote! {
+                    formally::smt::SortHead::Unbound(formally::support::Identifier::from(#ident))
+                })
+            }
+        }
+    }
+}
+
+impl ToTokens for SortArgument {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            SortArgument::Integer(lit) => tokens.extend(quote! {
+               formally::smt::SortArgument::Value(
+                    formally::smt::Constant::Integer { value: #lit, span: None }
+                )
+            }),
+            SortArgument::Sort(sort) => tokens.extend(quote! {
+                formally::smt::SortArgument::Sort(#sort)
+            }),
+        }
     }
 }
 

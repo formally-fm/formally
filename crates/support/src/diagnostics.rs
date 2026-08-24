@@ -26,6 +26,7 @@ use crate::*;
 
 use std::{
     cell::RefCell,
+    convert::Infallible,
     fmt::{self, Debug, Display},
     ops::Deref,
     sync::{Arc, LazyLock, Mutex},
@@ -103,6 +104,12 @@ impl Display for DiagnosticEmitted {
 pub trait Emit {
     /// Emit the object as a diagnostic.
     fn emit(&self) -> DiagnosticEmitted;
+}
+
+impl Emit for Infallible {
+    fn emit(&self) -> DiagnosticEmitted {
+        DiagnosticEmitted
+    }
 }
 
 /// Trait for types that contain all the necessary information to implement the [Emit] trait.

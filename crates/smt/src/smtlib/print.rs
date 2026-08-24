@@ -161,7 +161,6 @@ impl Pretty for Sort {
                         RcDoc::space(),
                     )),
             ),
-            Sort::Term(t) => t.pretty(),
         }
     }
 }

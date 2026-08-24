@@ -72,21 +72,21 @@ pub struct Atom<'t> {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct UnboundVariable<'t> {
+pub struct UnboundVariable {
     pub name: Cow<'static, str>,
-    pub sort: Term<'t>,
+    pub sort: Sort,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub enum Variable<'t> {
+pub enum Variable {
     Bound(smt::Variable),
-    Unbound(UnboundVariable<'t>),
+    Unbound(UnboundVariable),
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Quantified<'t> {
     pub quantifier: Quantifier,
-    pub variables: &'t [Variable<'t>],
+    pub variables: &'t [Variable],
     pub body: &'t Term<'t>,
     pub span: Option<Span>,
 }
@@ -165,13 +165,13 @@ impl ToTerm for Term<'_> {
                 }
                 match atom.head {
                     AtomHead::Bound(BoundHead { function }) => smt::Atom {
-                        head: smt::FunctionRef::from(function),
+                        head: FunctionRef::from(function),
                         arguments: Arc::from(arguments.into_boxed_slice()),
                         span: atom.span,
                     }
                     .into_term_in(pool),
                     AtomHead::Unbound(UnboundHead { name }) => smt::Atom {
-                        head: smt::FunctionRef::from(Identifier::from(name.clone())),
+                        head: FunctionRef::from(Identifier::from(name.clone())),
                         arguments: Arc::from(arguments.into_boxed_slice()),
                         span: atom.span,
                     }
@@ -188,7 +188,7 @@ impl ToTerm for Term<'_> {
                         Variable::Unbound(unbound) => {
                             variables.push(QuantifiedVariable::Unbound(smt::UnboundVariable {
                                 name: Identifier::from(unbound.name.clone()),
-                                sort: unbound.sort.to_term_in(pool),
+                                sort: unbound.sort.clone(),
                                 span: None,
                             }))
                         }

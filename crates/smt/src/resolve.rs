@@ -28,7 +28,11 @@ use formally::support::*;
 use std::panic::AssertUnwindSafe;
 use std::{collections::HashMap, iter::zip, sync::Arc};
 
-impl Term {
+pub trait Resolve: Sized {
+    fn resolve(&self, env: &Env, pool: &dyn TermPool, role: Role) -> Result<Self>;
+}
+
+impl Resolve for Term {
     /// Perform *name resolution*.
     ///
     /// Name resolution is the process of replacing all the [unbound atoms][UnboundAtom] in a term
@@ -45,7 +49,7 @@ impl Term {
     /// before type checking, because type checking of unbound atoms is not possible. This seems
     /// to require double the calls to [Term::type_check()], but the latter caches its results in
     /// `env.context()`, so each subterm gets type-checked only once anyway.
-    pub fn resolve(&self, env: &Env, pool: &dyn TermPool, role: Role) -> Result<Term> {
+    fn resolve(&self, env: &Env, pool: &dyn TermPool, role: Role) -> Result<Term> {
         if self.is_resolved() {
             return Ok(self.clone());
         }
@@ -62,7 +66,9 @@ impl Term {
             }
         })
     }
+}
 
+impl Term {
     fn resolve_atom(atom: &Atom, env: &Env, role: Role, pool: &dyn TermPool) -> Result<Atom> {
         match &atom.head {
             FunctionRef::Bound(bound) => Self::resolve_bound(bound, env, &atom.arguments, pool),
@@ -217,5 +223,32 @@ impl Term {
             body,
             span: let_.span.clone(),
         })
+    }
+}
+
+impl Resolve for Sort {
+    fn resolve(&self, env: &Env, pool: &dyn TermPool, role: Role) -> Result<Self> {
+        if role == Role::Function {
+            internal!(None, "cannot resolve a sort with Role::Function");
+            return Err(DiagnosticEmitted);
+        }
+
+        let term = self.to_term_in(pool);
+        let resolved = term.resolve(env, pool, Role::Sort)?;
+        let sort = Sort::try_from(resolved).ok().unwrap();
+
+        Ok(sort)
+    }
+}
+
+impl Resolve for Declared {
+    fn resolve(&self, _env: &Env, _pool: &dyn TermPool, _role: Role) -> Result<Self> {
+        Ok(self.clone())
+    }
+}
+
+impl Resolve for Defined {
+    fn resolve(&self, _env: &Env, _pool: &dyn TermPool, _role: Role) -> Result<Self> {
+        Ok(self.clone())
     }
 }

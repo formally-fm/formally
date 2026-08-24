@@ -30,9 +30,13 @@ use transitive::Transitive;
 
 use std::{
     collections::HashMap,
-    fmt::{Debug, Formatter},
+    fmt::{Debug, Display, Formatter},
     iter::zip,
 };
+
+pub trait ToSort: Resolve + TypeCheck + TryInto<Sort, Error: Emit> {}
+
+impl<T: Resolve + TypeCheck + TryInto<Sort, Error: Emit>> ToSort for T {}
 
 /// An argument in a parametric sort such as `Int` and `Real` in `(Array Int Real)`.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Transitive)]
@@ -40,7 +44,7 @@ use std::{
 pub enum SortArgument {
     /// A constant argument (e.g., `32` in `(_ BitVec 32)`).
     Value(Constant),
-    /// A sort argument (e.g., `Int` and `Real` in `(Array Int Real`).
+    /// A sort argument (e.g., `Int` and `Real` in `(Array Int Real)`).
     Sort(Sort),
 }
 
@@ -128,6 +132,15 @@ impl From<SortHead> for FunctionRef {
                 span: None,
             }),
             SortHead::Unbound(name) => FunctionRef::Unbound(UnboundRef { name, span: None }),
+        }
+    }
+}
+
+impl Display for SortHead {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SortHead::Bound(func) => write!(f, "{}", func.name()),
+            SortHead::Unbound(name) => write!(f, "{name}"),
         }
     }
 }

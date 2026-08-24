@@ -216,7 +216,7 @@ pub enum Quantifier {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct UnboundVariable {
     pub name: Identifier<'static>,
-    pub sort: Term,
+    pub sort: Sort,
     pub span: Option<Span>,
 }
 
@@ -235,9 +235,9 @@ pub struct Quantified {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
-pub struct Binding {
+pub struct Binding<T: ToTerm = Term> {
     pub variable: Variable,
-    pub def: Term,
+    pub def: T,
     pub span: Option<Span>,
 }
 

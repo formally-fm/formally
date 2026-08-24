@@ -134,10 +134,7 @@ impl From<QuantifiedVariable> for ast::SortedVar {
                 span: bound.span().clone(),
             },
             QuantifiedVariable::Unbound(unbound) => {
-                let sort = match Sort::try_from(unbound.sort.clone()) {
-                    Ok(sort) => ast::Sort::from(sort),
-                    Err(_) => ast::Sort::Term(Box::new(ast::Term::from(unbound.sort.clone()))),
-                };
+                let sort = ast::Sort::from(unbound.sort);
                 ast::SortedVar {
                     name: ast::Symbol::from(unbound.name.clone()),
                     sort,

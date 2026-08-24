@@ -132,18 +132,18 @@ pub enum Associativity {
 /// *equal* to the first. Under the hood, this is the behavior of `Nominal<Arc<T>>` for some inner
 /// type `T`, so we also refer to the [Nominal] type for details.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located)]
-pub struct Variable(Nominal<Arc<VariableData>>);
+pub struct Variable<S: ToSort = Sort>(Nominal<Arc<VariableData<S>>>);
 
-#[derive(Clone, Debug, Located, Locatable)]
-struct VariableData {
+#[derive(Debug, Located, Locatable)]
+struct VariableData<S: ToSort> {
     pub name: Identifier<'static>,
-    pub sort: Sort,
+    pub sort: S,
     pub span: Option<Span>,
 }
 
-impl Variable {
+impl<S: ToSort> Variable<S> {
     /// Create a new [Variable].
-    pub fn new<'a>(name: impl Into<Identifier<'a>>, sort: Sort, span: Option<Span>) -> Variable {
+    pub fn new<'a>(name: impl Into<Identifier<'a>>, sort: S, span: Option<Span>) -> Variable<S> {
         Variable(Nominal(Arc::new(VariableData {
             name: name.into().into_owned(),
             sort,
@@ -157,7 +157,7 @@ impl Variable {
     }
 
     /// Get the parameter's sort.
-    pub fn sort(&self) -> &Sort {
+    pub fn sort(&self) -> &S {
         &self.0.sort
     }
 }
@@ -258,7 +258,7 @@ impl Primitive {
 /// provided ([function()](Declaration::function), [constant()](Declaration::constant), and
 /// [sort()](Declaration::sort)), for common cases.
 #[derive(Clone, Debug, Located, Locatable)]
-pub struct Declaration<D: ToTerm, R: ToTerm> {
+pub struct Declaration<D: ToSort, R: ToSort> {
     /// The name of the declared function.
     pub name: Identifier<'static>,
     /// The domain of the declared function, i.e. the sorts of its arguments.
@@ -269,7 +269,7 @@ pub struct Declaration<D: ToTerm, R: ToTerm> {
     pub span: Option<Span>,
 }
 
-impl<D: ToTerm, R: ToTerm> Declaration<D, R> {
+impl<D: ToSort, R: ToSort> Declaration<D, R> {
     /// Declare a function (or a constant, or a sort).
     ///
     /// This is the most general constructor. It is more convenient than directly constructing the
@@ -304,7 +304,7 @@ impl<D: ToTerm, R: ToTerm> Declaration<D, R> {
     }
 }
 
-impl<D: ToTerm> Declaration<D, Sort> {
+impl<D: ToSort> Declaration<D, Sort> {
     /// Declare a predicate (i.e. a function returning [Core::Bool()](theories::Core::Bool()).
     ///
     /// This is equivalent to `Declaration::function(name, domain, theories::Core::Bool())`.
@@ -316,7 +316,7 @@ impl<D: ToTerm> Declaration<D, Sort> {
     }
 }
 
-impl<R: ToTerm> Declaration<Sort, R> {
+impl<R: ToSort> Declaration<Sort, R> {
     /// Declare a constant (i.e. a function with no arguments).
     ///
     /// This is equivalent to `Declaration::function(name, Vec::<Sort>::new(), sort)`.
@@ -355,39 +355,6 @@ impl Declaration<Sort, Sort> {
     }
 }
 
-impl<D: ToTerm, R: ToTerm> Declaration<D, R> {
-    pub(crate) fn intern(self, pool: &dyn TermPool) -> Declaration<Term, Term> {
-        let mut domain = Vec::with_capacity(self.domain.len());
-        for s in self.domain {
-            domain.push(s.into_term_in(pool));
-        }
-        let range = self.range.into_term_in(pool);
-        Declaration {
-            name: self.name,
-            domain,
-            range,
-            span: None,
-        }
-    }
-}
-
-impl Declaration<Term, Term> {
-    pub(crate) fn commit(self) -> Result<Declaration<Sort, Sort>> {
-        let mut domain = Vec::with_capacity(self.domain.len());
-        for s in self.domain {
-            domain.push(Sort::try_from(s)?);
-        }
-        let range = Sort::try_from(self.range)?;
-
-        Ok(Declaration {
-            name: self.name,
-            domain,
-            range,
-            span: None,
-        })
-    }
-}
-
 /// Represent a specific function (or constant, or sort) declared in a [Solver].
 ///
 /// [Declared] is an opaque shared reference to a [Declaration] declared in a [Solver].
@@ -421,7 +388,7 @@ impl Declared {
 /// provided ([function()](Definition::function), [constant()](Definition::constant), and
 /// [sort()](Definition::sort)), for common cases.
 #[derive(Clone, Debug, Located, Locatable)]
-pub struct Definition<R: ToTerm, B: ToTerm> {
+pub struct Definition<R: ToSort, B: ToTerm> {
     pub name: Identifier<'static>,
     pub domain: Vec<Variable>,
     pub range: R,
@@ -429,7 +396,7 @@ pub struct Definition<R: ToTerm, B: ToTerm> {
     pub span: Option<Span>,
 }
 
-impl<R: ToTerm, B: ToTerm> Definition<R, B> {
+impl<R: ToSort, B: ToTerm> Definition<R, B> {
     /// Define a function (or a constant, or a sort).
     ///
     /// This is the most general constructor. It is more convenient than directly constructing the
@@ -529,30 +496,6 @@ impl<B: ToTerm> Definition<Sort, B> {
     /// This is equivalent to `Definition::constant(name, theories::Reals::Real(), value)`.
     pub fn real<'a>(name: impl Into<Identifier<'a>>, value: B) -> Definition<Sort, B> {
         Definition::constant(name, theories::Reals::Real(), value)
-    }
-}
-
-impl<R: ToTerm, B: ToTerm> Definition<R, B> {
-    pub(crate) fn intern(self, pool: &dyn TermPool) -> Definition<Term, Term> {
-        Definition {
-            name: self.name,
-            domain: self.domain,
-            range: self.range.into_term_in(pool),
-            body: self.body.into_term_in(pool),
-            span: self.span,
-        }
-    }
-}
-
-impl Definition<Term, Term> {
-    pub(crate) fn commit(self) -> Result<Definition<Sort, Term>> {
-        Ok(Definition {
-            name: self.name,
-            domain: self.domain,
-            range: Sort::try_from(self.range)?,
-            body: self.body,
-            span: self.span,
-        })
     }
 }
 
