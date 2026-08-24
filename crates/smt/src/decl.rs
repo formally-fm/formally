@@ -91,10 +91,13 @@ pub enum Associativity {
     Pairwise,
 }
 
-/// A parameter in function definitions.
+/// A free variable.
 ///
 /// [Variable] represents a free variable in a term that can be bound by `let` expressions,
 /// quantified by `forall` or `exists` quantifiers, or bound to function parameters.
+///
+/// [Variable] objects can be created using the [Variable::new()] constructor or with the [var!] or
+/// [vars!] macros.
 ///
 /// For example:
 /// ```
@@ -116,6 +119,10 @@ pub enum Associativity {
 /// # Ok(())
 /// # }
 /// ```
+///
+/// The [Variable<S>] type is parametric in a [ToSort] type `S` used to represent the sort of the
+/// variable, such as [Sort] itself or the result of the [sort!] macro. See the documentation of
+/// [ToSort] for details.
 ///
 /// Comparison of [Variable] objects is *nominal*, that is, equality and hashing operate on the
 /// identity of the objects, not on their values. In other words, two [Variable] objects with
@@ -144,12 +151,12 @@ impl<S: ToSort> Variable<S> {
         })))
     }
 
-    /// Get the parameter's name.
+    /// Get the variable's name.
     pub fn name(&self) -> &Identifier<'static> {
         &self.0.name
     }
 
-    /// Get the parameter's sort.
+    /// Get the variable's sort.
     pub fn sort(&self) -> &S {
         &self.0.sort
     }
@@ -166,7 +173,7 @@ impl<S: Clone + ToSort> Locatable for Variable<S> {
 /// A primitive function (or constant, or sort).
 ///
 /// [Primitive] represents a primitive symbol provided by a theory. As such it is usually not
-/// created directly by users of the framework but indirectly by the [theory] macro.
+/// created directly by users of the framework but indirectly by the [theories!] macro.
 ///
 /// Comparison of [Primitive] objects is *nominal*, that is, equality and hashing operate on the
 /// identity of the objects, not on their values. In other words, two [Primitive] objects with
@@ -197,7 +204,7 @@ impl Primitive {
     /// Create a new [Primitive].
     ///
     /// Using this method directly should very seldom be necessary, as the preferred way of
-    /// introducing primitive symbols if through the [theory] macro.
+    /// introducing primitive symbols if through the [theories!] macro.
     pub fn new<'a>(
         name: impl Into<Identifier<'a>>,
         parameters: Vec<Variable>,
@@ -255,6 +262,10 @@ impl Primitive {
 /// [Declared] object which is an opaque shared reference to a specific [Declaration] object which
 /// represents the actual entity the solver is keeping track of.
 ///
+/// The [Declaration<D, R>] type is parametric in two [ToSort] types `D` and `R` used to represent
+/// the sort of the domain and of the range of the function, respectively. These can be e.g.,
+/// [Sort] itself or the result of the [sort!] macro. See the documentation of [ToSort] for details.
+///
 /// The fields are public and the type can be constructed freely, but some constructors are also
 /// provided ([function()](Declaration::function), [constant()](Declaration::constant), and
 /// [sort()](Declaration::sort)), for common cases.
@@ -283,11 +294,15 @@ impl<D: ToSort, R: ToSort> Declaration<D, R> {
     /// In the following example we declare a function taking a integer argument and returning a
     /// real and we set it to a given span.
     /// ```
-    /// # use formally_smt::{*, theories::*};
-    /// # use formally_support::*;
+    /// # mod formally {
+    /// #     pub extern crate formally_smt as smt;
+    /// #     pub extern crate formally_support as support;
+    /// # }
+    /// # use formally::{smt::*, support::*};
+    /// #
     /// # fn main() -> Result<()> {
     /// # let mut solver = Solver::new(&Config::new())?;
-    /// solver.declare(Declaration::function("f", [Ints::Int()], Reals::Real()))?;
+    /// solver.declare(Declaration::function("f", [sort!(Int)], sort!(Real)))?;
     /// # Ok(())
     /// # }
     /// ```
@@ -380,10 +395,15 @@ impl Declared {
 
 /// Specification for definitions of functions (and constants, and sorts).
 ///
-/// [Definition] objects are passed to the [Solver::define()] method to declare entities in a
-/// solver, by specifying all the attributes of such declarations. Then, the method returns a
+/// [Definition] objects are passed to the [Solver::define()] method to define entities in a
+/// solver, by specifying all the attributes of such definitions. Then, the method returns a
 /// [Defined] object which is an opaque shared reference to a specific [Definition] object which
 /// represents the actual entity the solver is keeping track of.
+///
+/// The [Definition<V, R, B>] type is parametric in two [ToSort] types `V` and `R` used to
+/// represent the sort of the variables and of the range of the definition, respectively, and in
+/// a [ToTerm] `B` type used to represent the term of the body of the definition. See the
+/// documentation of [ToSort] and [ToTerm] for details.
 ///
 /// The fields are public and the type can be constructed freely, but some constructors are also
 /// provided ([function()](Definition::function), [constant()](Definition::constant), and
