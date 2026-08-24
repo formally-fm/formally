@@ -216,8 +216,8 @@ impl Resolve for Variable {
         Ok(Variable::new(
             self.name().clone(),
             self.sort().resolve(env, pool, Role::Sort)?,
-            self.span(),
-        ))
+        )
+        .over(self.span()))
     }
 }
 

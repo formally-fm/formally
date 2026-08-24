@@ -120,11 +120,15 @@ impl Interpreter {
             ast::Term::Let(let_) => {
                 let mut bindings = Vec::new();
                 for bind in let_.bindings {
-                    bindings.push(solver.lookup_binding(smt::Binding::new(
-                        Identifier::new(bind.name.inner()),
-                        Interpreter::term_to_smt(solver, bind.body)?,
-                        bind.span.clone(),
-                    ))?)
+                    bindings.push(
+                        solver.lookup_binding(
+                            smt::Binding::new(
+                                Identifier::new(bind.name.inner()),
+                                Interpreter::term_to_smt(solver, bind.body)?,
+                            )
+                            .over(bind.span.clone()),
+                        )?,
+                    )
                 }
                 let body = Interpreter::term_to_smt(solver, *let_.body)?;
                 let term = smt::Let {
@@ -176,10 +180,9 @@ impl Interpreter {
 
     fn sorted_var_to_variable(solver: &smt::Solver, var: ast::SortedVar) -> Result<smt::Variable> {
         let sort = smt::Sort::try_from(Interpreter::sort_to_smt_term(solver, &var.sort))?;
-        Ok(smt::Variable::new(
-            Identifier::from(var.name.inner().to_string()),
-            sort,
-            var.span.clone(),
-        ))
+        Ok(
+            smt::Variable::new(Identifier::from(var.name.inner().to_string()), sort)
+                .over(var.span.clone()),
+        )
     }
 }

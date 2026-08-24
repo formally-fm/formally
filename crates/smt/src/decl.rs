@@ -107,9 +107,7 @@ pub enum Associativity {
 /// let config = Config::default();
 /// let mut solver = Solver::new(&config)?;
 ///
-/// let x = Variable::new("x", sort!(Int), None);
-///
-/// solver.define(Definition::function("f", [x], sort!(Int), term!(* x 2)));
+/// solver.define(Definition::function("f", [var!(x Int)], sort!(Int), term!(* x 2)));
 ///
 /// solver.require(term!(not (= (f 21) 42)))?;
 ///
@@ -129,7 +127,7 @@ pub enum Associativity {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located)]
 pub struct Variable<S: ToSort = Sort>(Nominal<Arc<VariableData<S>>>);
 
-#[derive(Debug, Located, Locatable)]
+#[derive(Clone, Debug, Located, Locatable)]
 struct VariableData<S: ToSort> {
     pub name: Identifier<'static>,
     pub sort: S,
@@ -138,11 +136,11 @@ struct VariableData<S: ToSort> {
 
 impl<S: ToSort> Variable<S> {
     /// Create a new [Variable].
-    pub fn new<'a>(name: impl Into<Identifier<'a>>, sort: S, span: Option<Span>) -> Variable<S> {
+    pub fn new<'a>(name: impl Into<Identifier<'a>>, sort: S) -> Variable<S> {
         Variable(Nominal(Arc::new(VariableData {
             name: name.into().into_owned(),
             sort,
-            span,
+            span: None,
         })))
     }
 
@@ -154,6 +152,14 @@ impl<S: ToSort> Variable<S> {
     /// Get the parameter's sort.
     pub fn sort(&self) -> &S {
         &self.0.sort
+    }
+}
+
+impl<S: Clone + ToSort> Locatable for Variable<S> {
+    type Located = Variable<S>;
+
+    fn over(self, span: impl Into<Option<Span>>) -> Self::Located {
+        Variable(Nominal(Arc::new((**self.0).clone().over(span.into()))))
     }
 }
 
@@ -416,9 +422,10 @@ impl<V: ToSort, R: ToSort, B: ToTerm> Definition<V, R, B> {
     /// # use formally::{smt::{*, theories::*}, support::*};
     /// # fn main() -> Result<()> {
     /// # let mut solver = Solver::new(&Config::new().logic("NRA"))?;
-    /// let a = Variable::new("a", Reals::Real(), None);
-    /// let b = Variable::new("b", Reals::Real(), None);
-    /// let c = Variable::new("c", Reals::Real(), None);
+    ///
+    /// let a = var!(a Real);
+    /// let b = var!(b Real);
+    /// let c = var!(c Real);
     ///
     /// solver.define(
     ///     Definition::function("mult-add", [a, b, c], Reals::Real(), term!(+ (* a b) c))

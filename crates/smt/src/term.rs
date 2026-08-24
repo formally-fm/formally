@@ -229,12 +229,12 @@ pub struct Binding<V: ToSort = Sort, T: ToTerm = Term> {
 }
 
 impl<T: TypeCheck + ToTerm> Binding<Infer, T> {
-    pub fn new(name: Identifier<'_>, def: T, span: Option<Span>) -> Binding<Infer, T> {
+    pub fn new(name: Identifier<'_>, def: T) -> Binding<Infer, T> {
         let namespan = name.span();
         Binding {
-            variable: Variable::new(name, Infer, namespan),
+            variable: Variable::new(name, Infer).over(namespan),
             def,
-            span,
+            span: None,
         }
     }
 }

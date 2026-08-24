@@ -435,6 +435,20 @@ macro_rules! sort {
     ($($tokens:tt)*) => {$crate::macros::proc::sort!{$($tokens)*}};
 }
 
+#[macro_export]
+macro_rules! var {
+    ($name:ident $($sort:tt)*) => {
+        $crate::Variable::new(stringify!($name), $crate::sort!($($sort)*))
+    };
+}
+
+#[macro_export]
+macro_rules! vars {
+    ($(($name:ident $($sort:tt)*))*) => {
+        [$($crate::var!($name $($sort)*)),*]
+    };
+}
+
 #[doc(hidden)]
 pub mod proc {
     pub use formally_smt_macros::*;

@@ -185,8 +185,7 @@ impl ToTerm for Term<'_> {
                         Variable::Bound(var) => variables.push(var.clone()),
                         Variable::Unbound(unbound) => variables.push(smt::Variable::new(
                             Identifier::from(unbound.name.clone()),
-                            unbound.sort.clone(),
-                            None,
+                            unbound.sort.clone()
                         )),
                     }
                 }

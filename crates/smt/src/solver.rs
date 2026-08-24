@@ -284,22 +284,18 @@ impl Solver {
     }
 
     pub fn lookup_var<S: ToSort>(&self, variable: &Variable<S>) -> Result<Variable> {
-        Ok(Variable::new(
-            variable.name().clone(),
-            self.lookup_sort(variable.sort())?,
-            variable.span(),
-        ))
+        Ok(
+            Variable::new(variable.name().clone(), self.lookup_sort(variable.sort())?)
+                .over(variable.span()),
+        )
     }
 
     pub fn lookup_binding<T: ToTerm>(&self, binding: Binding<Infer, T>) -> Result<Binding> {
         let def = self.lookup(&binding.def, Role::Function)?;
         let sort = Sort::of(&def)?;
 
-        let variable = Variable::new(
-            binding.variable.name().clone(),
-            sort,
-            binding.variable.span(),
-        );
+        let variable =
+            Variable::new(binding.variable.name().clone(), sort).over(binding.variable.span());
 
         Ok(Binding {
             variable,
