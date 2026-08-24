@@ -28,11 +28,7 @@ use formally::support::*;
 use derive_more::{Display, From};
 use transitive::Transitive;
 
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Formatter},
-    iter::zip,
-};
+use std::{collections::HashMap, fmt::Debug, iter::zip, sync::Arc};
 
 /// An argument in a parametric sort such as `Int` and `Real` in `(Array Int Real)`.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Transitive)]
@@ -152,14 +148,14 @@ pub struct Sort {
     /// The sort constructor that is being applied.
     pub head: SortHead,
     /// The sort's arguments.
-    pub arguments: Vec<SortArgument>,
+    pub arguments: Arc<[SortArgument]>,
 }
 
 impl<T: Into<Function>> From<T> for Sort {
     fn from(value: T) -> Self {
         Sort {
             head: SortHead::Bound(value.into()),
-            arguments: Vec::new(),
+            arguments: Arc::default(),
         }
     }
 }
@@ -168,7 +164,7 @@ impl From<Identifier<'_>> for Sort {
     fn from(value: Identifier<'_>) -> Self {
         Sort {
             head: SortHead::Unbound(value.into_owned()),
-            arguments: Vec::new(),
+            arguments: Arc::default(),
         }
     }
 }
@@ -199,7 +195,7 @@ impl TryFrom<Term> for Sort {
             return Err(InvalidSortTerm { span: term.span() });
         };
 
-        let mut arguments = Vec::new();
+        let mut arguments = Vec::with_capacity(atom.arguments.len());
         for arg in &*atom.arguments {
             match arg.kind() {
                 TermKind::Constant(c) => arguments.push(SortArgument::Value(c.clone())),
@@ -209,7 +205,10 @@ impl TryFrom<Term> for Sort {
 
         let head = SortHead::from(atom.head.clone());
 
-        Ok(Sort { head, arguments })
+        Ok(Sort {
+            head,
+            arguments: Arc::from(arguments.into_boxed_slice()),
+        })
     }
 }
 
@@ -238,7 +237,7 @@ impl Sort {
                 if let Some(this) = matches.get(this).cloned() {
                     this.head == argument.head
                         && this.arguments.len() == argument.arguments.len()
-                        && zip(&this.arguments, &argument.arguments)
+                        && zip(&*this.arguments, &*argument.arguments)
                             .all(|(this, arg)| this.matches_with(arg, matches))
                 } else {
                     matches.insert(this.clone(), argument.clone());
@@ -283,8 +282,8 @@ impl Sort {
             _ => {}
         }
 
-        let mut arguments = Vec::new();
-        for arg in &self.arguments {
+        let mut arguments = Vec::with_capacity(self.arguments.len());
+        for arg in &*self.arguments {
             match arg {
                 SortArgument::Value(term) => arguments.push(SortArgument::Value(term.clone())),
                 SortArgument::Sort(sort) => {
@@ -295,7 +294,7 @@ impl Sort {
 
         Ok(Sort {
             head: self.head.clone(),
-            arguments,
+            arguments: Arc::from(arguments.into_boxed_slice()),
         })
     }
 }

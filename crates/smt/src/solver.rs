@@ -249,8 +249,8 @@ impl Solver {
 
     /// Get the [Env] object holding the current scopes for functions and sorts declared and defined
     /// in the solver.
-    pub fn env(&self) -> Env {
-        self.env.clone()
+    pub fn env(&self) -> &Env {
+        &self.env
     }
 
     /// The current [Scope] for functions.
@@ -267,13 +267,9 @@ impl Solver {
         self.manager.pool()
     }
 
-    pub fn resolve(&self, term: &Term, role: Role) -> Result<Term> {
-        self.env.resolve(term, role, self.manager.pool())
-    }
-
     pub fn lookup(&self, term: impl ToTerm, role: Role) -> Result<Term> {
         let interned = term.into_term_in(self.manager.pool());
-        let resolved = self.resolve(&interned, role)?;
+        let resolved = interned.resolve(self.env(), self.manager.pool(), role)?;
         resolved.type_check()?;
 
         Ok(resolved)
@@ -331,13 +327,13 @@ impl Solver {
     pub fn declare<R: ToTerm, B: ToTerm>(&mut self, decl: Declaration<R, B>) -> Result<Declared> {
         let mut decl = decl.intern(self.manager.pool());
 
-        decl.range = self
-            .env
-            .resolve(&decl.range, Role::Sort, self.manager.pool())?;
+        decl.range = decl
+            .range
+            .resolve(self.env(), self.manager.pool(), Role::Sort)?;
         decl.range.type_check()?;
 
         for d in &mut decl.domain {
-            *d = self.env.resolve(d, Role::Sort, self.manager.pool())?;
+            *d = d.resolve(&self.env, self.manager.pool(), Role::Sort)?;
             d.type_check()?;
         }
 
@@ -370,19 +366,21 @@ impl Solver {
     pub fn define<R: ToTerm, B: ToTerm>(&mut self, def: Definition<R, B>) -> Result<Defined> {
         let mut def = def.intern(self.manager.pool());
 
-        def.range = self
-            .env()
-            .resolve(&def.range, Role::Sort, self.manager.pool())?;
+        def.range = def
+            .range
+            .resolve(self.env(), self.manager.pool(), Role::Sort)?;
         def.range.type_check()?;
 
-        let mut nested = Env::new().with_parent(self.env());
+        let mut nested = Env::new().with_parent(self.env().clone());
         for var in &def.domain {
             nested
                 .functions
                 .add(var.name(), Function::Variable(var.clone()));
         }
 
-        def.body = nested.resolve(&def.body, Role::Function, self.manager.pool())?;
+        def.body = def
+            .body
+            .resolve(&nested, self.manager.pool(), Role::Function)?;
         def.body.type_check()?;
 
         let def = Defined::new(def.commit()?);
@@ -405,7 +403,7 @@ impl Solver {
     /// The term undergoes [name resolution](Term::resolve()) and must be well-typed and be of
     /// sort [Core::Bool()](theories::Core::Bool()).
     pub fn require<T: ToTerm>(&mut self, term: T) -> Result<()> {
-        let term = self.resolve(&term.into_term_in(self.manager.pool()), Role::Function)?;
+        let term = self.lookup(term, Role::Function)?;
         self.backend_solver.logic().check_term(&term)?;
         let sort = Sort::of(&term)?;
 

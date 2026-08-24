@@ -303,6 +303,33 @@ pub struct Term(pub(crate) Nominal<Arc<TermInner>>);
 pub(crate) struct TermInner {
     pub(crate) kind: TermKind,
     pub(crate) sort: Mutex<Option<Sort>>,
+    pub(crate) resolved: bool,
+}
+
+impl TermInner {
+    pub(crate) fn new(kind: TermKind) -> TermInner {
+        let resolved = match &kind {
+            TermKind::Constant(_) => true,
+            TermKind::Atom(atom) => {
+                matches!(&atom.head, FunctionRef::Bound(_))
+                    && atom.arguments.iter().all(Term::is_resolved)
+            }
+            TermKind::Quantified(quant) => quant.body.is_resolved(),
+            TermKind::Let(let_) => let_.body.is_resolved(),
+        };
+
+        TermInner {
+            kind,
+            sort: Mutex::default(),
+            resolved,
+        }
+    }
+}
+
+impl Term {
+    pub fn is_resolved(&self) -> bool {
+        self.0.resolved
+    }
 }
 
 impl Hash for TermInner {

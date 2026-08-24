@@ -77,10 +77,7 @@ impl TermPool for DashPool {
         if let Some(kind) = self.pool.get(&kind) {
             Term(Nominal(kind.0.clone()))
         } else {
-            let arc = Arc::new(TermInner {
-                kind,
-                sort: Mutex::default(),
-            });
+            let arc = Arc::new(TermInner::new(kind));
             let term = Term(Nominal(arc.clone()));
             self.pool.insert(Lookup(arc));
 
@@ -92,10 +89,7 @@ impl TermPool for DashPool {
         if let Some(kind) = self.pool.get(kind) {
             Term(Nominal(kind.0.clone()))
         } else {
-            let arc = Arc::new(TermInner {
-                kind: kind.clone(),
-                sort: Mutex::default(),
-            });
+            let arc = Arc::new(TermInner::new(kind.clone()));
             let term = Term(Nominal(arc.clone()));
             self.pool.insert(Lookup(arc));
 
@@ -109,10 +103,7 @@ impl TermPool for HashPool {
         if let Some(kind) = self.pool.borrow().get(&kind) {
             Term(Nominal(kind.0.clone()))
         } else {
-            let arc = Arc::new(TermInner {
-                kind,
-                sort: Mutex::default(),
-            });
+            let arc = Arc::new(TermInner::new(kind));
             let term = Term(Nominal(arc.clone()));
             self.pool.borrow_mut().insert(Lookup(arc));
 
@@ -124,10 +115,7 @@ impl TermPool for HashPool {
         if let Some(kind) = self.pool.borrow().get(kind) {
             Term(Nominal(kind.0.clone()))
         } else {
-            let arc = Arc::new(TermInner {
-                kind: kind.clone(),
-                sort: Mutex::default(),
-            });
+            let arc = Arc::new(TermInner::new(kind.clone()));
             let term = Term(Nominal(arc.clone()));
             self.pool.borrow_mut().insert(Lookup(arc));
 
@@ -163,11 +151,11 @@ impl ToTerm for Term {
 
 impl ToTerm for TermKind {
     fn into_term_in(self, pool: &dyn TermPool) -> Term {
-        pool.shared(self)
+        pool.shared_term(self)
     }
 
     fn to_term_in(&self, pool: &dyn TermPool) -> Term {
-        pool.shared_ref(self)
+        pool.shared_term_ref(self)
     }
 }
 

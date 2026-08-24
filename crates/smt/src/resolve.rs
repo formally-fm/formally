@@ -28,7 +28,7 @@ use formally::support::*;
 use std::panic::AssertUnwindSafe;
 use std::{collections::HashMap, iter::zip, sync::Arc};
 
-impl Env {
+impl Term {
     /// Perform *name resolution*.
     ///
     /// Name resolution is the process of replacing all the [unbound atoms][UnboundAtom] in a term
@@ -45,31 +45,36 @@ impl Env {
     /// before type checking, because type checking of unbound atoms is not possible. This seems
     /// to require double the calls to [Term::type_check()], but the latter caches its results in
     /// `env.context()`, so each subterm gets type-checked only once anyway.
-    pub fn resolve(&self, term: &Term, role: Role, pool: &dyn TermPool) -> Result<Term> {
-        Ok(match term.kind() {
-            TermKind::Constant(_) => term.clone(),
-            TermKind::Atom(atom) => self.resolve_atom(atom, role, pool)?.into_term_in(pool),
+    pub fn resolve(&self, env: &Env, pool: &dyn TermPool, role: Role) -> Result<Term> {
+        if self.is_resolved() {
+            return Ok(self.clone());
+        }
+
+        Ok(match self.kind() {
+            TermKind::Constant(_) => self.clone(),
+            TermKind::Atom(atom) => Self::resolve_atom(atom, env, role, pool)?.into_term_in(pool),
             TermKind::Quantified(quant) => {
-                TermKind::Quantified(self.resolve_quant(quant, role, pool)?).into_term_in(pool)
+                TermKind::Quantified(Self::resolve_quant(quant, env, role, pool)?)
+                    .into_term_in(pool)
             }
             TermKind::Let(let_) => {
-                TermKind::Let(self.resolve_let(let_, role, pool)?).into_term_in(pool)
+                TermKind::Let(Self::resolve_let(let_, env, role, pool)?).into_term_in(pool)
             }
         })
     }
 
-    fn resolve_atom(&self, atom: &Atom, role: Role, pool: &dyn TermPool) -> Result<Atom> {
+    fn resolve_atom(atom: &Atom, env: &Env, role: Role, pool: &dyn TermPool) -> Result<Atom> {
         match &atom.head {
-            FunctionRef::Bound(bound) => self.resolve_bound(bound, &atom.arguments, pool),
+            FunctionRef::Bound(bound) => Self::resolve_bound(bound, env, &atom.arguments, pool),
             FunctionRef::Unbound(unbound) => {
-                self.resolve_unbound(unbound, &atom.arguments, role, pool)
+                Self::resolve_unbound(unbound, env, &atom.arguments, role, pool)
             }
         }
     }
 
     fn resolve_bound(
-        &self,
         head: &BoundRef,
+        env: &Env,
         arguments: &[Term],
         pool: &dyn TermPool,
     ) -> Result<Atom> {
@@ -88,9 +93,9 @@ impl Env {
         let mut resolved = Vec::new();
         for (sort, arg) in zip(domain, arguments) {
             if sort == Sort::sort() {
-                resolved.push(self.resolve(arg, Role::Sort, pool)?);
+                resolved.push(arg.resolve(env, pool, Role::Sort)?);
             } else {
-                resolved.push(self.resolve(arg, Role::Function, pool)?);
+                resolved.push(arg.resolve(env, pool, Role::Function)?);
             }
         }
 
@@ -102,8 +107,8 @@ impl Env {
     }
 
     fn resolve_unbound(
-        &self,
         unbound: &UnboundRef,
+        env: &Env,
         arguments: &[Term],
         role: Role,
         pool: &dyn TermPool,
@@ -113,68 +118,78 @@ impl Env {
         let mut resolved = Vec::with_capacity(arguments.len());
         let mut argsorts = Vec::with_capacity(arguments.len());
         for arg in arguments {
-            let t = self.resolve(arg, role, pool)?;
+            let t = arg.resolve(env, pool, role)?;
             argsorts.push(Sort::of(&t)?);
             resolved.push(t);
         }
 
-        self.lookup(head.clone(), role)
-            .filter_map(move |f| {
-                let bound = BoundRef {
-                    function: f.clone(),
-                    span: head.span(),
-                };
-                let atom = Diagnostic::with(
-                    NullEmitter,
-                    AssertUnwindSafe(|| self.resolve_bound(&bound, &resolved, pool)),
-                )
-                .ok()?;
-
-                #[allow(clippy::mutable_key_type)]
-                let mut matches = HashMap::new();
-                let domain = bound.domain(arguments.len());
-                for (sort, arg) in zip(domain, &argsorts) {
-                    if !sort.matches_with(arg, &mut matches) {
-                        return None;
-                    }
-                }
-
-                Some(atom)
-            })
+        env.lookup(head.clone(), role)
+            .filter_map(move |f| Self::candidate(f, env, &head, &argsorts, &resolved, pool))
             .one()
     }
 
+    fn candidate(
+        f: &Function,
+        env: &Env,
+        head: &Identifier<'_>,
+        argsorts: &[Sort],
+        arguments: &[Term],
+        pool: &dyn TermPool,
+    ) -> Option<Atom> {
+        let bound = BoundRef {
+            function: f.clone(),
+            span: head.span(),
+        };
+        let atom = Diagnostic::with(
+            NullEmitter,
+            AssertUnwindSafe(|| Self::resolve_bound(&bound, env, arguments, pool)),
+        )
+        .ok()?;
+
+        #[allow(clippy::mutable_key_type)]
+        let mut matches = HashMap::new();
+        let domain = bound.domain(arguments.len());
+        for (sort, arg) in zip(domain, argsorts) {
+            if !sort.matches_with(arg, &mut matches) {
+                return None;
+            }
+        }
+
+        Some(atom)
+    }
+
     fn resolve_quant(
-        &self,
         quant: &Quantified,
+        env: &Env,
         role: Role,
         pool: &dyn TermPool,
     ) -> Result<Quantified> {
-        let mut env = Env::new().with_parent(self.clone());
+        let mut nested = Env::new().with_parent(env.clone());
 
         let mut variables = Vec::with_capacity(quant.variables.len());
         for var in &*quant.variables {
             match var {
                 QuantifiedVariable::Bound(var) => {
                     variables.push(QuantifiedVariable::Bound(var.clone()));
-                    env.functions
+                    nested
+                        .functions
                         .add(var.name().name(), Function::from(var.clone()));
                 }
                 QuantifiedVariable::Unbound(unbound) => {
-                    let resolved = self.resolve(&unbound.sort, Role::Sort, pool)?;
+                    let resolved = unbound.sort.resolve(&env, pool)?;
                     resolved.type_check()?;
-                    let sort = Sort::try_from(resolved)?;
 
-                    let var = Variable::new(unbound.name.clone(), sort, unbound.span.clone());
+                    let var = Variable::new(unbound.name.clone(), resolved, unbound.span.clone());
 
                     variables.push(QuantifiedVariable::Bound(var.clone()));
-                    env.functions
+                    nested
+                        .functions
                         .add(var.name().name(), Function::from(var.clone()));
                 }
             }
         }
 
-        let body = env.resolve(&quant.body, role, pool)?;
+        let body = quant.body.resolve(&nested, pool, role)?;
 
         Ok(Quantified {
             quantifier: quant.quantifier,
@@ -184,17 +199,17 @@ impl Env {
         })
     }
 
-    fn resolve_let(&self, let_: &Let, role: Role, pool: &dyn TermPool) -> Result<Let> {
-        let mut env = Env::new().with_parent(self.clone());
+    fn resolve_let(let_: &Let, env: &Env, role: Role, pool: &dyn TermPool) -> Result<Let> {
+        let mut nested = Env::new().with_parent(env.clone());
 
         for bind in &*let_.bindings {
-            env.functions.add(
+            nested.functions.add(
                 bind.variable.name().name(),
                 Function::from(bind.variable.clone()),
             );
         }
 
-        let body = env.resolve(&let_.body, role, pool)?;
+        let body = let_.body.resolve(&nested, pool, role)?;
 
         Ok(Let {
             bindings: let_.bindings.clone(),

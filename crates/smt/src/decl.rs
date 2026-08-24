@@ -124,7 +124,6 @@ pub enum Associativity {
 /// # }
 /// ```
 ///
-///
 /// Comparison of [Variable] objects is *nominal*, that is, equality and hashing operate on the
 /// identity of the objects, not on their values. In other words, two [Variable] objects with
 /// exactly the same fields (and in particular the same *name*) created by two different calls to
@@ -133,10 +132,10 @@ pub enum Associativity {
 /// *equal* to the first. Under the hood, this is the behavior of `Nominal<Arc<T>>` for some inner
 /// type `T`, so we also refer to the [Nominal] type for details.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located)]
-pub struct Variable(Nominal<Arc<BindingData>>);
+pub struct Variable(Nominal<Arc<VariableData>>);
 
 #[derive(Clone, Debug, Located, Locatable)]
-struct BindingData {
+struct VariableData {
     pub name: Identifier<'static>,
     pub sort: Sort,
     pub span: Option<Span>,
@@ -145,7 +144,7 @@ struct BindingData {
 impl Variable {
     /// Create a new [Variable].
     pub fn new<'a>(name: impl Into<Identifier<'a>>, sort: Sort, span: Option<Span>) -> Variable {
-        Variable(Nominal(Arc::new(BindingData {
+        Variable(Nominal(Arc::new(VariableData {
             name: name.into().into_owned(),
             sort,
             span,
