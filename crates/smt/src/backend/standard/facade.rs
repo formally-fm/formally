@@ -31,7 +31,7 @@ use formally::smt::{
     },
     logics::{Logic, LogicEx, standard_logic},
 };
-use std::{any::Any, cell::RefCell, collections::HashMap, rc::Rc};
+use std::{any::Any, cell::RefCell, collections::HashMap, iter::zip, rc::Rc};
 
 type Result<T, E = backend::Error> = std::result::Result<T, E>;
 
@@ -448,7 +448,23 @@ impl<M: Manager> ManagerFacade<M> {
                 ))
             }
         } else {
-            self.term(&def.body, &BindMap::new())
+            if def.domain.len() != arguments.len() {
+                return Err(backend::Error::new(
+                    self.manager.backend().name(),
+                    backend::ErrorKind::ViolatedPrecondition(format!(
+                        "defined function `{}` applied to {} arguments, expected {}",
+                        def.name,
+                        arguments.len(),
+                        def.domain.len()
+                    )),
+                ));
+            }
+
+            let mut nested = BindMap::new();
+            for (param, arg) in zip(def.domain.iter(), arguments.iter()) {
+                nested.insert_mut(param.clone(), self.term(arg, bindmap)?);
+            }
+            self.term(&def.body, &nested)
         }
     }
 

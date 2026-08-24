@@ -136,7 +136,7 @@ impl From<Identifier<'static>> for AtomHead {
     }
 }
 
-impl ToTerm for support::Term<'_> {
+impl ToTerm for Term<'_> {
     fn into_term_in(self, pool: &dyn TermPool) -> smt::Term {
         match self {
             Term::Term(t) => t.to_term_in(pool),

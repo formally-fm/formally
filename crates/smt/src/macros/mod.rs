@@ -22,6 +22,8 @@
 // SOFTWARE.
 //
 
+pub mod support;
+
 /// Declare an SMT-LIBv2 logic.
 ///
 /// This macro helps with the proper declaration of types implementing the
@@ -348,9 +350,9 @@ macro_rules! theories {
 /// To obtain an actual [Term] one can use the [ToTerm::into_term_in()] function with a [TermPool],
 /// but most of the time one wishes to apply *name resolution* on the term as well after
 /// construction, so the recommended way to get a [Term] out of the [term!] macro is to pass its
-/// result to [Solver::lookup()]. This is however seldom necessary because all the methods what
-/// accept terms accept [ToTerm] instances as well so the result of the macro can be used directly,
-/// as in the example above.
+/// result to [Solver::lookup()]. This is however seldom necessary because most methods of [Solver]
+/// accept [ToTerm] instances so the result of the macro can be used directly, as in the example
+/// above.
 ///
 /// In the above example we can note two features of the `term` macro combined with `Solver`.
 /// 1. names of the symbols can be used directly, in which case the resulting term will contain
@@ -420,6 +422,14 @@ macro_rules! term {
     ($($tokens:tt)*) => {$crate::macros::proc::term!{$($tokens)*}};
 }
 
+/// Construct a term from a subset of the SMT-LIBv2 syntax for sorts.
+///
+/// The [sort!] macro is similar to [term!] but restricted to the fragment of SMT-LIBv2 syntax for
+/// sorts. The result is still an object of a type that implements [ToTerm]. In [formally::smt],
+/// sorts are represented as terms since their shape is that of atoms where a function with a
+/// codomain of [Sort::sort()] is applied to some arguments (e.g. in `(Array Int Int)`).
+///
+/// See the documentation for [Sort] for more information.
 #[macro_export]
 macro_rules! sort {
     ($($tokens:tt)*) => {$crate::macros::proc::sort!{$($tokens)*}};

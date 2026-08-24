@@ -35,8 +35,8 @@ use std::{
     sync::Arc,
 };
 
-/// Wrapper over an [Arc](std::sync::Arc) or a `'static` reference, used to declare static
-/// primitives in the [theory] macro.
+// Wrapper over an Arc or a `'static` reference, used to declare static primitives in the
+// theories macro.
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub(crate) enum SArc<T: 'static> {
     Static(&'static T),
@@ -72,12 +72,12 @@ impl<T: 'static> Deref for SArc<T> {
 ///
 /// These annotations look like syntactic properties, but in fact have nothing to do with the
 /// parser. When parsing `(+ a b c d)`, the parser only sees a term applying function `+` to four
-/// arguments. Then, the name resolver ([Term::resolve()]) and the type checker
+/// arguments. Then, the name resolver ([Env::resolve()]) and the type checker
 /// ([Term::type_check()]) look for those attributes and understand that, even if `+` is declared as
 /// a *binary* function, it can take more than two arguments in the way that the annotation
 /// specifies.
 ///
-/// See also the [theory] macro to see how to specify these annotations when declaring theory
+/// See also the [theories!] macro to see how to specify these annotations when declaring theory
 /// symbols.
 #[derive(Copy, Clone, Debug)]
 pub enum Associativity {
@@ -93,9 +93,37 @@ pub enum Associativity {
 
 /// A parameter in function definitions.
 ///
-/// [Variable] represents a parameter in the definition of functions. Instances of [Variable] are
-/// created with [Variable::new()] and used in the creation of [Definition] objects. See the
-/// documentation of [Definition::function] for an example.
+/// [Variable] represents a free variable in a term that can be bound by `let` expressions,
+/// quantified by `forall` or `exists` quantifiers, or bound to function parameters.
+///
+/// Variables can be created with the [Variable::new()] constructor but most often one wants to
+/// obtain one by the [Solver::variable()] function which accepts a [ToTerm] instance as sort and
+/// applies name resolution to the sort argument, or one does not create variables explicitly but
+/// uses the [term!] macro to directly form quantified formulas and `let` expressions.
+///
+/// For example:
+/// ```
+/// # mod formally {
+/// #    pub extern crate formally_support as support;
+/// #    pub extern crate formally_smt as smt;
+/// # }
+/// # use formally::{smt::*, support::*};
+/// # fn main() -> Result<()> {
+/// let config = Config::default();
+/// let mut solver = Solver::new(&config)?;
+///
+/// let x = solver.variable("x", sort!(Int), None)?;
+///
+/// solver.define(Definition::function("f", [x], sort!(Int), term!(* x 2)));
+///
+/// solver.require(term!(not (= (f 21) 42)))?;
+///
+/// assert_eq!(solver.check()?, Answer::No);
+///
+/// # Ok(())
+/// # }
+/// ```
+///
 ///
 /// Comparison of [Variable] objects is *nominal*, that is, equality and hashing operate on the
 /// identity of the objects, not on their values. In other words, two [Variable] objects with

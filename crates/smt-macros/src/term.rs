@@ -303,12 +303,12 @@ impl ToTokens for TermArgument {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             TermArgument::Term(term) => tokens.extend(quote! {
-                formally::smt::support::TermArgument::Term(#term)
+                formally::smt::macros::support::TermArgument::Term(#term)
             }),
             TermArgument::Seq(ident) => tokens.extend(quote! {
-                formally::smt::support::TermArgument::Seq(
+                formally::smt::macros::support::TermArgument::Seq(
                     (&#ident).into_iter().map(|t| {
-                        formally::smt::support::Term::Term(
+                        formally::smt::macros::support::Term::Term(
                             formally::support::Loc::new(
                                 formally::support::Nominal(t)
                             )
@@ -339,15 +339,15 @@ impl ToTokens for Variable {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Variable::Bound(bound) => tokens.extend(quote! {
-                formally::smt::support::Variable::Bound(#bound)
+                formally::smt::macros::support::Variable::Bound(#bound)
             }),
             Variable::Unbound(unbound) => {
                 let name = unbound.name.to_string();
                 let sort = &unbound.sort;
 
                 tokens.extend(quote! {
-                    formally::smt::support::Variable::Unbound(
-                        formally::smt::support::UnboundVariable {
+                    formally::smt::macros::support::Variable::Unbound(
+                        formally::smt::macros::support::UnboundVariable {
                             name: std::borrow::Cow::Borrowed(#name),
                             sort: #sort
                         }
@@ -368,8 +368,8 @@ impl ToTokens for Quantified {
         let body = &*self.body;
 
         tokens.extend(quote! {
-            formally::smt::support::Term::Quantified(
-                formally::smt::support::Quantified {
+            formally::smt::macros::support::Term::Quantified(
+                formally::smt::macros::support::Quantified {
                     quantifier: #quant,
                     variables: &[#(#vars),*],
                     body: &#body,
@@ -384,8 +384,8 @@ impl ToTokens for Atom {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match &self.head {
             Head::Int(lit) => tokens.append_all(quote! {
-                formally::smt::support::Term::Constant(
-                    formally::smt::support::Constant::Integer {
+                formally::smt::macros::support::Term::Constant(
+                    formally::smt::macros::support::Constant::Integer {
                         value: #lit,
                         span: None
                     }
@@ -407,9 +407,9 @@ impl ToTokens for Atom {
                 let head = head.to_string();
                 let args = &self.args;
                 tokens.append_all(quote! {
-                    formally::smt::support::Term::Atom(formally::smt::support::Atom {
-                        head: formally::smt::support::AtomHead::Unbound(
-                            formally::smt::support::UnboundHead {
+                    formally::smt::macros::support::Term::Atom(formally::smt::macros::support::Atom {
+                        head: formally::smt::macros::support::AtomHead::Unbound(
+                            formally::smt::macros::support::UnboundHead {
                                 name: std::borrow::Cow::Borrowed(#head)
                             }
                         ),
@@ -422,7 +422,7 @@ impl ToTokens for Atom {
                 let args = &self.args;
                 if args.is_empty() {
                     tokens.append_all(quote! {
-                        formally::smt::support::Term::Term(
+                        formally::smt::macros::support::Term::Term(
                             formally::support::Loc::new(
                                 formally::support::Nominal(&#head)
                             )
@@ -430,8 +430,8 @@ impl ToTokens for Atom {
                     })
                 } else {
                     tokens.append_all(quote! {
-                        formally::smt::support::Term::Atom(formally::smt::support::Atom {
-                            head: formally::smt::support::AtomHead::from((#head).clone()),
+                        formally::smt::macros::support::Term::Atom(formally::smt::macros::support::Atom {
+                            head: formally::smt::macros::support::AtomHead::from((#head).clone()),
                             arguments: &[#(#args),*],
                             span: None
                         })

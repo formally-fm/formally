@@ -225,7 +225,7 @@
 //! defined by the [official specification document](https://smt-lib.org/language.shtml), currently
 //! updated to version 2.7. Everything that regards the SMT-LIBv2 language is contained in the
 //! [smtlib] module so we refer to that module's documentation for details.
-//! 
+//!
 //! ## SMT backends
 //!
 //! Backends are types implementing the [Backend](backend::Backend) trait. Currently, we only
@@ -334,7 +334,7 @@
 //! ```
 //!
 //! Enumerated sorts and algebraic data types are not yet supported, but will be soon.
-//! 
+//!
 //! ## Subterm sharing, [TermPool], and [TermManager]
 //!
 //! As in most other SMT APIs, [formally::smt] implements automatic subterm sharing. For this
@@ -410,12 +410,7 @@ mod term;
 mod type_check;
 
 #[doc(hidden)]
-pub mod support;
-
-#[doc(hidden)]
 pub mod macros;
-
-pub use macros::*;
 
 pub mod backend;
 pub mod logics;
