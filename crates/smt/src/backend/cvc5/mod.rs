@@ -59,7 +59,7 @@ logic! {
         theories::Core,
         theories::Ints,
         theories::Reals,
-        theories::Reals_Ints,
+        theories::RealsInts,
         theories::Arrays
     ],
     requirements: [ ]
@@ -279,17 +279,17 @@ impl standard::Manager for Manager {
         _to_value: impl Fn(&smt::SortArgument) -> Result<&smt::Integer>,
     ) -> Result<cvc5::Sort> {
         Ok(match sort {
-            ALLSort::Core(sort) => match sort {
+            ALL_Sort::Core(sort) => match sort {
                 theories::CoreSort::Bool => self.cvc5manager.get_boolean_sort(),
             },
-            ALLSort::Ints(sort) => match sort {
+            ALL_Sort::Ints(sort) => match sort {
                 theories::IntsSort::Int => self.cvc5manager.get_integer_sort(),
             },
-            ALLSort::Reals(sort) => match sort {
+            ALL_Sort::Reals(sort) => match sort {
                 theories::RealsSort::Real => self.cvc5manager.get_real_sort(),
             },
-            ALLSort::Reals_Ints(_) => unreachable!(),
-            ALLSort::Arrays(sort) => match sort {
+            ALL_Sort::RealsInts(_) => unreachable!(),
+            ALL_Sort::Arrays(sort) => match sort {
                 theories::ArraysSort::Array(index, range) => {
                     let index = to_sort(index)?;
                     let range = to_sort(range)?;
@@ -307,11 +307,11 @@ impl standard::Manager for Manager {
         to_terms: impl Fn(&[smt::Term]) -> Result<Vec<cvc5::Term>>,
     ) -> Result<cvc5::Term> {
         match atom {
-            ALLAtom::Core(atom) => self.core_atom_to_cvc5(atom, to_term, to_terms),
-            ALLAtom::Ints(atom) => self.ints_atom_to_cvc5(atom, to_term, to_terms),
-            ALLAtom::Reals(atom) => self.reals_atom_to_cvc5(atom, to_term, to_terms),
-            ALLAtom::Reals_Ints(atom) => self.reals_ints_atom_to_cvc5(atom, to_term),
-            ALLAtom::Arrays(atom) => self.arrays_atom_to_cvc5(atom, to_term),
+            ALL_Atom::Core(atom) => self.core_atom_to_cvc5(atom, to_term, to_terms),
+            ALL_Atom::Ints(atom) => self.ints_atom_to_cvc5(atom, to_term, to_terms),
+            ALL_Atom::Reals(atom) => self.reals_atom_to_cvc5(atom, to_term, to_terms),
+            ALL_Atom::RealsInts(atom) => self.reals_ints_atom_to_cvc5(atom, to_term),
+            ALL_Atom::Arrays(atom) => self.arrays_atom_to_cvc5(atom, to_term),
         }
     }
 }
@@ -470,19 +470,19 @@ impl Manager {
 
     fn reals_ints_atom_to_cvc5(
         &self,
-        atom: theories::Reals_IntsAtom,
+        atom: theories::RealsIntsAtom,
         to_term: impl Fn(&smt::Term) -> Result<cvc5::Term>,
     ) -> Result<cvc5::Term> {
         Ok(match atom {
-            theories::Reals_IntsAtom::To_real(arg) => {
+            theories::RealsIntsAtom::To_real(arg) => {
                 let arg = to_term(arg)?;
                 self.cvc5manager.mk_term(cvc5::Kind::ToReal, &[arg])
             }
-            theories::Reals_IntsAtom::To_int(arg) => {
+            theories::RealsIntsAtom::To_int(arg) => {
                 let arg = to_term(arg)?;
                 self.cvc5manager.mk_term(cvc5::Kind::ToInteger, &[arg])
             }
-            theories::Reals_IntsAtom::Is_int(arg) => {
+            theories::RealsIntsAtom::Is_int(arg) => {
                 let arg = to_term(arg)?;
                 self.cvc5manager.mk_term(cvc5::Kind::IsInteger, &[arg])
             }

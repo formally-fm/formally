@@ -23,17 +23,13 @@
 //
 
 use crate::*;
-use std::ops::Deref;
 
 use formally::support::*;
 
 use derive_more::{Deref, From};
 use transitive::Transitive;
 
-use std::{
-    fmt::{Debug, Formatter},
-    sync::Arc,
-};
+use std::{fmt::Debug, sync::Arc};
 
 /// Associativity attribute of a primitive function.
 ///

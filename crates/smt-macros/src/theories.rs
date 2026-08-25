@@ -581,6 +581,7 @@ impl ToTokens for Attributed<Theory> {
         }
 
         let atomenum = syn::Ident::new(&format!("{theory}Atom"), theory.span());
+        let atomdoc = format!("The possible atoms according to the {theory} theory.");
 
         let mut atom_cases = Vec::new();
         let mut atom_into = Vec::new();
@@ -662,6 +663,7 @@ impl ToTokens for Attributed<Theory> {
         }
 
         let sortenum = syn::Ident::new(&format!("{theory}Sort"), theory.span());
+        let sortdoc = format!("The possible sorts according to the {theory} theory.");
 
         let mut hasparams = false;
         let mut sort_cases = Vec::new();
@@ -779,6 +781,7 @@ impl ToTokens for Attributed<Theory> {
                 }
             }
 
+            #[doc = #atomdoc]
             #[allow(nonstandard_style)]
             pub enum #atomenum<'t> {
                 #(#atom_cases),*
@@ -803,6 +806,7 @@ impl ToTokens for Attributed<Theory> {
                 }
             }
 
+            #[doc = #sortdoc]
             #[allow(nonstandard_style)]
             pub enum #sortenum #sort_lf {
                 #(#sort_cases),*

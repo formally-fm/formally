@@ -186,7 +186,7 @@ theories! {
     /// The combined theory of integers and reals.
     ///
     /// See [the official specification](https://smt-lib.org/theories-Reals_Ints.shtml).
-    pub Reals_Ints : Ints, Reals {
+    pub RealsInts : Ints, Reals {
         /// Convert integers to reals.
         fn to_real(Ints::Int()) -> Reals::Real();
 

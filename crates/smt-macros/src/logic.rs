@@ -123,8 +123,10 @@ impl ToTokens for Root {
             quote!()
         };
 
-        let atomenum = syn::Ident::new(&format!("{name}Atom"), name.span());
-        let sortenum = syn::Ident::new(&format!("{name}Sort"), name.span());
+        let atomenum = syn::Ident::new(&format!("{name}_Atom"), name.span());
+        let sortenum = syn::Ident::new(&format!("{name}_Sort"), name.span());
+        let atomdoc = format!("The possible atoms according to the {name} logic.");
+        let sortdoc = format!("The possible sorts according to the {name} logic.");
 
         let mut atom_cases = Vec::new();
         let mut atom_into = Vec::new();
@@ -215,6 +217,7 @@ impl ToTokens for Root {
 
             #standard
 
+            #[doc = #atomdoc]
             pub enum #atomenum<'t> {
                 #(#atom_cases),*
             }
@@ -237,6 +240,7 @@ impl ToTokens for Root {
                 }
             }
 
+            #[doc = #sortdoc]
             pub enum #sortenum<'t> {
                 #(#sort_cases),*
             }

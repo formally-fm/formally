@@ -259,42 +259,39 @@ macro_rules! logic {
 /// ### Extending other theories
 ///
 /// Sometimes a theory is the extension of another one. An example among the standard SMT-LIBv2
-/// theories is [Reals_Ints](crate::theories::Reals_Ints), which provides all the symbols provided
+/// theories is [RealsInts](crate::theories::RealsInts), which provides all the symbols provided
 /// by [Reals](crate::theories::Reals) and [Ints](crate::theories::Reals), with the addition of
 /// functions to convert between integers and reals and *vice versa*. In this case, redeclaring
 /// all the symbols is tedious and, more importantly, needlessly duplicates symbols with the same
 /// meaning. For example, it would be strange if the integer overload of the `plus` function for
-/// [Reals_Ints](crate::theories::Reals_Ints) was a different object w.r.t.
+/// [RealsInts](crate::theories::RealsInts) was a different object w.r.t.
 /// [Ints::plus()](crate::theories::Ints::plus()), and it would complicate the usage of these
 /// theories by backends.
 ///
-/// Instead, theories like [Reals_Ints](crate::theories::Reals_Ints) are declared by extending
+/// Instead, theories like [RealsInts](crate::theories::RealsInts) are declared by extending
 /// other theories, so inheriting all their symbols in their scopes. This is done by
-/// adding a `extends:` field to the invocation of the macro.
+/// adding a clause after the name of the theory in the declaration.
 ///
-/// As an example, [Reals_Ints](crate::theories::Reals_Ints) is declared as follows:
+/// As an example, [RealsInts](crate::theories::RealsInts) is declared as follows:
 /// ```ignore
 /// # mod formally {
 /// #   pub extern crate formally_support as support;
 /// #   pub extern crate formally_smt as smt;
 /// # }
 /// # use formally::smt::{theories, theories::*};
-/// theory! {
+/// theories! {
 ///     /// The combined theory of integers and reals.
 ///     ///
 ///     /// See [the official specification](https://smt-lib.org/theories-Reals_Ints.shtml).
-///     identifier: pub Reals_Ints,
-///     name: "Reals_Ints",
-///     extends: [ Ints, Reals ],
-///     functions: {
+///     pub RealsInts : Ints, Reals {
 ///         /// Convert integers to reals.
-///         to_real(Ints::Int()) -> Reals::Real();
+///         fn to_real(Ints::Int()) -> Reals::Real();
 ///
 ///         /// Convert reals to integers.
-///         to_int(Reals::Real()) -> Ints::Int();
+///         fn to_int(Reals::Real()) -> Ints::Int();
 ///
 ///         /// Test if a real is an integer.
-///         is_int(Reals::Real()) -> Core::Bool();
+///         fn is_int(Reals::Real()) -> Core::Bool();
 ///     }
 /// }
 /// # fn main() { }
@@ -302,12 +299,12 @@ macro_rules! logic {
 ///
 /// When a theory extends others, it inherits their symbols in scope. The theory type itself
 /// only provides the accessors functions for the new symbols, though. Therefore, for example, the
-/// integer overload of the plus operator for the [Reals_Ints](crate::theories::Reals_Ints) is still
+/// integer overload of the plus operator for the [RealsInts](crate::theories::RealsInts) is still
 /// [Ints::plus()](crate::theories::Ints::plus()).
 ///
-/// Finally, that the documentation of the resulting theory type automatically lists the extended
-/// theories. For the example above, see how the documentation is rendered for
-/// [Reals_Ints](crate::theories::Reals_Ints).
+/// Finally, note that the documentation of the resulting theory type automatically lists the
+/// extended theories. For the example above, see how the documentation is rendered for
+/// [RealsInts](crate::theories::RealsInts).
 #[macro_export]
 macro_rules! theories {
     ($($tokens:tt)*) => {$crate::macros::proc::theories!{$($tokens)*}};

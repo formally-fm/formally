@@ -61,7 +61,7 @@ logic! {
 logic! {
     /// Linear Real Arithmetic.
     name: pub LIRA,
-    theories: [ Core, Reals_Ints ],
+    theories: [ Core, RealsInts ],
     requirements: [ Linear, NoUF ],
     standard: true
 }
@@ -149,7 +149,7 @@ logic! {
 logic! {
     /// Quantifier-Free Linear Real/Integer Arithmetic.
     name: pub QF_LIRA,
-    theories: [ Core, Reals_Ints ],
+    theories: [ Core, RealsInts ],
     requirements: [ Linear, QuantifierFree, NoUF ],
     standard: true
 }

@@ -60,7 +60,7 @@ logic! {
         theories::Core,
         theories::Ints,
         theories::Reals,
-        theories::Reals_Ints,
+        theories::RealsInts,
         theories::Arrays
     ],
     requirements: [ ]
@@ -279,17 +279,17 @@ impl standard::Manager for Manager {
         _to_value: impl Fn(&smt::SortArgument) -> Result<&smt::Integer>,
     ) -> Result<z3::Sort> {
         Ok(match sort {
-            ALLSort::Core(sort) => match sort {
+            ALL_Sort::Core(sort) => match sort {
                 theories::CoreSort::Bool => self.z3context.mk_bool_sort(),
             },
-            ALLSort::Ints(sort) => match sort {
+            ALL_Sort::Ints(sort) => match sort {
                 theories::IntsSort::Int => self.z3context.mk_int_sort(),
             },
-            ALLSort::Reals(sort) => match sort {
+            ALL_Sort::Reals(sort) => match sort {
                 theories::RealsSort::Real => self.z3context.mk_real_sort(),
             },
-            ALLSort::Reals_Ints(_) => unreachable!(),
-            ALLSort::Arrays(sort) => match sort {
+            ALL_Sort::RealsInts(_) => unreachable!(),
+            ALL_Sort::Arrays(sort) => match sort {
                 theories::ArraysSort::Array(index, range) => {
                     let index = to_sort(index)?;
                     let range = to_sort(range)?;
@@ -307,11 +307,11 @@ impl standard::Manager for Manager {
         to_terms: impl Fn(&[smt::Term]) -> Result<Vec<z3::Ast>>,
     ) -> Result<z3::Ast> {
         match atom {
-            ALLAtom::Core(atom) => self.core_atom_to_z3(atom, to_term, to_terms),
-            ALLAtom::Ints(atom) => self.ints_atom_to_z3(atom, to_term, to_terms),
-            ALLAtom::Reals(atom) => self.reals_atom_to_z3(atom, to_term, to_terms),
-            ALLAtom::Reals_Ints(atom) => self.reals_int_atom_to_z3(atom, to_term),
-            ALLAtom::Arrays(atom) => self.arrays_atom_to_z3(atom, to_term),
+            ALL_Atom::Core(atom) => self.core_atom_to_z3(atom, to_term, to_terms),
+            ALL_Atom::Ints(atom) => self.ints_atom_to_z3(atom, to_term, to_terms),
+            ALL_Atom::Reals(atom) => self.reals_atom_to_z3(atom, to_term, to_terms),
+            ALL_Atom::RealsInts(atom) => self.reals_int_atom_to_z3(atom, to_term),
+            ALL_Atom::Arrays(atom) => self.arrays_atom_to_z3(atom, to_term),
         }
     }
 }
@@ -471,13 +471,13 @@ impl Manager {
 
     fn reals_int_atom_to_z3(
         &self,
-        atom: theories::Reals_IntsAtom,
+        atom: theories::RealsIntsAtom,
         to_term: impl Fn(&smt::Term) -> Result<z3::Ast>,
     ) -> Result<z3::Ast> {
         Ok(match atom {
-            theories::Reals_IntsAtom::To_real(arg) => self.z3context.mk_int2real(to_term(arg)?),
-            theories::Reals_IntsAtom::To_int(arg) => self.z3context.mk_real2int(to_term(arg)?),
-            theories::Reals_IntsAtom::Is_int(arg) => self.z3context.mk_is_int(to_term(arg)?),
+            theories::RealsIntsAtom::To_real(arg) => self.z3context.mk_int2real(to_term(arg)?),
+            theories::RealsIntsAtom::To_int(arg) => self.z3context.mk_real2int(to_term(arg)?),
+            theories::RealsIntsAtom::Is_int(arg) => self.z3context.mk_is_int(to_term(arg)?),
         })
     }
 
