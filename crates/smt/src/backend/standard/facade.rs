@@ -356,8 +356,7 @@ impl<M: Manager> ManagerFacade<M> {
             smt::FunctionRef::Unbound(unbound) => Err(backend::Error::new(
                 self.manager.backend().name(),
                 backend::ErrorKind::ViolatedPrecondition(format!(
-                    "an unresolved symbol reached the backend: `{}`",
-                    unbound.name
+                    "an unresolved symbol reached the backend: `{unbound}`"
                 )),
             )),
         }

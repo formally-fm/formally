@@ -301,23 +301,13 @@ impl ToTerm for Defined {
     }
 }
 
-impl ToTerm for UnboundRef {
-    fn into_term_in(self, pool: &dyn TermPool) -> Term {
-        TermKind::Atom(Atom::from(self)).into_term_in(pool)
-    }
-
-    fn to_term_in(&self, pool: &dyn TermPool) -> Term {
-        TermKind::Atom(Atom::from(self.clone())).into_term_in(pool)
-    }
-}
-
 impl ToTerm for Identifier<'_> {
     fn into_term_in(self, pool: &dyn TermPool) -> Term {
-        TermKind::Atom(Atom::from(self)).into_term_in(pool)
+        TermKind::Atom(Atom::from(self.into_owned())).into_term_in(pool)
     }
 
     fn to_term_in(&self, pool: &dyn TermPool) -> Term {
-        TermKind::Atom(Atom::from(self.clone())).into_term_in(pool)
+        TermKind::Atom(Atom::from(self.clone().into_owned())).into_term_in(pool)
     }
 }
 

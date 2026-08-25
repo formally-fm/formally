@@ -35,10 +35,29 @@ use std::{
     sync::Arc,
 };
 
+/// Trait for types that support name resolution, type checking, and conversion into sorts.
+///
+/// Most methods in the framework that would accept a sort accept instead a generic instance of
+/// [ToSort]. The purpose of this generality is mainly that of allowing one to accept a [Term]
+/// representing a sort instead of an actual [Sort] object.
+///
+/// Since [Sort] is a purely semantic object, it does not track location information. This means
+/// that errors in name resolution and type checking would produce error messages without precise
+/// location information. Front-ends (such as the SMT-LIBv2 frontend we provide) may therefore want
+/// instead to parse the sorts as [Term] objects and then pass those terms to whatever method
+/// expects a [ToSort]. Type checking and name resolution would then be performed on the [Term]
+/// directly before conversion into [Sort], obtaining informative error messages.
+///
+/// This trait is automatically implemented for every type implementing [Resolve], [TypeCheck] and
+/// `TryInto<Sort, Error: Emit>`.
 pub trait ToSort: Resolve + TypeCheck + TryInto<Sort, Error: Emit> {}
 
 impl<T: Resolve + TypeCheck + TryInto<Sort, Error: Emit>> ToSort for T {}
 
+/// Marker type to ask for type inference.
+///
+/// This type is currently used in the return type of [Binding::new()] to signal that the sort
+/// of the binding must be inferred from the body.
 #[derive(Clone, Copy)]
 pub struct Infer;
 
@@ -130,7 +149,7 @@ impl From<FunctionRef> for SortHead {
     fn from(funcref: FunctionRef) -> Self {
         match funcref {
             FunctionRef::Bound(bound) => SortHead::Bound(bound.function),
-            FunctionRef::Unbound(unbound) => SortHead::Unbound(unbound.name),
+            FunctionRef::Unbound(unbound) => SortHead::Unbound(unbound),
         }
     }
 }
@@ -142,7 +161,7 @@ impl From<SortHead> for FunctionRef {
                 function,
                 span: None,
             }),
-            SortHead::Unbound(name) => FunctionRef::Unbound(UnboundRef { name, span: None }),
+            SortHead::Unbound(name) => FunctionRef::Unbound(name),
         }
     }
 }
@@ -156,6 +175,16 @@ impl Display for SortHead {
     }
 }
 
+/// The sort of a term.
+///
+/// [Sort] represent the semantic notion of sort of a term, i.e. its type. Sorts are represented by
+/// the application of some arguments to a function, called *sort constructor*, whose range must be
+/// [Sort::sort()], the sort of sorts.
+///
+/// In contrast to [Term], sorts can be constructed directly and are not uniqued.
+///
+/// Most methods that would accept a [Sort] accept instead a generic instance of the [ToSort] trait.
+/// See its documentation for details.
 #[allow(clippy::duplicated_attributes)]
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct Sort {
@@ -193,6 +222,7 @@ impl Debug for Sort {
     }
 }
 
+/// Error type for `TryFrom<Term> for Sort`
 #[derive(Debug, Clone, Located, Display)]
 #[display("sort term must be an atom")]
 pub struct InvalidSortTerm {

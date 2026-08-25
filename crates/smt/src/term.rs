@@ -44,10 +44,12 @@ use std::{
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 #[non_exhaustive]
 pub enum Constant {
+    /// An integer constant.
     Integer {
         value: Arc<Integer>,
         span: Option<Span>,
     },
+    /// A rational constant.
     Rational {
         value: Arc<Rational>,
         span: Option<Span>,
@@ -72,6 +74,9 @@ impl From<Rational> for Constant {
     }
 }
 
+/// A reference to a [Function] occurring at a given [Span].
+///
+/// This type is used as *head* of *bound atoms*, i.e. fully name-resolved atoms.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct BoundRef {
     /// the function that is being applied.
@@ -95,50 +100,9 @@ impl Display for BoundRef {
     }
 }
 
-/// An *unbound* atom.
-///
-/// An unbound atom represents an expression of the form `(f arg1 arg2 ...)` where `f` is given
-/// only as an [Identifier].
-///
-/// Unbound atoms cannot be [type checked](Term::type_check) directly because the identifier
-/// does not provide any typing information. [Name resolution](Term::resolve) must be peformed
-/// before type checking, for this reason. Note that this should
-/// not usually be a concern because [Solver::declare()], [Solver::define()], and
-/// [Solver::require()] already perform name resolution and type checking appropriately.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
-pub struct UnboundRef {
-    /// the name of the function that is being applied.
-    pub name: Identifier<'static>,
-    /// the atom's source span.
-    pub span: Option<Span>,
-}
-
-impl<'a, T: Into<Identifier<'a>>> From<T> for UnboundRef {
-    fn from(value: T) -> Self {
-        let ident = value.into();
-        UnboundRef {
-            span: ident.span(),
-            name: ident.into_owned(),
-        }
-    }
-}
-
-impl Display for UnboundRef {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
-    }
-}
-
-/// An atom term.
-///
-/// Atoms can be [bound](BoundRef) or [unbound](UnboundRef).
-/// 1. bound atoms refer to a specific [Function] object and therefore can be type checked directly.
-/// 2. unbound atoms contain only an [Identifier] in place of the applied function, so [name
-///    resolution](Term::resolve) has to be performed on an unbound term before it can be type
-///    checked.
+/// A bound or unbound reference to a function.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, From, Located, Locatable, Transitive)]
 #[allow(clippy::duplicated_attributes)]
-#[transitive(from(Identifier<'static>, UnboundRef))]
 #[transitive(from(Function, BoundRef))]
 #[transitive(from(Variable, Function))]
 #[transitive(from(Primitive, Function))]
@@ -146,8 +110,10 @@ impl Display for UnboundRef {
 #[transitive(from(Declared, UserFunction))]
 #[transitive(from(Defined, UserFunction))]
 pub enum FunctionRef {
+    /// A bound reference to a [Function]
     Bound(BoundRef),
-    Unbound(UnboundRef),
+    /// A reference to an unbound identifier
+    Unbound(Identifier<'static>),
 }
 
 impl Display for FunctionRef {
@@ -163,15 +129,29 @@ impl FunctionRef {
     pub fn name(&self) -> &Identifier<'static> {
         match self {
             FunctionRef::Bound(bound) => bound.function.name(),
-            FunctionRef::Unbound(unbound) => &unbound.name,
+            FunctionRef::Unbound(unbound) => unbound,
         }
     }
 }
 
+/// An atom term.
+///
+/// Atoms are applications of arguments to functions. These are the most common type of
+/// [terms][Term], which include also references to *constants* (functions without arguments) and
+/// *variables*.
+///
+/// Atoms can be *bound* or *unbound*:
+/// 1. bound atoms, with [FunctionRef::Bound] as `head`, refer to a specific [Function] object and
+///    therefore can be type checked directly.
+/// 2. unbound atoms, with [FunctionRef::Unbound] as `head`, contain only an [Identifier] in place
+///    of the applied function, so name resolution has to be performed on an unbound term before it
+///    can be type checked.
+///
+/// Most methods in [Solver] are responsible of performing name resolution (and type checking) on
+/// the terms they receive.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable, Transitive)]
 #[allow(clippy::duplicated_attributes)]
-#[transitive(from(UnboundRef, FunctionRef))]
-#[transitive(from(Identifier<'_>, UnboundRef))]
+#[transitive(from(Identifier<'static>, FunctionRef))]
 #[transitive(from(BoundRef, FunctionRef))]
 #[transitive(from(Function, BoundRef))]
 #[transitive(from(Variable, Function))]
@@ -180,8 +160,11 @@ impl FunctionRef {
 #[transitive(from(Declared, UserFunction))]
 #[transitive(from(Defined, UserFunction))]
 pub struct Atom {
+    /// The head of the atom, i.e., the [Function] being applied.
     pub head: FunctionRef,
+    /// The arguments of the atom.
     pub arguments: Arc<[Term]>,
+    /// The source span of this atom.
     pub span: Option<Span>,
 }
 
@@ -195,28 +178,51 @@ impl From<FunctionRef> for Atom {
     }
 }
 
+/// Either the `exists` or `forall` quantifier.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum Quantifier {
     Forall,
     Exists,
 }
 
+/// A quantified formula.
+///
+/// [Quantified] represents existentially or universally quantified formulas. The body must be of
+/// sort [Core::Bool()](theories::Core::Bool()) for the term to be considered well-typed.
+///
+/// The [variables](Variable) can be used in the body freely.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Quantified {
+    /// Which quantifier is used.
     pub quantifier: Quantifier,
+    /// The quantified variables.
     pub variables: Arc<[Variable]>,
+    /// The body of the quantified formula.
     pub body: Term,
+    /// The source span of the formula.
     pub span: Option<Span>,
 }
 
+/// A binding of a variable to a term in a `let` expression.
+///
+/// The type is parameterized by a type `V: ToSort` representing the sorts of the variables and
+/// a type `T: ToTerm` representing the defining term of the binding.
+///
+/// [Binding] is usually constructed using [Binding::new()] and given to [Solver::lookup_binding()]
+/// to apply name resolution and type checking to its constituent parts.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Binding<V: ToSort = Sort, T: ToTerm = Term> {
+    /// The variable
     pub variable: Variable<V>,
     pub def: T,
     pub span: Option<Span>,
 }
 
 impl<T: TypeCheck + ToTerm> Binding<Infer, T> {
+    /// Construct a new [Binding] with a to-be-inferred sort.
+    ///
+    /// The result can be given to [Solver::lookup_binding()] to apply name resolution and type
+    /// checking, to obtain a binding actually usable in a [Let] term.
     pub fn new(name: Identifier<'_>, def: T) -> Binding<Infer, T> {
         let namespan = name.span();
         Binding {
@@ -227,30 +233,29 @@ impl<T: TypeCheck + ToTerm> Binding<Infer, T> {
     }
 }
 
+/// A `let` expression.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Let {
+    /// The variable bindings of the `let` expression
     pub bindings: Arc<[Binding]>,
+    /// The body of the `let` expression
     pub body: Term,
+    /// The source span of the term
     pub span: Option<Span>,
 }
 
 /// The payload of [Term] objects.
 ///
-/// The [TermKind] enum lists the possible kinds of terms supported by the framework. [Term] derefs
-/// immutably to [TermKind], and a term's kind is also available through the [Term::kind()] method.
-/// Terms can be constructed from [TermKind] using a [TermPool], such as the one provided by
-/// [Solver::pool()].
+/// The [TermKind] enum lists the possible kinds of terms supported by the framework. A term's kind
+/// is also available through the [Term::kind()] method. Terms can be constructed from [TermKind]
+/// using a [TermPool], such as the one provided by [Solver::pool()].
 ///
 /// As mentioned in the [overview](formally::smt), we differ from most SMT APIs in that we do not
 /// offer multiple functions and/or types, one for each possible term node (addition, subtraction,
 /// conjunction, etc.), but rather we have a single notion of [Atom] which is the application of a
 /// [Function] to a list of argument terms. This allows maximum flexibility, while still keeping the
-/// construction of terms easy thanks to the [term] macro.
-///
-/// As a result, *currently* [TermKind] only has two variants, one for [constants](Constant)
-/// (currently only integer and rational numbers), and one for atoms. Variants will be added when
-/// supporting further syntactic elements of SMT-LIBv2 such as *let bindings*, *quantifiers* and
-/// *match expressions*.
+/// construction of terms easy thanks to the [term!] macro. This is why this enum has relatively few
+/// variants.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, From, Located, Locatable)]
 #[allow(clippy::duplicated_attributes)]
 #[non_exhaustive]
@@ -277,11 +282,13 @@ impl<T: Into<Atom>> From<T> for TermKind {
 /// [Term] objects represent SMT terms as used throughout the framework. The objects themselves are
 /// shared references to [TermKind] objects which contain the actual data.
 ///
-/// Terms are preferably created using the [term] macro. The internal structure is useful instead to
-/// destructuring terms by pattern matching for syntactic manipulations.
+/// Terms are uniqued and shared through the use of a [TermPool], usually indirectly by means of
+/// a [Solver]. Constructing a [Term] directly is often not needed, because most methods that
+/// would accept one accept instead generic instances of [ToTerm], which include the result of the
+/// [term!] macro, which is the recommended way of constructing terms.
 ///
-/// Important operations on terms include *type checking* ([Term::type_check()] and equivalently
-/// [Sort::of()]), and *name resolution* ([Term::resolve()]).
+/// See the [ToTerm] trait for more informations about how to construct [Term] objects from [ToTerm]
+/// instances.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Term(pub(crate) Nominal<Arc<TermInner>>);
 

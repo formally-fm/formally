@@ -94,7 +94,7 @@ impl Interpreter {
                 let syspan = symbol.span();
                 let head = Identifier::from(symbol.into_inner()).over(syspan);
                 let term = smt::TermKind::Atom(smt::Atom {
-                    head: smt::FunctionRef::Unbound(smt::UnboundRef::from(head)),
+                    head: smt::FunctionRef::Unbound(head),
                     arguments: Arc::from(smtargs.into_boxed_slice()),
                     span: idspan,
                 })

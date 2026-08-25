@@ -27,6 +27,11 @@ use formally::support::*;
 
 use std::{collections::HashMap, iter::zip};
 
+/// Trait for types that can type-check themselves.
+///
+/// Type checking is meant here as the process of computing the [Sort] associated to a given object.
+/// The most prominent example of type-checkable type is [Term], but [Sort] as well needs type
+/// checking.
 pub trait TypeCheck {
     fn type_check(&self) -> Result<Sort>;
 }

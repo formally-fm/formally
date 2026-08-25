@@ -116,14 +116,12 @@ impl Term {
     }
 
     fn resolve_unbound(
-        unbound: &UnboundRef,
+        head: &Identifier<'static>,
         env: &Env,
         arguments: &[Term],
         role: Role,
         pool: &dyn TermPool,
     ) -> Result<Atom> {
-        let head = Identifier::from(unbound.name.name()).over(unbound.name.span());
-
         let mut resolved = Vec::with_capacity(arguments.len());
         let mut argsorts = Vec::with_capacity(arguments.len());
         for arg in arguments {

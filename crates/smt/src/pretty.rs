@@ -78,8 +78,8 @@ impl From<Term> for ast::Term {
                     FunctionRef::Bound(BoundRef { function, .. }) => {
                         (function.name().clone(), &*atom.arguments)
                     }
-                    FunctionRef::Unbound(UnboundRef { name: head, .. }) => {
-                        (head.clone(), &*atom.arguments)
+                    FunctionRef::Unbound(name) => {
+                        (name.clone(), &*atom.arguments)
                     }
                 };
 
