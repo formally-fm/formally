@@ -150,7 +150,7 @@ impl Sort {
             head: SortHead::Bound(Function::Primitive(Primitive(Nominal(SArc::Static(
                 &SORT_DECL,
             ))))),
-            arguments: Vec::new(),
+            arguments: SArc::Static(&[]),
         }
     }
 }

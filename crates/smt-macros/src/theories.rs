@@ -532,7 +532,7 @@ impl ToTokens for Attributed<Theory> {
                 pub fn #ident(#(#params: &(impl Clone + Into<formally::smt::SortArgument>)),*) -> formally::smt::Sort {
                     formally::smt::Sort {
                         head: #module::#ident.clone().into(),
-                        arguments: vec![#(#params.clone().into()),*]
+                        arguments: formally::smt::SArc::from(Box::new([#(#params.clone().into()),*]) as Box<[SortArgument]>)
                     }
                 }
             })
@@ -687,7 +687,7 @@ impl ToTokens for Attributed<Theory> {
                 sort_into.push(quote! {
                     #sortenum::#ident => formally::smt::Sort {
                         head: #module::#ident.clone().into(),
-                        arguments: vec![]
+                        arguments: formally::smt::SArc::Static(&[])
                     }
                 });
                 sort_try_from.push(quote! {
@@ -704,7 +704,7 @@ impl ToTokens for Attributed<Theory> {
                 sort_into.push(quote! {
                     #sortenum::#ident(#(#paramnames),*) => formally::smt::Sort {
                         head: #module::#ident.clone().into(),
-                        arguments: vec![#(#paramnames.clone()),*]
+                        arguments: formally::smt::SArc::from(Box::new([#(#paramnames.clone()),*]) as Box<[SortArgument]>)
                     }
                 });
                 sort_try_from.push(quote! {

@@ -50,7 +50,7 @@ impl Resolve for Infer {
 
 impl TypeCheck for Infer {
     fn type_check(&self) -> Result<Sort> {
-        internal!(None, "type checking of an inference place holder");
+        internal!(None, "type checking of an inference placeholder");
         Err(DiagnosticEmitted)
     }
 }
@@ -162,14 +162,14 @@ pub struct Sort {
     /// The sort constructor that is being applied.
     pub head: SortHead,
     /// The sort's arguments.
-    pub arguments: Vec<SortArgument>,
+    pub arguments: SArc<[SortArgument]>,
 }
 
 impl<T: Into<Function>> From<T> for Sort {
     fn from(value: T) -> Self {
         Sort {
             head: SortHead::Bound(value.into()),
-            arguments: Vec::new(),
+            arguments: SArc::default(),
         }
     }
 }
@@ -178,7 +178,7 @@ impl From<Identifier<'_>> for Sort {
     fn from(value: Identifier<'_>) -> Self {
         Sort {
             head: SortHead::Unbound(value.into_owned()),
-            arguments: Vec::new(),
+            arguments: SArc::default(),
         }
     }
 }
@@ -224,7 +224,10 @@ impl TryFrom<Term> for Sort {
 
         let head = SortHead::from(atom.head.clone());
 
-        Ok(Sort { head, arguments })
+        Ok(Sort {
+            head,
+            arguments: SArc::from(arguments.into_boxed_slice()),
+        })
     }
 }
 
@@ -310,7 +313,7 @@ impl Sort {
 
         Ok(Sort {
             head: self.head.clone(),
-            arguments,
+            arguments: SArc::from(arguments.into_boxed_slice()),
         })
     }
 }

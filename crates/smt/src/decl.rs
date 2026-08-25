@@ -37,10 +37,37 @@ use std::{
 
 // Wrapper over an Arc or a `'static` reference, used to declare static primitives in the
 // theories macro.
-#[derive(Clone, Hash, PartialEq, Eq)]
-pub(crate) enum SArc<T: 'static> {
+#[derive(Hash, PartialEq, Eq)]
+pub enum SArc<T: 'static + ?Sized> {
     Static(&'static T),
     Arc(Arc<T>),
+}
+
+impl<T: 'static + ?Sized> From<Box<T>> for SArc<T> {
+    fn from(value: Box<T>) -> Self {
+        SArc::Arc(Arc::from(value))
+    }
+}
+
+impl<T: 'static + Default> Default for SArc<T> {
+    fn default() -> Self {
+        SArc::Arc(Arc::default())
+    }
+}
+
+impl<T: 'static> Default for SArc<[T]> {
+    fn default() -> Self {
+        SArc::Arc(Arc::default())
+    }
+}
+
+impl<T: 'static + ?Sized> Clone for SArc<T> {
+    fn clone(&self) -> Self {
+        match self {
+            SArc::Static(st) => SArc::Static(st),
+            SArc::Arc(arc) => SArc::Arc(arc.clone()),
+        }
+    }
 }
 
 impl<T: Debug> Debug for SArc<T> {
@@ -49,7 +76,13 @@ impl<T: Debug> Debug for SArc<T> {
     }
 }
 
-impl<T: 'static> Deref for SArc<T> {
+impl<T: 'static> SArc<T> {
+    pub fn new(value: T) -> SArc<T> {
+        SArc::Arc(Arc::new(value))
+    }
+}
+
+impl<T: 'static + ?Sized> Deref for SArc<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
