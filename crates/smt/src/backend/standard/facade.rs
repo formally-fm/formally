@@ -297,7 +297,7 @@ impl<M: Manager> ManagerFacade<M> {
         }
     }
 
-    fn sort_argument_to_value<'a>(&self, arg: &'a smt::SortArgument) -> Result<&'a smt::Constant> {
+    fn sort_argument_to_value<'a>(&self, arg: &'a smt::SortArgument) -> Result<&'a smt::Integer> {
         match arg {
             smt::SortArgument::Value(value) => Ok(value),
             smt::SortArgument::Sort(_) => Err(backend::Error::new(

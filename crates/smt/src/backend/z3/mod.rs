@@ -276,7 +276,7 @@ impl standard::Manager for Manager {
         &self,
         sort: <Self::ALL as LogicEx>::Sort<'_>,
         to_sort: impl Fn(&smt::SortArgument) -> Result<z3::Sort>,
-        _to_value: impl Fn(&smt::SortArgument) -> Result<&smt::Constant>,
+        _to_value: impl Fn(&smt::SortArgument) -> Result<&smt::Integer>,
     ) -> Result<z3::Sort> {
         Ok(match sort {
             ALLSort::Core(sort) => match sort {

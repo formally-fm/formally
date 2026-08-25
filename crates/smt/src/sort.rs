@@ -32,6 +32,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter},
     iter::zip,
+    sync::Arc
 };
 
 pub trait ToSort: Resolve + TypeCheck + TryInto<Sort, Error: Emit> {}
@@ -69,30 +70,13 @@ impl TryFrom<Infer> for Sort {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Transitive)]
 #[allow(clippy::duplicated_attributes)]
 pub enum SortArgument {
-    /// A constant argument (e.g., `32` in `(_ BitVec 32)`).
-    Value(Constant),
+    /// An integer argument (e.g., `32` in `(_ BitVec 32)`).
+    Value(Arc<Integer>),
     /// A sort argument (e.g., `Int` and `Real` in `(Array Int Real)`).
     Sort(Sort),
 }
 
 impl SortArgument {
-    /// Compare two sort arguments semantically (i.e. excluding source spans).
-    pub fn equal(first: &SortArgument, second: &SortArgument) -> bool {
-        match (first, second) {
-            (SortArgument::Value(c1), SortArgument::Value(c2)) => match (c1, c2) {
-                (Constant::Integer { value: v1, .. }, Constant::Integer { value: v2, .. }) => {
-                    v1 == v2
-                }
-                (Constant::Rational { value: v1, .. }, Constant::Rational { value: v2, .. }) => {
-                    v1 == v2
-                }
-                _ => false,
-            },
-            (SortArgument::Sort(s1), SortArgument::Sort(s2)) => s1 == s2,
-            _ => false,
-        }
-    }
-
     #[allow(clippy::mutable_key_type)]
     pub(crate) fn matches_with(
         &self,
@@ -109,9 +93,9 @@ impl SortArgument {
     }
 }
 
-impl From<Constant> for SortArgument {
-    fn from(value: Constant) -> Self {
-        SortArgument::Value(value)
+impl From<Integer> for SortArgument {
+    fn from(value: Integer) -> Self {
+        SortArgument::Value(Arc::new(value))
     }
 }
 
@@ -242,7 +226,12 @@ impl TryFrom<Term> for Sort {
         let mut arguments = Vec::with_capacity(atom.arguments.len());
         for arg in &*atom.arguments {
             match arg.kind() {
-                TermKind::Constant(c) => arguments.push(SortArgument::Value(c.clone())),
+                TermKind::Constant(c) => match c {
+                    Constant::Integer { value, .. } => {
+                        arguments.push(SortArgument::Value((*value).clone()))
+                    }
+                    Constant::Rational { .. } => return Err(InvalidSortTerm { span: term.span() }),
+                },
                 _ => arguments.push(SortArgument::Sort(Sort::try_from(arg.clone())?)),
             }
         }

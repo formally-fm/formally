@@ -88,7 +88,7 @@ pub trait Manager: Default + Sized {
         &self,
         sort: <Self::ALL as LogicEx>::Sort<'_>,
         to_sort: impl Fn(&smt::SortArgument) -> Result<Self::Sort>,
-        to_value: impl Fn(&smt::SortArgument) -> Result<&smt::Constant>,
+        to_value: impl Fn(&smt::SortArgument) -> Result<&smt::Integer>,
     ) -> Result<Self::Sort>;
 
     fn atom(

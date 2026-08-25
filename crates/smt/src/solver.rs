@@ -42,7 +42,7 @@ use std::{
 
 /// Configuration for SMT solvers.
 ///
-/// This is a simple struct holding many parameters used to instantiate SMT solvers. [Config]
+/// This is a simple struct holding some parameters used to instantiate SMT solvers. [Config]
 /// instances are usually constructed from the default one by changing the desired parameters and
 /// then passed to [Solver::new()] and related constructors. Fields are public and can be set
 /// arbitrarily but a builder method for each parameter is also provided, for convenience.
@@ -72,6 +72,9 @@ pub struct Config {
     /// A [None] value is the default, which means a logic is not selected and the solver will
     /// accept symbols from all the known theories, as if "ALL" had been specified (such as
     /// with the `(set-logic ALL)` command in SMT-LIBv2).
+    ///
+    /// Note that the `"ALL"` string itself has no special meaning, but is looked up as any other
+    /// logic name (and probably not found).
     pub logic: Option<Identifier<'static>>,
     /// Whether the solver has to activate the machinery for generating models for satisfiable
     /// instances.
@@ -120,7 +123,7 @@ impl Env {
     }
 }
 
-/// Select which scope to use in [Env::lookup()] and [Term::resolve()].
+/// Select which scope to use in [Env::lookup()] and [Resolve::resolve()].
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub enum Role {
     /// Lookup/resolve a function.
@@ -151,6 +154,27 @@ impl Env {
     }
 }
 
+/// Type that manages the backend's "term manager" (or "context") and subterm sharing.
+///
+/// Most SMT APIs separate the "term manager" (also called "context"), responsible for managing
+/// subterm sharing and the creation and lifetime management of term objects, from the "solver",
+/// which is responsible for the actual reasoning.
+///
+/// [formally::smt] does the same, where [TermManager] manages subterm sharing (through an
+/// underlying instance of [TermPool]) and a handle to the underlying backend's term manager (e.g.
+/// [TermManager](cvc5_sys::TermManager) in cvc5 or [Z3_context](z3_sys::Z3_context) in Z3).
+///
+/// The handle to the underlying backend's manager performs the conversion from [Term] to the
+/// internal representation of terms of the backend (e.g. [Z3_ast](z3_sys::Z3_ast) in Z3).
+///
+/// A term manager is mainly used by giving a reference to it to one or more [Solver] instances.
+/// Solvers built on the same manager can use the same terms which will be converted to the
+/// underlying backend's representation only once, saving time.
+///
+/// Since most SMT APIs are not threadsafe, [TermManager] is not [Send] nor [Sync] and must
+/// therefore be accessed and used by a single thread only. However, one can construct it using
+/// [TermManager::with_pool()] and passing a [DashPool] instance, which is a concurrent [TermPool]
+/// that allows to at least share the same terms among different threads.
 #[derive(Clone)]
 pub struct TermManager {
     backend_manager: Rc<dyn backend::Manager>,

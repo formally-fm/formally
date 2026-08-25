@@ -28,27 +28,30 @@ use formally::support::*;
 use std::panic::AssertUnwindSafe;
 use std::{collections::HashMap, iter::zip, sync::Arc};
 
+/// Trait for types that can perform name resolution on themselves.
+///
+/// The [Resolve::resolve()] method is called by [Solver] in many situations (e.g. on the term of
+/// the body of a definition). See also [ToSort].
 pub trait Resolve: Sized {
+    /// Perform name resolution on `self`.
+    ///
+    /// Name resolution means different thing on different types. For [Term], for example, it means
+    /// to replace all the [unbound name referneces](UnboundRef) with actual [functions](Function).
+    ///
+    /// Name resolution is usually a prerequisite for [type checking](TypeCheck).
+    ///
+    /// Name resolution is performed using the scopes in the given [environment](Env). SMT-LIBv2 has
+    /// two different namespaces for name lookup for sorts and for functions, therefore when
+    /// performing name resolution the [Role] argument specifies if the names in `self` have to be
+    /// looked up as sorts or as functions. Note that this is a hint which is interpreted
+    /// differently by different implementors of the trait.
+    ///
+    /// The [TermPool] argument is used for uniquing terms used to construct the resolved instance
+    /// if needed.
     fn resolve(&self, env: &Env, pool: &dyn TermPool, role: Role) -> Result<Self>;
 }
 
 impl Resolve for Term {
-    /// Perform *name resolution*.
-    ///
-    /// Name resolution is the process of replacing all the [unbound atoms][UnboundAtom] in a term
-    /// with [bound](BoundRef) ones, i.e. replacing raw names with entities. This function should
-    /// usually not be needed directly, since [Solver::declare()], [Solver::define()], and
-    /// [Solver::require()] properly resolve the terms involved automatically.
-    ///
-    /// The [environment][Env] argument is used for name lookups, using at top-level the scope
-    /// `env.functions` if `role` is [Role::Function] or `env.sorts` if `role` is [Role::Sort].
-    ///
-    /// Given that SMT-LIB supports name lookup of overloaded symbols based on the sorts of their
-    /// arguments, name resolution is tightly coupled with type checking, and for this reason it
-    /// may fail with reasons related to type checking. Usually, name resolution has to be performed
-    /// before type checking, because type checking of unbound atoms is not possible. This seems
-    /// to require double the calls to [Term::type_check()], but the latter caches its results in
-    /// `env.context()`, so each subterm gets type-checked only once anyway.
     fn resolve(&self, env: &Env, pool: &dyn TermPool, role: Role) -> Result<Term> {
         if self.is_resolved() {
             return Ok(self.clone());

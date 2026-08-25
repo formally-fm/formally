@@ -30,8 +30,27 @@ use formally::{
 };
 use std::{borrow::Borrow, cell::RefCell, collections::HashSet, fmt::Debug, sync::Arc};
 
+/// Trait for types that implement subterm sharing for [terms][Term].
+///
+/// [TermPool] instances provides the basic functionality for subterm sharing in the framework.
+/// The trait is currently implemented only by [HashPool] and [DashPool], with the latter usable in
+/// multithraeded contexts. Since [Term] cannot be publicly constructed, this trait is not designed
+/// to be implemented by downstream crates.
+///
+/// The main use of [TermPool] instances is to give them to [TermManager::with_pool()] in order to
+/// share the same pool among different term managers and solvers. This allows to share the same
+/// [Term] objects between different SMT backends, even among different threads when using
+/// [DashPool].
+///
+/// The [TermPool::shared()] method is rarely called directly. Prefer using [ToTerm::into_term_in()]
+/// to manually get a [Term] out of a [ToTerm] object (which, again, is rarely needed, because
+/// [ToTerm] is usually accepted directly throughout the framework).
 pub trait TermPool {
+    /// Return the unique [Term] whose underlying [TermKind] is equal to the argument.
     fn shared(&self, kind: TermKind) -> Term;
+
+    /// Return the unique [Term] whose underlying [TermKind] is equal to the one referenced by the
+    /// argument.
     fn shared_ref(&self, kind: &TermKind) -> Term;
 }
 
@@ -44,6 +63,13 @@ impl Borrow<TermKind> for Lookup<Arc<TermInner>> {
     }
 }
 
+/// Sequential, single-threaded implementation of [TermPool].
+///
+/// [HashPool] is based on the standard [HashSet] so its use is limited to a single thread, and
+/// consequently the type is not [Send] nor [Sync]. If the same [TermPool] has to be shared among
+/// different threads, look for [DashPool] instead.
+///
+/// [HashPool] is the default [TermPool] implementation used by [TermManager::new()].
 #[derive(Debug, Default)]
 pub struct HashPool {
     pool: RefCell<HashSet<Lookup<Arc<TermInner>>>>,
@@ -55,6 +81,14 @@ impl HashPool {
     }
 }
 
+/// Concurrent, multithreaded implementation of [TermPool].
+///
+/// [DashPool] is based on [DashSet] from the [dashmap] crate. As such the type is both [Send] and
+/// [Sync] and can be shared and accessed freely by multiple threads without additional
+/// synchronization.
+///
+/// Give a [DashPool] instance to [TermManager::with_pool()] in order to share the same concurrent
+/// pool among different term managers used in different threads.
 #[derive(Debug, Default)]
 pub struct DashPool {
     pool: DashSet<Lookup<Arc<TermInner>>>,
@@ -118,8 +152,22 @@ impl TermPool for HashPool {
     }
 }
 
+/// Trait for types that can be uniqued in [TermPools](TermPool) to obtain a [Term].
+///
+/// This trait represents types that can be converted to [Term] after being uniqued into a
+/// [TermPool]. This includes of course [Term] itself and [TermKind], but also many types
+/// convertible to [TermKind], the [Sort] type, and the result of the [term!] macro.
+///
+/// Most methods in the framework that would accept a [Term] (e.g. in [Solver]) accept a generic
+/// [ToTerm] argument instead, so e.g. an invocation of the [term!] macro can be passed directly to
+/// them. In the particular cases where a [Term] has to be manually obtained from a [ToTerm]
+/// instance, one passes a reference to a [TermPool] to [ToTerm::into_term_in()] or
+/// [ToTerm::to_term_in()].
 pub trait ToTerm: Debug {
+    /// Convert the object into a [Term] by uniquing in the given [TermPool].
     fn into_term_in(self, pool: &dyn TermPool) -> Term;
+
+    /// Convert the object (by reference) into a [Term] by uniquing in the given [TermPool].
     fn to_term_in(&self, pool: &dyn TermPool) -> Term;
 }
 
@@ -298,7 +346,13 @@ impl ToTerm for Sort {
         let mut arguments = Vec::with_capacity(self.arguments.len());
         for arg in &*self.arguments {
             match arg {
-                SortArgument::Value(c) => arguments.push(c.to_term_in(pool)),
+                SortArgument::Value(c) => arguments.push(
+                    Constant::Integer {
+                        value: c.clone(),
+                        span: None,
+                    }
+                    .to_term_in(pool),
+                ),
                 SortArgument::Sort(s) => arguments.push(s.to_term_in(pool)),
             }
         }
