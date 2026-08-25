@@ -28,7 +28,7 @@
 //! in the terminology of SMT-LIBv2.
 //!
 //! Most of the types declared in this module, except [CombinedTheory], are theories declared
-//! through the [theory] macro, so one may want to look at its documentation as well.
+//! through the [theories!] macro, so one may want to look at its documentation as well.
 //!
 //! Each theory type is a unit struct (e.g. declared as `pub struct Ints;`, so it is instantiated as
 //! `Ints`, not `Ints {}`) and exposes a set of associated functions, one for each symbol provided
@@ -37,9 +37,7 @@
 //!
 //! For parametric sorts (e.g. `(Array X Y)`) the corresponding functions accept a suitable number
 //! of [sort arguments](SortArgument), so `(Array Int Int)` would be represented by
-//! `Arrays::Array(Ints::Int(), Ints::Int())`. To access the [Function] corresponding to the sort
-//! constructor `(Array X Y)` itself, one can write `Arrays::Array.to_constructor()` if the
-//! [SortConstructor] trait is in scope.
+//! `Arrays::Array(Ints::Int(), Ints::Int())`.
 //!
 //! Theories are usually combined in a [Logic](logics::Logic), and the logic is what is set when
 //! instantiating a [Solver]. When a logic is set to a solver, its symbols become in scope when
@@ -66,7 +64,7 @@ pub use standard::*;
 /// the corresponding function and sort scopes.
 ///
 /// Implementing this trait directly is quite rare, since theories are usually better declared
-/// using the [theory] macro.
+/// using the [theories!] macro.
 pub trait Theory {
     fn functions(&self) -> Scope<Function>;
 

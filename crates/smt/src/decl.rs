@@ -72,10 +72,10 @@ impl<T: 'static> Deref for SArc<T> {
 ///
 /// These annotations look like syntactic properties, but in fact have nothing to do with the
 /// parser. When parsing `(+ a b c d)`, the parser only sees a term applying function `+` to four
-/// arguments. Then, the name resolver ([Env::resolve()]) and the type checker
-/// ([Term::type_check()]) look for those attributes and understand that, even if `+` is declared as
-/// a *binary* function, it can take more than two arguments in the way that the annotation
-/// specifies.
+/// arguments. Then, the name resolver ([Resolve::resolve()]) and the type checker
+/// ([TypeCheck::type_check()]) look for those attributes and understand that, even if `+` is
+/// declared as a *binary* function, it can take more than two arguments in the way that the
+/// annotation specifies.
 ///
 /// See also the [theories!] macro to see how to specify these annotations when declaring theory
 /// symbols.
@@ -120,7 +120,7 @@ pub enum Associativity {
 /// # }
 /// ```
 ///
-/// The [Variable<S>] type is parametric in a [ToSort] type `S` used to represent the sort of the
+/// The [Variable] type is parametric in a [ToSort] type `S` used to represent the sort of the
 /// variable, such as [Sort] itself or the result of the [sort!] macro. See the documentation of
 /// [ToSort] for details.
 ///
@@ -178,7 +178,7 @@ impl<S: Clone + ToSort> Locatable for Variable<S> {
 /// Comparison of [Primitive] objects is *nominal*, that is, equality and hashing operate on the
 /// identity of the objects, not on their values. In other words, two [Primitive] objects with
 /// exactly the same fields (and in particular the same *name*) created by two different invocations
-/// of the [theory] macro will compare *different* and have a possibly different hash. Moreover,
+/// of the [theories!] macro will compare *different* and have a possibly different hash. Moreover,
 /// cloning a [Primitive] object is a cheap operation and produces a second object which compares
 /// *equal* to the first. Under the hood, this is the behavior of `Nominal<Arc<T>>` for some inner
 /// type `T`, so we also refer to the [Nominal] type for details.

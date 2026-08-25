@@ -132,9 +132,6 @@ impl<'s, 'i, T: 's + Hash + Eq, V: 's> LookupSet<'s, 'i, T, V> {
 
     /// If the current [LookupSet] is not empty, return it as-is, otherwise call the `other` closure
     /// and return its result.
-    ///
-    /// The returned [LookupSet] inherits the current one's [Context] (used to locate the [Emitter]
-    /// for the error diagnostics emitted by [one()](LookupSet::one)).
     pub fn or_else(self, other: impl 's + FnOnce() -> LookupSet<'s, 'i, T, V>) -> Self {
         let mut this = self.iterator.peekable();
         if this.peek().is_some() {

@@ -27,8 +27,8 @@
 //! This module contains what is needed to declare and use *logics* as in the terminology of
 //! SMT-LIBv2.
 //!
-//! An SMT-LIBv2 logic combines a set of [theories] with a set of syntactic requirements
-//! (such as the linerity of terms) and restrictions on the allowed signatures (such as
+//! An SMT-LIBv2 logic combines a set of [theories](mod@theories) with a set of syntactic
+//! requirements (such as the linerity of terms) and restrictions on the allowed signatures (such as
 //! the absence of uninterpreted functions).
 //!
 //! In `::formally`, logics are types implementing the [Logic] trait. Most of the types in this

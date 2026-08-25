@@ -170,7 +170,7 @@
 //!
 //! [Solvers](Solver) are instantiated with a reference to a [Config] object selecting, among other
 //! things, the required SMT logic. A specific SMT backend can be selected by instantiating
-//! the solver with the [Solver::new_with_backend()] constructor.
+//! the solver with the [Solver::with_backend()] constructor.
 //!
 //! Terms can be asserted with the [require()](Solver::require()) method of [Solver]. Then, the
 //! solver can be asked to check the current assertions for satisfiability by calling
@@ -231,7 +231,7 @@
 //! Backends are types implementing the [Backend](backend::Backend) trait. Currently, we only
 //! provide two backends:
 //!  - [backend::z3::Z3], implemented on top of the [z3_sys] crate.
-//!  - [backend::z3::Cvc5], implemented on top of the [cvc5_sys] crate.
+//!  - [backend::cvc5::Cvc5], implemented on top of the [cvc5_sys] crate.
 //!
 //! See the documentation of the [Backend](backend::Solver) trait for information about how to
 //! implement new backends.
@@ -300,8 +300,8 @@
 //! [Reals::plus()](theories::Reals::plus()) if `x` and `y` resolve to reals).
 //!
 //! The crate provides a set (currently incomplete) of standard theories and logics extracted from
-//! the SMT-LIBv2 standard, but new ones can be declared with the help of the [theory] and [logic]
-//! macros, so we refer to their documentation for details.
+//! the SMT-LIBv2 standard, but new ones can be declared with the help of the [theories!] and
+//! [logic!] macros, so we refer to their documentation for details.
 //!
 //! ## Declaring sorts
 //!
@@ -340,7 +340,7 @@
 //! As in most other SMT APIs, [formally::smt] implements automatic subterm sharing. For this
 //! reason, to obtain an actual [Term] from a [ToTerm] object (e.g. from the result of the [term!]
 //! macro) one needs an instance of a type implementing [TermPool]. This instance can usually be
-//! obtained by [Solver:pool()].
+//! obtained by [Solver::pool()].
 //!
 //! Example:
 //! ```

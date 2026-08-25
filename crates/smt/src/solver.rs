@@ -394,7 +394,7 @@ impl Solver {
 
     /// Create a fully resolved [Variable] by looking up its sort.
     ///
-    /// This convenience method is equivalent to constructing a new [Variable<Sort>] instance by
+    /// This convenience method is equivalent to constructing a new [Variable] instance by
     /// calling [Solver::lookup_sort()] on the variable's sort.
     ///
     /// This method is needed to obtain a fully resolved [Variable] that can be used without further
@@ -577,7 +577,7 @@ impl Solver {
 
     /// Assert the given term to the current assertion stack
     ///
-    /// The term undergoes [name resolution](Term::resolve()) and must be well-typed and be of
+    /// The term undergoes [name resolution](Resolve::resolve()) and must be well-typed and be of
     /// sort [Core::Bool()](theories::Core::Bool()).
     pub fn require<T: ToTerm>(&mut self, term: T) -> Result<()> {
         let term = self.lookup(term, Role::Function)?;
@@ -696,7 +696,7 @@ pub trait ModelProvider {
 }
 
 /// The answer to a call to [Solver::check()].
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Answer {
     /// The assertions are satisfiable.
     Yes,
@@ -724,6 +724,7 @@ pub struct Model<'s> {
 }
 
 impl Model<'_> {
+    /// Get the value of a [ToTerm] object (after name lookup and type checking) in the model.
     pub fn value(&self, term: impl ToTerm) -> Result<Option<ModelValue>> {
         Ok(self
             .provider

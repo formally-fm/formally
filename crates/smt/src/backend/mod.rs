@@ -79,7 +79,7 @@
 //! However, each backend instance is responsible to provide the logic named `"ALL"`, which by
 //! the SMT-LIBv2 specification correspond to a logic with no syntactic restriction based on the
 //! combination of all the theories supported by the solver. This logic can be internally declared
-//! using the [logic] macro and returned when the given logic is `"ALL"`. For example:
+//! using the [logic!](smt::logic!) macro and returned when the given logic is `"ALL"`. For example:
 //! ```rust,no_run
 //! # mod formally {
 //! #     pub extern crate formally_support as support;
@@ -135,24 +135,23 @@
 //! However, note that backends do not necessarily have to associate names of standard logics (e.g.
 //! `"LIA"`) to the corresponding types declared in the [logics] module. What *is* expected is that
 //! the symbols provided by the background theories of standard logics correspond to those
-//! provided in the [theories] module.
+//! provided in the [theories](mod@smt::theories) module.
 //!
 //! For instance, if a backend supports some non-standard extension of `"LIA"` (e.g. an additional
 //! function symbol), it can declare a custom `"LIA"` logic that combines the standard `Ints` theory
 //! with a custom theory that declares the additional symbol. On the converse, if a solver supports
 //! `"LIA"` partially, e.g. everything except the `abs` function, it can redeclare a custom logic
-//! based on the standard [Ints](theories::Ints) theory and add a syntactic requirement that scan
-//! terms to forbid the use of `abs`.
+//! based on the standard [Ints](smt::theories::Ints) theory and add a syntactic requirement that
+//! scan terms to forbid the use of `abs`.
 //!
 //! ## Error handling in backends
 //!
 //! In order to simplify the life of backend developers and provide a consistent experience to
-//! users of different backends, backends *do not* directly emit their errors as diagnostics (even
-//! though they technically *could*, because they have access the [Context]). Instead, the methods
-//! of [Solver] return a [Result] whose error type is [Error], which provides a
-//! non-exhaustive taxonomy of the possible errors that a backend may encounter. [Error] is
-//! [Diagnosable], so users of the backend interface (e.g. [Solver]) can still easily emit those
-//! errors as diagnostics later.
+//! users of different backends, backends *do not* directly emit their errors as diagnostics.
+//! Instead, the methods of [Solver] return a [Result] whose error type is [Error](struct@Error),
+//! which provides a non-exhaustive taxonomy of the possible errors that a backend may encounter.
+//! [Error](struct@Error) is [Diagnosable], so users of the backend interface (e.g. [Solver]) can
+//! still easily emit those errors as diagnostics later.
 //!
 //! ## Assumptions and guarantees
 //!
@@ -168,8 +167,8 @@
 //!    boundary of the [Solver] methods. If the backend contains code that may panic or throw an
 //!    exception, that code must be wrapped either inside a [catch_unwind](std::panic::catch_unwind)
 //!    call in Rust or a `try { ... } catch { ... }` block in C++, and the error turned into a
-//!    [Error] of kind [ErrorKind::Internal].
-//! 3. a violated precondition *can* result either into a [Error] of kind
+//!    [Error](struct@Error) of kind [ErrorKind::Internal].
+//! 3. a violated precondition *can* result either into a [Error](struct@Error) of kind
 //!    [ErrorKind::ViolatedPrecondition] or into a logical misbehaviour, i.e., wrong answers,
 //!    deadlocks, etc.. In other words, backends are not *forced* to detect the violation of the
 //!    preconditions, and can have arbitrary (but *not* undefined) behavior in those cases.
@@ -210,7 +209,7 @@ impl Error {
     }
 }
 
-/// An enumeration of possible errors for [Error].
+/// An enumeration of possible errors for [Error](struct@Error).
 #[derive(Debug, Display)]
 pub enum ErrorKind {
     /// Some request was unsupported.
@@ -264,7 +263,7 @@ impl Diagnosable for Error {
 /// The trait for SMT backends.
 ///
 /// Types implementing this trait represent backends. See the top-level documentation
-/// for details about [how to write a new backend](backend).
+/// for details about [how to write a new backend](smt::backend).
 pub trait Backend {
     /// Return the name of the backend.
     fn name(&self) -> &str;
@@ -297,7 +296,7 @@ pub trait Manager: Any {
 /// The documentation of each method lists its intended purpose and what external preconditions
 /// the method can assume to hold when the backend is used through a [Solver].
 ///
-/// However, please read before the documentation on [how to write a new backend](backend).
+/// However, please read before the documentation on [how to write a new backend](smt::backend).
 pub trait Solver {
     fn manager(&self) -> &dyn Manager;
 
@@ -317,8 +316,9 @@ pub trait Solver {
     /// In most cases, declared entities need to be declared to the backend somehow before being
     /// used in asserted terms. This method allows a backend to do so.
     ///
-    /// This method *can assume* that the sorts mentioned by the [Declared] object have passed a
-    /// [validate()](Sort::validate) call.
+    /// This method *can assume* that the sorts mentioned by the sorts in the [Declared] object are
+    /// fully [resolved](smt::Resolve::resolve()) and [type
+    /// checked](smt::TypeCheck::type_check()).
     fn declare(&mut self, decl: Declared) -> Result<(), Error>;
 
     /// Register a new [Defined] object in the backend instance.
@@ -326,10 +326,8 @@ pub trait Solver {
     /// In a few cases, defined entities need to be defined to the backend somehow before being
     /// used in asserted terms. This method allows a backend to do so.
     ///
-    /// This method *can assume* that the sorts mentioned by the [Defined] object have passed a
-    /// [validate()](Sort::validate) call, and the terms mentioned have passed a
-    /// [validated()](Term::validated()) call. In aprticular, terms are guaranteed to be fully
-    /// [resolved](Term::resolve()).
+    /// This method *can assume* that the sorts mentioned by the [Defined] object are suflly
+    /// [resolved](smt::Resolve::resolve()) and [type checked](smt::TypeCheck::type_check()).
     fn define(&mut self, def: Defined) -> Result<(), Error>;
 
     /// Push a frame on the assertions stack.
@@ -343,10 +341,10 @@ pub trait Solver {
 
     /// Asserts a term to the current frame of the assertions stack.
     ///
-    /// This method *can assume* that the term has passed a call to
-    /// [validated()](Term::validated()), and to be Boolean. In particular, the term is guaranteed
-    /// to be fully [resolved](Term::resolve()), and [Term::type_check()] is guaranteed to
-    /// return [Core::Bool()](theories::Core::Bool()).
+    /// This method *can assume* that the term is
+    /// fully [resolved](smt::Resolve::resolve()), and
+    /// [type checked](smt::TypeCheck::type_check()) is guaranteed to return
+    /// [Core::Bool()](smt::theories::Core::Bool()).
     fn require(&mut self, term: &smt::Term) -> Result<(), Error>;
 
     /// Check the current frame on the assertions stack for satisfiability.

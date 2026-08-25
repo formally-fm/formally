@@ -32,7 +32,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter},
     iter::zip,
-    sync::Arc
+    sync::Arc,
 };
 
 pub trait ToSort: Resolve + TypeCheck + TryInto<Sort, Error: Emit> {}
@@ -156,20 +156,6 @@ impl Display for SortHead {
     }
 }
 
-/// An SMT sort.
-///
-/// Sorts are the types of terms in the SMT lingo, and the [Sort] type is the result of [type
-/// checking][Term::type_check()]. Sorts can be constructed directly starting from
-/// [functions](Function) whose range is the special sort [Sort::sort()] (i.e., the sort of sorts).
-/// They can also be first constructed as [terms][Term], e.g. by parsing SMT-LIBv2 source or with
-/// the [term] macro, and then evaluated as sorts using [evaluate()](Sort::evaluate()).
-///
-/// Sort themselves have a structure similar to [bound atoms][BoundAtom], i.e. a [Function] applied
-/// to arguments. The function must have the special sort [Sort::sort()]. Such functions are
-/// sometimes called *sort constructors*. Moreover, arguments are
-/// not arbitrary terms but [SortArgument] objects which can be either another sort or a constant.
-/// This allows the representation of both SMT-LIBv2 sorts such as `(Array Int Real)` and `(_ BitVec
-/// 32)`.
 #[allow(clippy::duplicated_attributes)]
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct Sort {

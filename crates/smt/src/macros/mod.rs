@@ -66,7 +66,7 @@ pub mod support;
 ///    brackets. The names specified here are paths of any type currently in scope implementing the
 ///    [LogicRequirement](crate::logics::requirements::LogicRequirement) trait.
 ///
-/// Standard SMT-LIBv2 theories are declared in the [theories](crate::theories) module and some
+/// Standard SMT-LIBv2 theories are declared in the [theories](mod@crate::theories) module and some
 /// logic requirements commonly needed in standard SMT-LIBv2 logics are declared in the
 /// [logics::requirements](crate::logics::requirements) module.
 #[macro_export]
@@ -77,7 +77,7 @@ macro_rules! logic {
 /// Declare new SMT-LIBv2 theories.
 ///
 /// This macro automates the process of defining types suitably implementing the
-/// [Theory](smt::theories::Theory) trait. It allows one to specify:
+/// [Theory](crate::theories::Theory) trait. It allows one to specify:
 /// - the name of the new theory
 /// - possibly other theories to inherit symbols from
 /// - sorts, constants, and function symbols provided by the theory
@@ -246,9 +246,9 @@ macro_rules! logic {
 /// Declarations" of the SMT-LIBv2 [specification manual](https://smt-lib.org/language.shtml)).
 ///
 /// In parametric functions, the type-level parameters can be used freely when specifying the sorts
-/// of the arguments and the range, and appear as references to [crate::Parameter] objects, which,
-/// in particular, is convertible to `SortArgument`, so can be used to instantiate other parametric
-/// sorts. For example, the following declaration is the valid declaration of the
+/// of the arguments and the range, and appear as references to [Variable](crate::Variable) objects,
+/// which, in particular, is convertible to `SortArgument`, so can be used to instantiate other
+/// parametric sorts. For example, the following declaration is the valid declaration of the
 /// [select](crate::theories::Arrays::select()) function from the [Arrays](crate::theories::Arrays)
 /// theory.
 ///
@@ -340,19 +340,22 @@ macro_rules! theories {
 /// ```
 ///
 /// The macro returns a temporary object of a hidden type implementing the [ToTerm](crate::ToTerm)
-/// trait, so it can be used anywhere such types are accepted, including many methods of [Solver].
+/// trait, so it can be used anywhere such types are accepted, including many methods of
+/// [Solver](crate::Solver).
 ///
 /// The object constructed by the macro is local and allocation-free, but this means its lifetime
 /// is tied to the local scope and cannot be returned from the current function. To do anything
-/// meaningful with it, it has to be passed to some function accepting [ToTerm] (e.g.
-/// [Solver::require()] as in the example above).
+/// meaningful with it, it has to be passed to some function accepting [ToTerm](crate::ToTerm) (e.g.
+/// [Solver::require()](crate::Solver::require()) as in the example above).
 ///
-/// To obtain an actual [Term] one can use the [ToTerm::into_term_in()] function with a [TermPool],
-/// but most of the time one wishes to apply *name resolution* on the term as well after
-/// construction, so the recommended way to get a [Term] out of the [term!] macro is to pass its
-/// result to [Solver::lookup()]. This is however seldom necessary because most methods of [Solver]
-/// accept [ToTerm] instances so the result of the macro can be used directly, as in the example
-/// above.
+/// To obtain an actual [Term](crate::Term) one can use the
+/// [ToTerm::into_term_in()](crate::ToTerm::into_term_in()) function with a
+/// [TermPool](crate::TermPool), but most of the time one wishes to apply *name resolution* on the
+/// term as well after construction, so the recommended way to get a [Term](crate::Term) out of the
+/// [term!](crate::term!) macro is to pass its result to
+/// [Solver::lookup()](crate::Solver::lookup()). This is however seldom necessary because most
+/// methods of [Solver](crate::Solver) accept [ToTerm](crate::ToTerm) instances so the result of the
+/// macro can be used directly, as in the example above.
 ///
 /// In the above example we can note two features of the `term` macro combined with `Solver`.
 /// 1. names of the symbols can be used directly, in which case the resulting term will contain
@@ -360,8 +363,9 @@ macro_rules! theories {
 ///    `require()`. This is the case of the `"and"`, `"p"`, `"q"`, and `"not"` symbols in the
 ///    example above.
 /// 2. entities declared in the surrounding Rust code, including objects of any type implementing
-///    [ToTerm], can be expanded by using the `#identifier` syntax, inspired by the `quote` macro of
-///    the `syn` crate. This is the case of the `#ponens` expansion in the example above.
+///    [ToTerm](crate::ToTerm), can be expanded by using the `#identifier` syntax, inspired by the
+///    `quote` macro of the `syn` crate. This is the case of the `#ponens` expansion in the example
+///    above.
 ///
 /// When an entity is expanded it is used in the resulting term appropriately. In particular, one
 /// can expand `Declared` or `Defined` objects to obtain *bound atoms* that do not need
@@ -424,12 +428,13 @@ macro_rules! term {
 
 /// Construct a term from a subset of the SMT-LIBv2 syntax for sorts.
 ///
-/// The [sort!] macro is similar to [term!] but restricted to the fragment of SMT-LIBv2 syntax for
-/// sorts. The result is still an object of a type that implements [ToTerm]. In [formally::smt],
-/// sorts are represented as terms since their shape is that of atoms where a function with a
-/// codomain of [Sort::sort()] is applied to some arguments (e.g. in `(Array Int Int)`).
+/// The [sort!](crate::sort!) macro is similar to [term!](crate::term!) but restricted to the
+/// fragment of SMT-LIBv2 syntax for sorts. The result is still an object of a type that implements
+/// [ToTerm](crate::ToTerm). In [formally::smt](crate::formally::smt), sorts are represented as
+/// terms since their shape is that of atoms where a function with a codomain of
+/// [Sort::sort()](crate::Sort::sort()) is applied to some arguments (e.g. in `(Array Int Int)`).
 ///
-/// See the documentation for [Sort] for more information.
+/// See the documentation for [Sort](crate::Sort) for more information.
 #[macro_export]
 macro_rules! sort {
     ($($tokens:tt)*) => {$crate::macros::proc::sort!{$($tokens)*}};

@@ -32,29 +32,6 @@ pub trait TypeCheck {
 }
 
 impl TypeCheck for Term {
-    /// Deduce the sort of a term.
-    ///
-    /// Typing rules are straightforward:
-    /// 1. constants have their own natural sort,
-    /// 2. [bound atoms](BoundRef) are checked to ensure their arguments match the function's
-    ///    domain, and then their sort is just the function's range.
-    ///
-    /// This method is also aliased by [Sort::of()] which provides a clearer notation.
-    ///
-    /// Note that type checking terms containing [unbound atoms](UnboundRef) is not possible,
-    /// because typing information for unbound symbols is not available. In this case, the method
-    /// emits an [internal error](internal). As a consequence, type checking is usually performed
-    /// only after [name resolution](Term::resolve), unless the term is known to not have unbound
-    /// atoms by construction. If knowing the sort of the term is not needed, but one only need to
-    /// check the well-sortedness of the term, type checking and name resolution can be done
-    /// together by calling [Term::validated()].
-    ///
-    /// The method takes a [Context] argument to cache its result into the context's [data
-    /// pool](Context::cache()), so a second invocation on the same term is faster.
-    ///
-    /// As advised in the documentation of [Term], caching is done by hashing the terms *nominally*,
-    /// so two terms that compare equal but point to [TermKind] objects with different memory
-    /// addresses will not share the cached result.
     fn type_check(&self) -> Result<Sort> {
         if let Some(sort) = &*self.0.sort.lock().unwrap() {
             return Ok(sort.clone());

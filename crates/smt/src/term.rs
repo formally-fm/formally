@@ -72,18 +72,6 @@ impl From<Rational> for Constant {
     }
 }
 
-/// A *bound* atom.
-///
-/// A bound atom represents an expression of the form `(f arg1 arg2 ...)` where `f` is already given
-/// as a specific [Function] object (inside a [Reference] to keep track of its source span).
-///
-/// Bound atoms can be [type checked](Term::type_check) directly (supposing their children can
-/// recursively be type checked) because typing information is available. Note that this should
-/// not usually be a concern because [Solver::declare()], [Solver::define()], and
-/// [Solver::require()] already perform name resolution and type checking appropriately.
-///
-/// Terms can usually better be constructed with the [term] macro, which can build both bound and
-/// [unbound](UnboundRef) atoms.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct BoundRef {
     /// the function that is being applied.
@@ -250,8 +238,8 @@ pub struct Let {
 ///
 /// The [TermKind] enum lists the possible kinds of terms supported by the framework. [Term] derefs
 /// immutably to [TermKind], and a term's kind is also available through the [Term::kind()] method.
-/// Terms can be constructed from [TermKind] using [Term::from()], although constructing terms
-/// with the [term] macro is recommended.
+/// Terms can be constructed from [TermKind] using a [TermPool], such as the one provided by
+/// [Solver::pool()].
 ///
 /// As mentioned in the [overview](formally::smt), we differ from most SMT APIs in that we do not
 /// offer multiple functions and/or types, one for each possible term node (addition, subtraction,
