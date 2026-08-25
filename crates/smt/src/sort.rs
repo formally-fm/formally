@@ -124,6 +124,12 @@ impl<T: Into<Sort>> From<T> for SortArgument {
     }
 }
 
+/// The head of a [Sort], i.e. the sort constructor being applied.
+///
+/// Similar to [atoms](Atom), a sort can be *bound* or *unbound*. The latter only refer to their
+/// sort constructor by name and need name resolution to be usable.
+///
+/// See also the [ToSort] trait.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, From, Transitive)]
 #[allow(clippy::duplicated_attributes)]
 #[transitive(from(Variable, Function))]

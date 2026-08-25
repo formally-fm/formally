@@ -36,7 +36,8 @@ pub trait Resolve: Sized {
     /// Perform name resolution on `self`.
     ///
     /// Name resolution means different thing on different types. For [Term], for example, it means
-    /// to replace all the [unbound name referneces](UnboundRef) with actual [functions](Function).
+    /// to replace all the [unbound name references](FunctionRef::Unbound) with actual
+    /// [functions](Function).
     ///
     /// Name resolution is usually a prerequisite for [type checking](TypeCheck).
     ///

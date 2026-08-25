@@ -440,6 +440,23 @@ macro_rules! sort {
     ($($tokens:tt)*) => {$crate::macros::proc::sort!{$($tokens)*}};
 }
 
+/// Construct a [Variable](crate::Variable) from the SMT-LIBv2 syntax for variable declarations.
+///
+/// Example:
+/// ```
+/// # mod formally {
+/// #     pub extern crate formally_support as support;
+/// #     pub extern crate formally_smt as smt;
+/// # }
+/// # use formally::{smt::{*, backend::z3::Z3}, support::*};
+/// # fn main() -> Result<()> {
+/// # let mut solver = Solver::with_backend(&Config::default(), Z3)?;
+/// #
+/// solver.define(Definition::function("f", [var!(x Int)], sort!(Int), term!(* x 2)));
+/// #
+/// # Ok(())
+/// # }
+/// ```
 #[macro_export]
 macro_rules! var {
     ($name:ident $($sort:tt)*) => {
@@ -447,6 +464,24 @@ macro_rules! var {
     };
 }
 
+/// Construct an array of [variables](crate::Variable) from the SMT-LIBv2 syntax for multiple
+/// variable declarations.
+///
+/// Example:
+/// ```
+/// # mod formally {
+/// #     pub extern crate formally_support as support;
+/// #     pub extern crate formally_smt as smt;
+/// # }
+/// # use formally::{smt::{*, backend::z3::Z3}, support::*};
+/// # fn main() -> Result<()> {
+/// # let mut solver = Solver::with_backend(&Config::default(), Z3)?;
+/// #
+/// solver.define(Definition::function("f", vars!((x Int) (y Int)), sort!(Int), term!(* x y)));
+/// #
+/// # Ok(())
+/// # }
+/// ```
 #[macro_export]
 macro_rules! vars {
     ($(($name:ident $($sort:tt)*))*) => {
