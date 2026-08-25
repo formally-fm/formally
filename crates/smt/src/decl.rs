@@ -269,7 +269,7 @@ impl Primitive {
 /// The fields are public and the type can be constructed freely, but some constructors are also
 /// provided ([function()](Declaration::function), [constant()](Declaration::constant), and
 /// [sort()](Declaration::sort)), for common cases.
-#[derive(Clone, Debug, Located, Locatable)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Declaration<D: ToSort, R: ToSort> {
     /// The name of the declared function.
     pub name: Identifier<'static>,
@@ -385,13 +385,7 @@ impl Declaration<Sort, Sort> {
 /// *equal* to the first. Under the hood, this is the behavior of `Nominal<Arc<Declaration>>`, so we
 /// also refer to the [Nominal] type for details.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located, Deref)]
-pub struct Declared(Nominal<Arc<Declaration<Sort, Sort>>>);
-
-impl Declared {
-    pub(crate) fn new(decl: Declaration<Sort, Sort>) -> Declared {
-        Declared(Nominal(Arc::new(decl)))
-    }
-}
+pub struct Declared(pub(crate) Nominal<Arc<Declaration<Sort, Sort>>>);
 
 /// Specification for definitions of functions (and constants, and sorts).
 ///
@@ -408,7 +402,7 @@ impl Declared {
 /// The fields are public and the type can be constructed freely, but some constructors are also
 /// provided ([function()](Definition::function), [constant()](Definition::constant), and
 /// [sort()](Definition::sort)), for common cases.
-#[derive(Clone, Debug, Located, Locatable)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Definition<V: ToSort, R: ToSort, B: ToTerm> {
     pub name: Identifier<'static>,
     pub domain: Vec<Variable<V>>,
@@ -543,13 +537,7 @@ impl<B: ToTerm> Definition<Sort, Sort, B> {
 /// *equal* to the first. Under the hood, this is the behavior of `Nominal<Arc<Definition>>`, so we
 /// also refer to the [Nominal] type for details.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located, Deref)]
-pub struct Defined(Nominal<Arc<Definition<Sort, Sort, Term>>>);
-
-impl Defined {
-    pub(crate) fn new(def: Definition<Sort, Sort, Term>) -> Defined {
-        Defined(Nominal(Arc::new(def)))
-    }
-}
+pub struct Defined(pub(crate) Nominal<Arc<Definition<Sort, Sort, Term>>>);
 
 /// A function.
 ///

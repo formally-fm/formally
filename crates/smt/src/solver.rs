@@ -36,8 +36,11 @@ use derive_more::From;
 use transitive::Transitive;
 
 use std::{
+    cell::RefCell,
+    collections::HashSet,
     fmt::{Debug, Display, Formatter},
     rc::Rc,
+    sync::Arc,
 };
 
 /// Configuration for SMT solvers.
@@ -171,6 +174,38 @@ impl Env {
 /// Solvers built on the same manager can use the same terms which will be converted to the
 /// underlying backend's representation only once, saving time.
 ///
+/// Example:
+/// ```
+/// # mod formally {
+/// #    pub extern crate formally_smt as smt;
+/// #    pub extern crate formally_support as support;
+/// # }
+/// use formally::{smt::{*, backend::z3::Z3}, support::*};
+///
+/// # use std::rc::Rc;
+/// #
+/// # fn main() -> Result<()> {
+///     let manager = Rc::new(TermManager::new(Z3));
+///     let config = Config::new();
+///     let mut slv1 = Solver::with_manager(&config, manager.clone())?;
+///     let mut slv2 = Solver::with_manager(&config, manager)?;
+///
+///     let x1 = slv1.declare(Declaration::constant("x", sort!(Int)))?;
+///     let x2 = slv2.declare(Declaration::constant("x", sort!(Int)))?;
+///
+///     // Equivalent declarations/definitions result in the same `Declared`/`Defined` objects
+///     assert_eq!(x1, x2);
+///
+///     let t1 = slv1.lookup(term!(* x x), Role::Function)?;
+///     let t2 = slv2.lookup(term!(* x x), Role::Function)?;
+///
+///     // Equivalent terms result into the same [Term] objects
+///     assert_eq!(t1, t2);
+///
+/// #   Ok(())
+/// # }
+/// ```
+///
 /// Since most SMT APIs are not threadsafe, [TermManager] is not [Send] nor [Sync] and must
 /// therefore be accessed and used by a single thread only. However, one can construct it using
 /// [TermManager::with_pool()] and passing a [DashPool] instance, which is a concurrent [TermPool]
@@ -179,6 +214,32 @@ impl Env {
 pub struct TermManager {
     backend_manager: Rc<dyn backend::Manager>,
     pool: Rc<dyn TermPool>,
+    decls: RefCell<HashSet<Arc<Declaration<Sort, Sort>>>>,
+    defs: RefCell<HashSet<Arc<Definition<Sort, Sort, Term>>>>,
+}
+
+impl TermManager {
+    fn decl(&self, decl: Declaration<Sort, Sort>) -> Declared {
+        if let Some(decl) = self.decls.borrow().get(&decl) {
+            return Declared(Nominal(decl.clone()));
+        }
+
+        let arc = Arc::new(decl);
+        self.decls.borrow_mut().insert(arc.clone());
+
+        Declared(Nominal(arc))
+    }
+
+    fn def(&self, def: Definition<Sort, Sort, Term>) -> Defined {
+        if let Some(def) = self.defs.borrow().get(&def) {
+            return Defined(Nominal(def.clone()));
+        }
+
+        let arc = Arc::new(def);
+        self.defs.borrow_mut().insert(arc.clone());
+
+        Defined(Nominal(arc))
+    }
 }
 
 impl Debug for TermManager {
@@ -202,6 +263,8 @@ impl TermManager {
         TermManager {
             backend_manager: Rc::from(backend.manager()),
             pool: Rc::new(HashPool::new()),
+            decls: RefCell::default(),
+            defs: RefCell::default(),
         }
     }
 
@@ -209,6 +272,8 @@ impl TermManager {
         TermManager {
             backend_manager: Rc::from(backend.manager()),
             pool,
+            decls: RefCell::default(),
+            defs: RefCell::default(),
         }
     }
 
@@ -352,7 +417,7 @@ impl Solver {
             span: decl.span,
         };
 
-        let decl = Declared::new(decl);
+        let decl = self.manager.decl(decl);
         self.backend_solver
             .logic()
             .check_function(&decl.clone().into())?;
@@ -429,7 +494,7 @@ impl Solver {
             span: None,
         };
 
-        let def = Defined::new(def);
+        let def = self.manager.def(def);
         self.backend_solver
             .logic()
             .check_function(&def.clone().into())?;

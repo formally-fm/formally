@@ -25,7 +25,29 @@
 use formally::smt::backend::{Backend, cvc5::Cvc5, z3::Z3};
 use formally::{smt::*, support::*};
 
+use std::rc::Rc;
+
 use rstest::*;
+
+#[test]
+fn manager() -> Result<()> {
+    let manager = Rc::new(TermManager::new(Z3));
+    let config = Config::new();
+    let mut slv1 = Solver::with_manager(&config, manager.clone())?;
+    let mut slv2 = Solver::with_manager(&config, manager.clone())?;
+
+    let x1 = slv1.declare(Declaration::constant("x", sort!(Int)))?;
+    let x2 = slv2.declare(Declaration::constant("x", sort!(Int)))?;
+
+    assert_eq!(x1, x2);
+
+    let t1 = slv1.lookup(term!(* x x), Role::Function)?;
+    let t2 = slv2.lookup(term!(* x x), Role::Function)?;
+
+    assert_eq!(t1, t2);
+
+    Ok(())
+}
 
 #[rstest]
 fn solve(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
