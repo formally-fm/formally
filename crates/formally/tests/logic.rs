@@ -31,7 +31,7 @@ use rstest::*;
 
 #[test]
 fn manager() -> Result<()> {
-    let manager = Rc::new(TermManager::new(Z3));
+    let manager = Rc::new(TermManager::new(Cvc5));
     let config = Config::new();
     let mut slv1 = Solver::with_manager(&config, manager.clone())?;
     let mut slv2 = Solver::with_manager(&config, manager.clone())?;
@@ -45,6 +45,14 @@ fn manager() -> Result<()> {
     let t2 = slv2.lookup(term!(* x x), Role::Function)?;
 
     assert_eq!(t1, t2);
+
+    slv1.require(term!(= x 42))?;
+
+    slv2.require(term!(not (= x 42)))?;
+
+    assert_eq!(slv1.check()?, Answer::Yes);
+
+    assert_eq!(slv2.check()?, Answer::Yes);
 
     Ok(())
 }
