@@ -451,7 +451,7 @@ impl Interpreter {
                         ast::Term::Identifier(ast::QualifiedIdentifier { id, .. }) => match id {
                             ast::Identifier::Symbol(symbol) => {
                                 let symbol = Identifier::from(symbol.inner()).over(symbol.span());
-                                let functions = state.solver.functions();
+                                let functions = state.solver.env().functions.clone();
                                 let function = functions.lookup(symbol.clone()).one()?;
                                 let value = model.value(function)?;
 

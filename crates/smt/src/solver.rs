@@ -180,27 +180,28 @@ impl Env {
 /// #    pub extern crate formally_smt as smt;
 /// #    pub extern crate formally_support as support;
 /// # }
-/// use formally::{smt::{*, backend::z3::Z3}, support::*};
+///  use formally::{smt::{*, backend::z3::Z3}};
+/// # use formally::support::*;
 ///
 /// # use std::rc::Rc;
 /// #
 /// # fn main() -> Result<()> {
-///     let manager = Rc::new(TermManager::new(Z3));
-///     let config = Config::new();
-///     let mut slv1 = Solver::with_manager(&config, manager.clone())?;
-///     let mut slv2 = Solver::with_manager(&config, manager)?;
+///  let manager = Rc::new(TermManager::new(Z3));
+///  let config = Config::new();
+///  let mut slv1 = Solver::with_manager(&config, manager.clone())?;
+///  let mut slv2 = Solver::with_manager(&config, manager)?;
 ///
-///     let x1 = slv1.declare(Declaration::constant("x", sort!(Int)))?;
-///     let x2 = slv2.declare(Declaration::constant("x", sort!(Int)))?;
+///  let x1 = slv1.declare(Declaration::constant("x", sort!(Int)))?;
+///  let x2 = slv2.declare(Declaration::constant("x", sort!(Int)))?;
 ///
-///     // Equivalent declarations/definitions result in the same `Declared`/`Defined` objects
-///     assert_eq!(x1, x2);
+///  // Equivalent declarations/definitions result in the same `Declared`/`Defined` objects
+///  assert_eq!(x1, x2);
 ///
-///     let t1 = slv1.lookup(term!(* x x), Role::Function)?;
-///     let t2 = slv2.lookup(term!(* x x), Role::Function)?;
+///  let t1 = slv1.lookup(term!(* x x), Role::Function)?;
+///  let t2 = slv2.lookup(term!(* x x), Role::Function)?;
 ///
-///     // Equivalent terms result into the same [Term] objects
-///     assert_eq!(t1, t2);
+///  // Equivalent terms result into the same [Term] objects
+///  assert_eq!(t1, t2);
 ///
 /// #   Ok(())
 /// # }
@@ -259,6 +260,7 @@ impl Default for TermManager {
 }
 
 impl TermManager {
+    /// Construct a [TermManager] over a given [Backend].
     pub fn new(backend: impl Backend) -> TermManager {
         TermManager {
             backend_manager: Rc::from(backend.manager()),
@@ -268,6 +270,7 @@ impl TermManager {
         }
     }
 
+    /// Construct a [TermManager] over a given [Backend] and [TermPool].
     pub fn with_pool(backend: impl Backend, pool: Rc<dyn TermPool>) -> TermManager {
         TermManager {
             backend_manager: Rc::from(backend.manager()),
@@ -277,6 +280,7 @@ impl TermManager {
         }
     }
 
+    /// Return a reference to the underlying [TermPool].
     pub fn pool(&self) -> &dyn TermPool {
         &*self.pool
     }
@@ -287,17 +291,15 @@ impl TermManager {
 /// The [Solver] type is at the core of [formally::smt], providing high-level access to backend
 /// solvers.
 ///
-/// Solvers are instantiated from [Config] values from which they take also their [Context] used to
-/// emit diagnostics and cache type lookups for [terms](Term). See the [overview](formally::smt) for
-/// simple usage examples.
+/// One can create a [Solver] in three ways, all accepting a [Config] reference to configure the
+/// solver:
+/// - [Solver::new()] creates a solver with a default backend and a dedicated [TermManager].
+/// - [Solver::with_backend()] creates a solver with a given backend and a dedicated [TermManager].
+/// - [Solver::with_manager()] creates a solver over the given [TermManager].
 ///
 /// [Solver] is responsible to implement name lookup on terms used in definitions and assertions.
 /// A term such as `term!(> p q)` contains three unresolved symbols, `">"`, `"p"`, and `"q"`.
-/// Without name resolution the term would be unusable by the backends. [Solver] performs name
-/// resolution by calling [Term::resolve()] appropriately using an [Env] instance that holds all
-/// the symbols declared and defined and which refers to the current logics' theory as parent.
-/// This allows the free use of names in the [term] macro and saves users and clients from the
-/// burden of keeping track of the names of the used entities.
+/// Without name resolution the term would be unusable by the backends.
 ///
 /// [Solver] implements [Stack] to provide the usual incremental interface of most SAT/SMT solvers.
 pub struct Solver {
@@ -307,6 +309,9 @@ pub struct Solver {
 }
 
 impl Solver {
+    /// Create a [Solver] over a given [TermManager].
+    ///
+    /// Use this constructor to share the same [TermManager] among different solvers.
     pub fn with_manager(config: &Config, manager: impl Into<Rc<TermManager>>) -> Result<Solver> {
         let manager = manager.into();
         let backend_solver = manager
@@ -320,10 +325,14 @@ impl Solver {
         })
     }
 
+    /// Create a [Solver] over a given [Backend].
+    ///
+    /// Backends provided by this crate are defined in [formally::smt::backend](backend).
     pub fn with_backend(config: &Config, backend: impl Backend) -> Result<Solver> {
         Solver::with_manager(config, TermManager::new(backend))
     }
 
+    /// Create a [Solver] with a default backend and a dedicated [TermManager].
     pub fn new(config: &Config) -> Result<Solver> {
         Solver::with_manager(config, TermManager::default())
     }
@@ -333,6 +342,10 @@ impl Solver {
         self.backend_solver.logic()
     }
 
+    /// Set a new configuration for the solver.
+    ///
+    /// Note that the [logic](Config::logic) field is ignored when changing configuration after
+    /// construction.
     pub fn config(&self, config: &Config) -> Result<()> {
         Ok(self.backend_solver.config(config)?)
     }
@@ -343,20 +356,21 @@ impl Solver {
         &self.env
     }
 
-    /// The current [Scope] for functions.
-    pub fn functions(&self) -> Scope<Function> {
-        self.env.functions.clone()
-    }
-
-    /// The current [Scope] for sorts.
-    pub fn sorts(&self) -> Scope<Function> {
-        self.env.sorts.clone()
-    }
-
+    /// Return a reference to the [TermPool] of the underlying [TermManager].
     pub fn pool(&self) -> &dyn TermPool {
         self.manager.pool()
     }
 
+    /// Convert a [ToTerm] object into a [Term] including name resolution and type checking.
+    ///
+    /// This method uniques a [ToTerm] object into a [Term] using the [TermPool] of the underlying
+    /// [TermManager] and then performs name resolution and type checking on the term.
+    ///
+    /// The resulting term is guaranteed to be well typed and fully resolved.
+    ///
+    /// Since terms can describe sorts as well, and SMT-LIBv2 defines two different namespaces for
+    /// sorts and functions, the [Role] argument is needed to tell whether the term has to be
+    /// interpreted as a sort or as a value term.
     pub fn lookup<T: ToTerm>(&self, term: T, role: Role) -> Result<Term> {
         let interned = term.into_term_in(self.manager.pool());
         let resolved = interned.resolve(self.env(), self.manager.pool(), role)?;
@@ -365,6 +379,12 @@ impl Solver {
         Ok(resolved)
     }
 
+    /// Convert a [ToSort] object into a [Sort] including name resolution and type checking.
+    ///
+    /// This method uniques a [ToSort] object into a [Sort] and then performs name resolution and
+    /// type checking on the sort.
+    ///
+    /// The resulting sort is guaranteed to be well-formed and fully resolved.
     pub fn lookup_sort<S: ToSort>(&self, sort: &S) -> Result<Sort> {
         let resolved = sort.resolve(self.env(), self.manager.pool(), Role::Sort)?;
         resolved.type_check()?;
@@ -372,6 +392,45 @@ impl Solver {
         Ok(resolved.try_into()?)
     }
 
+    /// Create a fully resolved [Variable] by looking up its sort.
+    ///
+    /// This convenience method is equivalent to constructing a new [Variable<Sort>] instance by
+    /// calling [Solver::lookup_sort()] on the variable's sort.
+    ///
+    /// This method is needed to obtain a fully resolved [Variable] that can be used without further
+    /// name resolution, but it is *not* needed when normally using variables to define functions
+    /// that then refer to them by name.
+    ///
+    /// Example:
+    /// ```
+    /// # mod formally {
+    /// #    pub extern crate formally_smt as smt;
+    /// #    pub extern crate formally_support as support;
+    /// # }
+    ///  use formally::smt::*;
+    /// # use formally::support::*;
+    ///
+    /// # fn main() -> Result<()> {
+    ///  let config = Config::default();
+    ///  let mut solver = Solver::new(&config)?;
+    ///
+    ///  // we construct the variable directly.
+    ///  let x = Variable::new("x", sort!(Int));
+    ///
+    ///  // here the variable `x` is moved and `lookup_var()` is called internally.
+    ///  let f = solver.define(Definition::function("f", [x], sort!(Int), term!(* x 2)));
+    ///
+    ///  // here the variable is #expanded in the term so we need to do name resolution earlier
+    ///  let y = solver.lookup_var(&Variable::new("y", sort!(Int)))?;
+    ///  let g = solver.define(Definition::function("g", [y.clone()], sort!(Int), term!(* #y 2)));
+    ///
+    ///  solver.require(term!(distinct (f 21) (g 21) 42))?;
+    ///
+    ///  assert_eq!(solver.check()?, Answer::No);
+    ///
+    /// #    Ok(())
+    /// # }
+    /// ```
     pub fn lookup_var<S: ToSort>(&self, variable: &Variable<S>) -> Result<Variable> {
         Ok(
             Variable::new(variable.name().clone(), self.lookup_sort(variable.sort())?)
@@ -379,6 +438,10 @@ impl Solver {
         )
     }
 
+    /// Create a fully resolved [Binding] by looking up its sort and term.
+    ///
+    /// This convenience method is useful to infer automatically the sort of the binding from its
+    /// defining term. It is designed to be used in pair with [Binding::new()].
     pub fn lookup_binding<T: ToTerm>(&self, binding: Binding<Infer, T>) -> Result<Binding> {
         let def = self.lookup(&binding.def, Role::Function)?;
         let sort = Sort::of(&def)?;
@@ -398,8 +461,8 @@ impl Solver {
     /// As explained in the [overview](formally::smt), [declare()](Solver::declare) registers a
     /// [Declaration] value in the suitable scope and returns a [Declared] object that immutably
     /// points to the registered [Declaration] object. The registered [Declaration] object is
-    /// not equal to the one passed as argument, in general, because [name
-    /// resolution](Term::resolve()) occurs.
+    /// not equal to the one passed as argument, in general, because name
+    /// resolution occurs.
     ///
     /// Remember that constants are seen as functions with no arguments, and sorts as constants of
     /// the special sort [Sort::sort()]. See also [Declaration::function()],
@@ -437,12 +500,15 @@ impl Solver {
     /// As explained in the [overview](formally::smt), [define()](Solver::define) registers a
     /// [Definition] value in the suitable scope and returns a [Defined] object that immutably
     /// points to the registered [Definition] object. The registered [Definition] object is not
-    /// equal to the one passed as argument, in general, because [name
-    /// resolution](Term::resolve()) occurs.
+    /// equal to the one passed as argument, in general, because name
+    /// resolution occurs.
     ///
     /// Remember that constants are seen as functions with no arguments, and sorts as constants of
     /// the special sort [Sort::sort()]. See also [Definition::function()],
     /// [Definition::constant()], and [Definition::sort()] for details.
+    ///
+    /// See also the documentation of [Solver::lookup_var()] to know when name lookup is needed to
+    /// be done manually on the variables used in a definition.
     pub fn define<V: ToSort, R: ToSort, B: ToTerm>(
         &mut self,
         def: Definition<V, R, B>,
