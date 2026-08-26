@@ -173,8 +173,8 @@
 //!    deadlocks, etc.. In other words, backends are not *forced* to detect the violation of the
 //!    preconditions, and can have arbitrary (but *not* undefined) behavior in those cases.
 
+pub mod api;
 pub mod cvc5;
-pub mod standard;
 pub mod z3;
 
 use crate::formally;

@@ -30,6 +30,20 @@ use std::rc::Rc;
 use rstest::*;
 
 #[test]
+fn doctest() -> Result<()> {
+    let solver = Solver::new(&Config::default().logic("ALIA"))?;
+
+    let array = solver.lookup(term!(Array Int Int), Role::Sort)?;
+    let sort = Sort::of(&array)?;
+
+    let sortsort = Sort::sort();
+
+    assert_eq!(sort, sortsort);
+
+    Ok(())
+}
+
+#[test]
 fn manager() -> Result<()> {
     let manager = Rc::new(TermManager::new(Cvc5));
     let config = Config::new();
@@ -81,7 +95,7 @@ fn solve(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
 
     match answer {
         Answer::Yes => match solver.model()? {
-            Some(model) => assert_eq!(model.value(q)?, Some(ModelValue::from(true))),
+            Some(model) => assert_eq!(model.value(q)?.unwrap(), true),
             None => panic!("there is no model!"),
         },
         _ => panic!("wrong answer: {answer:?}"),
@@ -123,10 +137,7 @@ fn definitions(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
 
     let model = solver.model()?.unwrap();
 
-    assert_eq!(
-        model.value(term!(y))?,
-        Some(ModelValue::from(Integer::from(42)))
-    );
+    assert_eq!(model.value(term!(y))?.unwrap(), Integer::from(42));
 
     Ok(())
 }
@@ -148,8 +159,8 @@ fn variables(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
 
     assert_eq!(solver.check()?, Answer::Yes);
 
-    let value = solver.model()?.unwrap().value(x)?;
-    assert_eq!(value, Some(ModelValue::from(Integer::from(42))));
+    let value = solver.model()?.unwrap().value(x)?.unwrap();
+    assert_eq!(value, Integer::from(42));
 
     Ok(())
 }
@@ -170,7 +181,7 @@ fn arrays(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
 
     let model = solver.model()?.unwrap();
 
-    assert_eq!(model.value(x)?, Some(ModelValue::from(Integer::from(42))));
+    assert_eq!(model.value(x)?.unwrap(), Integer::from(42));
 
     Ok(())
 }

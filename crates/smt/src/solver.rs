@@ -692,7 +692,7 @@ impl ToTerm for ModelValue {
 
 /// A trait for types that can provide model values.
 pub trait ModelProvider {
-    fn value(&self, term: &Term) -> Option<ModelValue>;
+    fn value(&self, term: &Term, pool: &dyn TermPool) -> Option<Term>;
 }
 
 /// The answer to a call to [Solver::check()].
@@ -725,9 +725,9 @@ pub struct Model<'s> {
 
 impl Model<'_> {
     /// Get the value of a [ToTerm] object (after name lookup and type checking) in the model.
-    pub fn value(&self, term: impl ToTerm) -> Result<Option<ModelValue>> {
+    pub fn value(&self, term: impl ToTerm) -> Result<Option<Term>> {
         Ok(self
             .provider
-            .value(&self.solver.lookup(term, Role::Function)?))
+            .value(&self.solver.lookup(term, Role::Function)?, self.solver.pool()))
     }
 }

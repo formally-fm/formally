@@ -23,16 +23,16 @@
 
 mod bindings;
 
-use crate::{Config, formally};
+use crate::formally;
 use bindings as cvc5;
 use formally::smt::{
-    self,
-    backend::{self, Backend, standard},
+    self, ToTerm as _,
+    backend::{self, Backend, api},
     logic,
     logics::{Logic, LogicEx},
     theories,
 };
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 
 type Result<T, E = backend::Error> = std::result::Result<T, E>;
 
@@ -71,21 +71,21 @@ impl Backend for Cvc5 {
     }
 
     fn manager(&self) -> Box<dyn backend::Manager> {
-        Box::new(standard::ManagerFacade::new(Manager::default()))
+        Box::new(api::ManagerFacade::new(Manager::default()))
     }
 
     fn solver(
         &self,
-        config: &Config,
+        config: &smt::Config,
         manager: Rc<dyn backend::Manager>,
     ) -> Result<Box<dyn backend::Solver>> {
-        Ok(Box::new(standard::SolverFacade::<Solver>::new(
+        Ok(Box::new(api::SolverFacade::<Solver>::new(
             self, config, manager,
         )?))
     }
 }
 
-impl standard::Solver for Solver {
+impl api::Solver for Solver {
     type Manager = Manager;
     type Result = cvc5::Result;
     type Model<'s>
@@ -94,7 +94,7 @@ impl standard::Solver for Solver {
         Self: 's;
 
     fn new(
-        config: &Config,
+        config: &smt::Config,
         logic: Result<Option<&'static dyn Logic>>,
         manager: Rc<Self::Manager>,
     ) -> Result<Self> {
@@ -119,11 +119,11 @@ impl standard::Solver for Solver {
         self.logic
     }
 
-    fn solver(&self) -> &<Self::Manager as standard::Manager>::Solver {
+    fn solver(&self) -> &<Self::Manager as api::Manager>::Solver {
         &self.cvc5solver
     }
 
-    fn config(&self, config: &Config) -> Result<()> {
+    fn config(&self, config: &smt::Config) -> Result<()> {
         if config.produce_models {
             self.cvc5solver.set_option("produce-models", "true")
         } else {
@@ -144,7 +144,7 @@ impl standard::Solver for Solver {
         Ok(())
     }
 
-    fn require(&mut self, term: <Self::Manager as standard::Manager>::Term) -> Result<()> {
+    fn require(&mut self, term: <Self::Manager as api::Manager>::Term) -> Result<()> {
         self.cvc5solver.assert_formula(term);
 
         Ok(())
@@ -159,31 +159,15 @@ impl standard::Solver for Solver {
     }
 }
 
-impl standard::Model for Model<'_> {
+impl api::Model for Model<'_> {
     type Term = cvc5::Term;
 
-    fn value(&self, term: Self::Term) -> Option<smt::ModelValue> {
-        let value = self.solver.cvc5solver.get_value(term);
-
-        if let Some(value) = self.solver.cvc5solver.get_boolean_value(value) {
-            return Some(smt::ModelValue::Boolean(value));
-        } else if let Some(value) = self.solver.cvc5solver.get_integer_value(value) {
-            return Some(smt::ModelValue::Constant(smt::Constant::Integer {
-                value: Arc::new(value),
-                span: None,
-            }));
-        } else if let Some(value) = self.solver.cvc5solver.get_real_value(value) {
-            return Some(smt::ModelValue::Constant(smt::Constant::Rational {
-                value: Arc::new(value),
-                span: None,
-            }));
-        }
-
-        None
+    fn value(&self, term: Self::Term) -> Option<Self::Term> {
+        Some(self.solver.cvc5solver.get_value(term))
     }
 }
 
-impl standard::Manager for Manager {
+impl api::Manager for Manager {
     type ALL = ALL;
     type Backend = Cvc5;
     type Solver = cvc5::Solver;
@@ -313,6 +297,30 @@ impl standard::Manager for Manager {
             ALL_Atom::RealsInts(atom) => self.reals_ints_atom_to_cvc5(atom, to_term),
             ALL_Atom::Arrays(atom) => self.arrays_atom_to_cvc5(atom, to_term),
         }
+    }
+
+    fn export(
+        &self,
+        term: Self::Term,
+        pool: &dyn smt::TermPool,
+        _to_func: impl Clone + Fn(Self::FuncDecl) -> Option<smt::UserFunction>,
+        _to_sort: impl Clone + Fn(Self::Sort) -> Option<smt::Sort>,
+    ) -> Option<smt::Term> {
+        use smt::theories::*;
+
+        if let Some(value) = self.cvc5manager.get_boolean_value(term) {
+            return if value {
+                Some(Core::True().into_term_in(pool))
+            } else {
+                Some(Core::False().into_term_in(pool))
+            }
+        } else if let Some(value) = self.cvc5manager.get_integer_value(term) {
+            return Some(smt::Constant::from(value).into_term_in(pool));
+        } else if let Some(value) = self.cvc5manager.get_real_value(term) {
+            return Some(smt::Constant::from(value).into_term_in(pool));
+        }
+
+        None
     }
 }
 

@@ -132,7 +132,7 @@ impl Term {
         }
 
         env.lookup(head.clone(), role)
-            .filter_map(move |f| Self::candidate(f, env, &head, &argsorts, &resolved, pool))
+            .filter_map(move |f| Self::candidate(f, env, head, &argsorts, &resolved, pool))
             .one()
     }
 

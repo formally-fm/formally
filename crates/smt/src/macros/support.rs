@@ -83,10 +83,16 @@ pub enum Variable {
     Unbound(UnboundVariable),
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub enum VariableList<'t> {
+    Bound(Vec<smt::Variable>),
+    Unbound(&'t [Variable]),
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct Quantified<'t> {
     pub quantifier: Quantifier,
-    pub variables: &'t [Variable],
+    pub variables: VariableList<'t>,
     pub body: &'t Term<'t>,
     pub span: Option<Span>,
 }
@@ -179,16 +185,22 @@ impl ToTerm for Term<'_> {
                 }
             }
             Term::Quantified(quant) => {
-                let mut variables = Vec::with_capacity(quant.variables.len());
-                for var in quant.variables {
-                    match var {
-                        Variable::Bound(var) => variables.push(var.clone()),
-                        Variable::Unbound(unbound) => variables.push(smt::Variable::new(
-                            Identifier::from(unbound.name.clone()),
-                            unbound.sort.clone()
-                        )),
+                let variables = match quant.variables {
+                    VariableList::Bound(variables) => variables,
+                    VariableList::Unbound(unbound) => {
+                        let mut variables = Vec::with_capacity(unbound.len());
+                        for var in unbound {
+                            match var {
+                                Variable::Bound(var) => variables.push(var.clone()),
+                                Variable::Unbound(unbound) => variables.push(smt::Variable::new(
+                                    Identifier::from(unbound.name.clone()),
+                                    unbound.sort.clone(),
+                                )),
+                            }
+                        }
+                        variables
                     }
-                }
+                };
                 smt::Quantified {
                     quantifier: quant.quantifier,
                     variables: Arc::from(variables.into_boxed_slice()),

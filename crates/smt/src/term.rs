@@ -361,3 +361,43 @@ impl Term {
         &self.0.kind
     }
 }
+
+impl PartialEq<bool> for Term {
+    fn eq(&self, other: &bool) -> bool {
+        if let TermKind::Atom(atom) = self.kind()
+            && let Atom { head, .. } = atom
+            && let FunctionRef::Bound(bound) = head
+            && let BoundRef { function, .. } = bound
+            && let Function::Primitive(prim) = function
+        {
+            (*other && *prim == theories::Core::True())
+                || (!*other && *prim == theories::Core::False())
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq<Integer> for Term {
+    fn eq(&self, other: &Integer) -> bool {
+        if let TermKind::Constant(cnst) = self.kind()
+            && let Constant::Integer { value, .. } = cnst
+        {
+            **value == *other
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq<Rational> for Term {
+    fn eq(&self, other: &Rational) -> bool {
+        if let TermKind::Constant(cnst) = self.kind()
+            && let Constant::Rational { value, .. } = cnst
+        {
+            **value == *other
+        } else {
+            false
+        }
+    }
+}

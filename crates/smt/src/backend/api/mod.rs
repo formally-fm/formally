@@ -33,7 +33,7 @@ use formally::smt::{
     logics::{Logic, LogicEx},
 };
 
-use std::rc::Rc;
+use std::{hash::Hash, rc::Rc};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -41,8 +41,8 @@ pub trait Manager: Default + Sized {
     type ALL: LogicEx;
     type Backend: Backend;
     type Solver;
-    type FuncDecl: Clone;
-    type Sort: Clone;
+    type FuncDecl: Clone + Hash + PartialEq + Eq;
+    type Sort: Clone + Hash + PartialEq + Eq;
     type Term: Clone;
     const FUNC_DEF_SUPPORTED: bool = false;
 
@@ -97,6 +97,17 @@ pub trait Manager: Default + Sized {
         to_term: impl Fn(&smt::Term) -> Result<Self::Term>,
         to_terms: impl Fn(&[smt::Term]) -> Result<Vec<Self::Term>>,
     ) -> Result<Self::Term>;
+
+    #[allow(unused)]
+    fn export(
+        &self,
+        term: Self::Term,
+        pool: &dyn smt::TermPool,
+        to_func: impl Clone + Fn(Self::FuncDecl) -> Option<smt::UserFunction>,
+        to_sort: impl Clone + Fn(Self::Sort) -> Option<smt::Sort>,
+    ) -> Option<smt::Term> {
+        None
+    }
 }
 
 pub trait Solver: Sized {
@@ -132,5 +143,5 @@ pub trait Solver: Sized {
 pub trait Model: Sized {
     type Term;
 
-    fn value(&self, term: Self::Term) -> Option<smt::ModelValue>;
+    fn value(&self, term: Self::Term) -> Option<Self::Term>;
 }

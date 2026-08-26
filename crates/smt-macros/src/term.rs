@@ -111,9 +111,15 @@ pub enum Variable {
 }
 
 #[derive(Clone)]
+pub enum VariableList {
+    Bound(syn::Ident),
+    Unbound(Vec<Variable>),
+}
+
+#[derive(Clone)]
 pub struct Quantified {
     quantifier: Quantifier,
-    variables: Vec<Variable>,
+    variables: VariableList,
     body: Box<Term>,
 }
 
@@ -274,19 +280,34 @@ impl Parse for UnboundVariable {
     }
 }
 
+impl Parse for VariableList {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if input.peek(Token![#]) {
+            input.parse::<Token![#]>()?;
+            let content;
+            parenthesized!(content in input);
+            content.parse::<Token![#]>()?;
+            let ident = content.parse()?;
+            input.parse::<Token![*]>()?;
+            
+            Ok(VariableList::Bound(ident))
+        } else {
+            let content;
+            parenthesized!(content in input);
+            let mut vars = Vec::new();
+            while !content.is_empty() {
+                vars.push(content.parse()?)
+            }
+            Ok(VariableList::Unbound(vars))
+        }
+    }
+}
+
 impl Parse for Quantified {
     fn parse(input: ParseStream) -> Result<Self> {
         Ok(Quantified {
             quantifier: input.parse()?,
-            variables: {
-                let content;
-                parenthesized!(content in input);
-                let mut vars = Vec::new();
-                while !content.is_empty() {
-                    vars.push(content.parse()?)
-                }
-                vars
-            },
+            variables: input.parse()?,
             body: Box::new(input.parse()?),
         })
     }
@@ -392,7 +413,7 @@ impl ToTokens for Sort {
         tokens.extend(quote! {
             formally::smt::Sort {
                 head: #head,
-                arguments: vec![#(#args),*]
+                arguments: formally::support::SArc::from(Box::new([#(#args),*]) as Box<[SortArgument]>)
             }
         })
     }
@@ -452,6 +473,19 @@ impl ToTokens for Variable {
     }
 }
 
+impl ToTokens for VariableList {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            VariableList::Bound(bound) => tokens.extend(quote! {
+                formally::smt::macros::support::VariableList::Bound((#bound).into_iter().collect())
+            }),
+            VariableList::Unbound(unbound) => tokens.extend(quote! {
+                formally::smt::macros::support::VariableList::Unbound(&[#(#unbound),*])
+            }),
+        }
+    }
+}
+
 impl ToTokens for Quantified {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let quant = match self.quantifier {
@@ -465,7 +499,7 @@ impl ToTokens for Quantified {
             formally::smt::macros::support::Term::Quantified(
                 formally::smt::macros::support::Quantified {
                     quantifier: #quant,
-                    variables: &[#(#vars),*],
+                    variables: #vars,
                     body: &#body,
                     span: None
                 }

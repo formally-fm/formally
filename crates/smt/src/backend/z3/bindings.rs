@@ -34,7 +34,9 @@ use std::{
     rc::{Rc, Weak},
 };
 pub use z3_sys::AstKind;
+pub use z3_sys::DeclKind;
 pub use z3_sys::ErrorCode;
+pub use z3_sys::SortKind;
 pub use z3_sys::Z3_L_FALSE;
 pub use z3_sys::Z3_L_TRUE;
 
@@ -50,6 +52,9 @@ impl From<LBool> for Option<bool> {
     }
 }
 
+#[derive(Default, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct ID(usize);
+
 pub struct Context {
     pub this: Weak<Context>,
     pub ctx: Z3_context,
@@ -63,6 +68,11 @@ pub struct Solver {
 pub struct Ast {
     pub ctx: Rc<Context>,
     pub ast: Z3_ast,
+}
+
+pub struct App {
+    pub ctx: Rc<Context>,
+    pub app: Z3_app,
 }
 
 pub struct FuncDecl {
@@ -155,10 +165,6 @@ impl Context {
 
     pub fn mk_false(&self) -> Ast {
         Ast::new(self, unsafe { Z3_mk_true(self.ctx).unwrap() })
-    }
-
-    pub fn get_bool_value(&self, ast: Ast) -> Z3_lbool {
-        unsafe { Z3_get_bool_value(self.ctx, ast.ast) }
     }
 
     pub fn mk_int(&self, value: c_int) -> Ast {
@@ -560,6 +566,38 @@ impl Ast {
         unsafe { Z3_get_ast_kind(self.ctx.ctx, self.ast) }
     }
 
+    pub fn sort(&self) -> Sort {
+        Sort::new(&self.ctx, unsafe {
+            Z3_get_sort(self.ctx.ctx, self.ast).unwrap()
+        })
+    }
+
+    pub fn is_numeral(&self) -> bool {
+        unsafe { Z3_is_numeral_ast(self.ctx.ctx, self.ast) }
+    }
+
+    pub fn is_app(&self) -> bool {
+        unsafe { Z3_is_app(self.ctx.ctx, self.ast) }
+    }
+
+    pub fn var_index(&self) -> Option<usize> {
+        if self.kind() == AstKind::Var {
+            Some(unsafe { Z3_get_index_value(self.ctx.ctx, self.ast) as usize })
+        } else {
+            None
+        }
+    }
+
+    pub fn to_app(&self) -> Option<App> {
+        if self.is_app() {
+            Some(App::new(&self.ctx, unsafe {
+                Z3_to_app(self.ctx.ctx, self.ast).unwrap()
+            }))
+        } else {
+            None
+        }
+    }
+
     pub fn get_numeral_string(&self) -> String {
         assert_eq!(self.kind(), AstKind::Numeral);
 
@@ -567,6 +605,77 @@ impl Ast {
             let string = Z3_get_numeral_string(self.ctx.ctx, self.ast);
             CString::from(CStr::from_ptr(string)).into_string().unwrap()
         }
+    }
+
+    pub fn is_quantifier_forall(&self) -> bool {
+        unsafe { Z3_is_quantifier_forall(self.ctx.ctx, self.ast) }
+    }
+
+    pub fn is_quantifier_exists(&self) -> bool {
+        unsafe { Z3_is_quantifier_exists(self.ctx.ctx, self.ast) }
+    }
+
+    pub fn get_quantifier_num_bound(&self) -> u32 {
+        unsafe { Z3_get_quantifier_num_bound(self.ctx.ctx, self.ast) }
+    }
+
+    pub fn get_quantifier_bound_name(&self, index: u32) -> String {
+        unsafe {
+            let symbol = Z3_get_quantifier_bound_name(self.ctx.ctx, self.ast, index).unwrap();
+            match Z3_get_symbol_kind(self.ctx.ctx, symbol) {
+                Z3_symbol_kind::Int => {
+                    let int = Z3_get_symbol_int(self.ctx.ctx, symbol);
+                    format!("x{int}")
+                }
+                Z3_symbol_kind::String => {
+                    let string = Z3_get_symbol_string(self.ctx.ctx, symbol);
+                    CString::from(CStr::from_ptr(string))
+                        .to_str()
+                        .unwrap()
+                        .to_string()
+                }
+            }
+        }
+    }
+
+    pub fn get_quantifier_bound_sort(&self, index: u32) -> Sort {
+        Sort::new(&self.ctx, unsafe {
+            Z3_get_quantifier_bound_sort(self.ctx.ctx, self.ast, index).unwrap()
+        })
+    }
+
+    pub fn get_quantifier_body(&self) -> Ast {
+        Ast::new(&self.ctx, unsafe {
+            Z3_get_quantifier_body(self.ctx.ctx, self.ast).unwrap()
+        })
+    }
+}
+
+impl App {
+    fn new(ctx: &Context, app: Z3_app) -> App {
+        App {
+            ctx: ctx.this.upgrade().unwrap(),
+            app: unsafe {
+                Z3_inc_ref(ctx.ctx, app.cast());
+                app
+            },
+        }
+    }
+
+    pub fn decl(&self) -> FuncDecl {
+        FuncDecl::new(&self.ctx, unsafe {
+            Z3_get_app_decl(self.ctx.ctx, self.app).unwrap()
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        unsafe { Z3_get_app_num_args(self.ctx.ctx, self.app) as usize }
+    }
+
+    pub fn arg(&self, i: usize) -> Ast {
+        Ast::new(&self.ctx, unsafe {
+            Z3_get_app_arg(self.ctx.ctx, self.app, i as c_uint).unwrap()
+        })
     }
 }
 
@@ -590,9 +699,25 @@ impl Clone for Ast {
     }
 }
 
-impl Hash for Ast {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Hash::hash(&self.ast, state)
+impl Drop for Ast {
+    fn drop(&mut self) {
+        unsafe { Z3_dec_ref(self.ctx.ctx, self.ast) }
+    }
+}
+
+impl Clone for App {
+    fn clone(&self) -> Self {
+        unsafe { Z3_inc_ref(self.ctx.ctx, self.app.cast()) }
+        App {
+            ctx: self.ctx.clone(),
+            app: self.app,
+        }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        unsafe { Z3_dec_ref(self.ctx.ctx, self.app.cast()) }
     }
 }
 
@@ -624,6 +749,14 @@ impl FuncDecl {
             },
         }
     }
+
+    pub fn id(&self) -> ID {
+        ID(unsafe { Z3_get_func_decl_id(self.ctx.ctx, self.decl) as usize })
+    }
+
+    pub fn kind(&self) -> DeclKind {
+        unsafe { Z3_get_decl_kind(self.ctx.ctx, self.decl) }
+    }
 }
 
 impl Clone for FuncDecl {
@@ -644,9 +777,17 @@ impl Drop for FuncDecl {
 
 impl Hash for FuncDecl {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Hash::hash(&self.decl, state)
+        self.id().hash(state)
     }
 }
+
+impl PartialEq for FuncDecl {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for FuncDecl {}
 
 impl Sort {
     pub fn new(ctx: &Context, sort: Z3_sort) -> Sort {
@@ -657,6 +798,26 @@ impl Sort {
                 sort
             },
         }
+    }
+
+    pub fn kind(&self) -> SortKind {
+        unsafe { Z3_get_sort_kind(self.ctx.ctx, self.sort) }
+    }
+
+    pub fn id(&self) -> ID {
+        unsafe { ID(Z3_get_sort_id(self.ctx.ctx, self.sort) as usize) }
+    }
+
+    pub fn get_array_sort_domain(&self) -> Sort {
+        Sort::new(&self.ctx, unsafe {
+            Z3_get_array_sort_domain(self.ctx.ctx, self.sort).unwrap()
+        })
+    }
+
+    pub fn get_array_sort_range(&self) -> Sort {
+        Sort::new(&self.ctx, unsafe {
+            Z3_get_array_sort_range(self.ctx.ctx, self.sort).unwrap()
+        })
     }
 }
 
@@ -670,15 +831,23 @@ impl Clone for Sort {
     }
 }
 
-impl Drop for Sort {
-    fn drop(&mut self) {
-        unsafe { Z3_dec_ref(self.ctx.ctx, self.sort.cast::<_Z3_ast>()) }
+impl Hash for Sort {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id().hash(state)
     }
 }
 
-impl Hash for Sort {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Hash::hash(&self.sort, state)
+impl PartialEq for Sort {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for Sort {}
+
+impl Drop for Sort {
+    fn drop(&mut self) {
+        unsafe { Z3_dec_ref(self.ctx.ctx, self.sort.cast::<_Z3_ast>()) }
     }
 }
 

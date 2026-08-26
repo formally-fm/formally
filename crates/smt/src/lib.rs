@@ -214,7 +214,7 @@
 //!
 //! assert_eq!(solver.check()?, Answer::Yes);
 //!
-//! assert_eq!(solver.model()?.unwrap().value(p)?, Some(ModelValue::Boolean(true)));
+//! assert_eq!(solver.model()?.unwrap().value(p)?.unwrap(), true);
 //! # Ok(())
 //! # }
 //! ```

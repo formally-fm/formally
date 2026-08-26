@@ -53,6 +53,40 @@ impl TermManager {
         unsafe { NonNull::new(cvc5::get_real_sort(self.manager)).unwrap() }
     }
 
+    pub fn get_boolean_value(&self, term: Term) -> Option<bool> {
+        unsafe {
+            if !cvc5::term_is_boolean_value(term.as_ptr()) {
+                return None;
+            }
+
+            Some(cvc5::term_get_boolean_value(term.as_ptr()))
+        }
+    }
+
+    pub fn get_integer_value(&self, term: Term) -> Option<rug::Integer> {
+        unsafe {
+            if !cvc5::term_is_integer_value(term.as_ptr()) {
+                return None;
+            }
+
+            let value = cvc5::term_get_integer_value(term.as_ptr());
+            let value = CStr::from_ptr(value).to_string_lossy();
+            Some(rug::Integer::from_str_radix(&value, 10).unwrap())
+        }
+    }
+
+    pub fn get_real_value(&self, term: Term) -> Option<rug::Rational> {
+        unsafe {
+            if !cvc5::term_is_real_value(term.as_ptr()) {
+                return None;
+            }
+
+            let value = cvc5::term_get_real_value(term.as_ptr());
+            let value = CStr::from_ptr(value).to_string_lossy();
+            Some(rug::Rational::from_str_radix(&value, 10).unwrap())
+        }
+    }
+
     pub fn mk_array_sort(&self, index: Sort, element: Sort) -> Sort {
         unsafe {
             NonNull::new(cvc5::mk_array_sort(
@@ -196,40 +230,6 @@ impl Solver {
     pub fn get_value(&self, term: Term) -> Term {
         unsafe { NonNull::new(cvc5::get_value(self.solver, term.as_ptr())).unwrap() }
     }
-
-    pub fn get_boolean_value(&self, term: Term) -> Option<bool> {
-        unsafe {
-            if !cvc5::term_is_boolean_value(term.as_ptr()) {
-                return None;
-            }
-
-            Some(cvc5::term_get_boolean_value(term.as_ptr()))
-        }
-    }
-
-    pub fn get_integer_value(&self, term: Term) -> Option<rug::Integer> {
-        unsafe {
-            if !cvc5::term_is_integer_value(term.as_ptr()) {
-                return None;
-            }
-
-            let value = cvc5::term_get_integer_value(term.as_ptr());
-            let value = CStr::from_ptr(value).to_string_lossy();
-            Some(rug::Integer::from_str_radix(&value, 10).unwrap())
-        }
-    }
-
-    pub fn get_real_value(&self, term: Term) -> Option<rug::Rational> {
-        unsafe {
-            if !cvc5::term_is_real_value(term.as_ptr()) {
-                return None;
-            }
-
-            let value = cvc5::term_get_real_value(term.as_ptr());
-            let value = CStr::from_ptr(value).to_string_lossy();
-            Some(rug::Rational::from_str_radix(&value, 10).unwrap())
-        }
-    }
 }
 
 impl Drop for Solver {
@@ -286,4 +286,3 @@ impl From<Result> for Option<bool> {
         }
     }
 }
-

@@ -24,6 +24,7 @@
 
 use std::{
     fmt::{Debug, Formatter},
+    hash::{Hash, Hasher},
     ops::Deref,
     sync::Arc,
 };
@@ -33,11 +34,36 @@ use std::{
 /// [SArc] is useful when declaring types that can refer to static data as well as data initialized
 /// at runtime. [Arc::new()] is not usable in `const` contexts, in which case [SArc::Static] can be
 /// used, while using [SArc::Arc] for all other uses.
-#[derive(Hash, PartialEq, Eq)]
 pub enum SArc<T: 'static + ?Sized> {
     Static(&'static T),
     Arc(Arc<T>),
 }
+
+impl<T: 'static + ?Sized> Deref for SArc<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            SArc::Static(st) => st,
+            SArc::Arc(arc) => arc,
+        }
+    }
+}
+
+
+impl<T: 'static + ?Sized + Hash> Hash for SArc<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.deref().hash(state)
+    }
+}
+
+impl<T: 'static + ?Sized + PartialEq> PartialEq for SArc<T> {
+    fn eq(&self, other: &Self) -> bool {
+        *self.deref() == *other.deref()
+    }
+}
+
+impl<T: 'static + ?Sized + Eq> Eq for SArc<T> {}
 
 impl<T: 'static + ?Sized> From<Box<T>> for SArc<T> {
     fn from(value: Box<T>) -> Self {
@@ -78,13 +104,3 @@ impl<T: 'static> SArc<T> {
     }
 }
 
-impl<T: 'static + ?Sized> Deref for SArc<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            SArc::Static(st) => st,
-            SArc::Arc(arc) => arc,
-        }
-    }
-}

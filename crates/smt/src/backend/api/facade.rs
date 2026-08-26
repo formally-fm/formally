@@ -27,7 +27,7 @@ use formally::smt::{
     self,
     backend::{
         self, Backend,
-        standard::{Manager, Model, Solver},
+        api::{Manager, Model, Solver},
     },
     logics::{Logic, LogicEx, standard_logic},
 };
@@ -39,7 +39,9 @@ pub struct ManagerFacade<M: Manager> {
     manager: Rc<M>,
     decls: RefCell<HashMap<smt::Declared, M::FuncDecl>>,
     defs: RefCell<HashMap<smt::Defined, M::FuncDecl>>,
+    funcs: RefCell<HashMap<M::FuncDecl, smt::UserFunction>>,
     sorts: RefCell<HashMap<smt::Declared, M::Sort>>,
+    sorts_rev: RefCell<HashMap<M::Sort, smt::Sort>>,
     terms: RefCell<HashMap<smt::Term, M::Term>>,
     variables: RefCell<HashMap<smt::Variable, M::Term>>,
 }
@@ -164,23 +166,21 @@ impl<S: Solver> SolverFacade<S> {
 }
 
 impl<'s, S: 's + Solver> backend::ModelProvider for ModelFacade<'s, S> {
-    fn value(&self, term: &smt::Term) -> Option<smt::ModelValue> {
+    fn value(&self, term: &smt::Term, pool: &dyn smt::TermPool) -> Option<smt::Term> {
         if let smt::TermKind::Atom(atom) = term.kind()
             && let smt::FunctionRef::Bound(bound) = &atom.head
             && let smt::BoundRef { function, .. } = bound
             && let smt::Function::User(smt::UserFunction::Defined(def)) = function
         {
-            return self.value(&def.body);
+            return self.value(&def.body, pool);
         }
 
-        let term = self
-            .solver
-            .manager
-            .term(term, &BindMap::new())
-            .map(Some)
-            .unwrap_or(None)?;
+        let term = self.solver.manager.term(term, &BindMap::new()).ok()?;
 
-        self.model.value(term)
+        self.solver
+            .manager
+            .export(self.model.value(term)?, pool)
+            .ok()
     }
 }
 
@@ -198,7 +198,9 @@ impl<M: Manager> ManagerFacade<M> {
             manager: Rc::new(manager),
             decls: RefCell::default(),
             defs: RefCell::default(),
+            funcs: RefCell::default(),
             sorts: RefCell::default(),
+            sorts_rev: RefCell::default(),
             terms: RefCell::default(),
             variables: RefCell::default(),
         }
@@ -282,7 +284,10 @@ impl<M: Manager> ManagerFacade<M> {
         let func = self
             .manager
             .func_def(solver, def.name.name(), &sorts, range, &args, body)?;
-        self.defs.borrow_mut().insert(def, func);
+        self.defs.borrow_mut().insert(def.clone(), func.clone());
+        self.funcs
+            .borrow_mut()
+            .insert(func, smt::UserFunction::from(def));
 
         Ok(())
     }
@@ -501,7 +506,10 @@ impl<M: Manager> ManagerFacade<M> {
             todo!()
         };
 
-        self.sorts.borrow_mut().insert(decl, sort);
+        self.sorts.borrow_mut().insert(decl.clone(), sort.clone());
+        self.sorts_rev
+            .borrow_mut()
+            .insert(sort, smt::Sort::from(decl));
 
         Ok(())
     }
@@ -521,8 +529,26 @@ impl<M: Manager> ManagerFacade<M> {
             .manager
             .func_decl(solver, decl.name.name(), &sorts, range)?;
 
-        self.decls.borrow_mut().insert(decl, func);
+        self.decls.borrow_mut().insert(decl.clone(), func.clone());
+        self.funcs
+            .borrow_mut()
+            .insert(func, smt::UserFunction::from(decl));
 
         Ok(())
+    }
+
+    fn export(&self, term: M::Term, pool: &dyn smt::TermPool) -> Result<smt::Term> {
+        let to_func = |decl| self.funcs.borrow().get(&decl).cloned();
+        let to_sort = |decl| self.sorts_rev.borrow().get(&decl).cloned();
+        match self.manager.export(term, pool, to_func, to_sort) {
+            Some(t) => Ok(t),
+            None => Err(backend::Error::new(
+                self.manager.backend().name(),
+                backend::ErrorKind::Unsupported {
+                    msg: "unsupported Z3_ast in conversion to Term".into(),
+                    span: None,
+                },
+            )),
+        }
     }
 }
