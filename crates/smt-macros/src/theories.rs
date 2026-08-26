@@ -783,7 +783,7 @@ impl ToTokens for Attributed<Theory> {
 
             #[doc = #atomdoc]
             #[allow(nonstandard_style)]
-            pub enum #atomenum<'t> {
+            #vis enum #atomenum<'t> {
                 #(#atom_cases),*
             }
 
@@ -808,7 +808,7 @@ impl ToTokens for Attributed<Theory> {
 
             #[doc = #sortdoc]
             #[allow(nonstandard_style)]
-            pub enum #sortenum #sort_lf {
+            #vis enum #sortenum #sort_lf {
                 #(#sort_cases),*
             }
 

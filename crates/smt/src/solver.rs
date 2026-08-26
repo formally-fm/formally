@@ -32,13 +32,10 @@ use formally::{
     support::*,
 };
 
-use derive_more::From;
-use transitive::Transitive;
-
 use std::{
     cell::RefCell,
     collections::HashSet,
-    fmt::{Debug, Display, Formatter},
+    fmt::{Debug, Formatter},
     rc::Rc,
     sync::Arc,
 };
@@ -647,49 +644,6 @@ impl Stack for Solver {
     }
 }
 
-/// Represent a value from a model.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, From, Transitive)]
-#[allow(clippy::duplicated_attributes)]
-#[transitive(from(Integer, Constant))]
-#[transitive(from(Rational, Constant))]
-pub enum ModelValue {
-    /// A Boolean value, model (assignment) of a Boolean declaration.
-    Boolean(bool),
-    /// A Boolean value, model of a declaration of sort [Ints::Int()](theories::Ints::Int()) or
-    /// [Reals::Real()](theories::Reals::Real()).
-    Constant(Constant),
-}
-
-impl From<ModelValue> for TermKind {
-    fn from(value: ModelValue) -> Self {
-        match value {
-            ModelValue::Boolean(b) => TermKind::from(b),
-            ModelValue::Constant(c) => TermKind::from(c),
-        }
-    }
-}
-
-impl Display for ModelValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ModelValue::Boolean(true) => write!(f, "True"),
-            ModelValue::Boolean(false) => write!(f, "False"),
-            ModelValue::Constant(Constant::Integer { value, .. }) => write!(f, "{value}"),
-            ModelValue::Constant(Constant::Rational { value, .. }) => write!(f, "{value}"),
-        }
-    }
-}
-
-impl ToTerm for ModelValue {
-    fn into_term_in(self, pool: &dyn TermPool) -> Term {
-        TermKind::from(self).into_term_in(pool)
-    }
-
-    fn to_term_in(&self, pool: &dyn TermPool) -> Term {
-        TermKind::from(self.clone()).into_term_in(pool)
-    }
-}
-
 /// A trait for types that can provide model values.
 pub trait ModelProvider {
     fn value(&self, term: &Term, pool: &dyn TermPool) -> Option<Term>;
@@ -726,8 +680,9 @@ pub struct Model<'s> {
 impl Model<'_> {
     /// Get the value of a [ToTerm] object (after name lookup and type checking) in the model.
     pub fn value(&self, term: impl ToTerm) -> Result<Option<Term>> {
-        Ok(self
-            .provider
-            .value(&self.solver.lookup(term, Role::Function)?, self.solver.pool()))
+        Ok(self.provider.value(
+            &self.solver.lookup(term, Role::Function)?,
+            self.solver.pool(),
+        ))
     }
 }

@@ -219,7 +219,7 @@ impl ToTokens for Root {
 
             #[allow(nonstandard_style)]
             #[doc = #atomdoc]
-            pub enum #atomenum<'t> {
+            #vis enum #atomenum<'t> {
                 #(#atom_cases),*
             }
 
@@ -243,7 +243,7 @@ impl ToTokens for Root {
 
             #[allow(nonstandard_style)]
             #[doc = #sortdoc]
-            pub enum #sortenum<'t> {
+            #vis enum #sortenum<'t> {
                 #(#sort_cases),*
             }
 

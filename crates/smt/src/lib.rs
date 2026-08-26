@@ -193,9 +193,7 @@
 //! the last call to [check()](Solver::check()) was unsuccessful) from the case where an error
 //! occurred while extracting the model itself. The [Model] object can be used to extract the value
 //! of [ToTerm] objects using the [value()](ModelProvider::value()) method, which returns
-//! `Option<ModelValue>`. The way values are represented is still under revision, and currently it
-//! is only possible to extract booleans ([ModelValue::Boolean]) or constant terms representing
-//! integer or real values ([ModelValue::Constant]).
+//! `Option<Term>`.
 //!
 //! Example:
 //! ```
@@ -221,9 +219,9 @@
 //!
 //! ## Parsing and executing SMT-LIBv2 scripts
 //!
-//! This crate supports for parsing and executing scripts in the SMT-LIBv2 language as defined by 
-//! the [official specification document](https://smt-lib.org/language.shtml), currently updated to 
-//! version 2.7. Everything that regards the SMT-LIBv2 language is contained in the [smtlib] module 
+//! This crate supports for parsing and executing scripts in the SMT-LIBv2 language as defined by
+//! the [official specification document](https://smt-lib.org/language.shtml), currently updated to
+//! version 2.7. Everything that regards the SMT-LIBv2 language is contained in the [smtlib] module
 //! so we refer to that module's documentation for details.
 //!
 //! ## SMT backends

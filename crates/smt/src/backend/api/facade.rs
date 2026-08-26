@@ -35,6 +35,10 @@ use std::{any::Any, cell::RefCell, collections::HashMap, iter::zip, rc::Rc};
 
 type Result<T, E = backend::Error> = std::result::Result<T, E>;
 
+/// A type that helps to implement instances of the [backend::Manager] trait.
+///
+/// Given a type `M: api::Manager`, `ManagerFacade<M>` implements [backend::Manager].
+/// See the documentation of [api::Manager](Manager) for how to implement it properly.
 pub struct ManagerFacade<M: Manager> {
     manager: Rc<M>,
     decls: RefCell<HashMap<smt::Declared, M::FuncDecl>>,
@@ -46,6 +50,10 @@ pub struct ManagerFacade<M: Manager> {
     variables: RefCell<HashMap<smt::Variable, M::Term>>,
 }
 
+/// A type that helps to implement instances of the [backend::Solver] trait.
+///
+/// Given a type `M: api::Solver`, `SolverFacade<M>` implements [backend::Solver].
+/// See the documentation of [api::Solver](Solver) for how to implement it properly.
 pub struct SolverFacade<S: Solver> {
     manager: Rc<ManagerFacade<<S as Solver>::Manager>>,
     solver: S,
@@ -126,6 +134,19 @@ impl<S: Solver> backend::Solver for SolverFacade<S> {
 }
 
 impl<S: Solver> SolverFacade<S> {
+    /// Construct a new [SolverFacade].
+    ///
+    /// The method expects a reference to the backend, a [Config](smt::Config) and a
+    /// [backend::Manager]. The latter two can come directly from the arguments of
+    /// [backend::Backend::solver()] which therefore is quite easy to implement.
+    ///
+    /// For example, supposing your [api::Solver](Solver) type is called `MySolver`:
+    ///
+    /// ```text
+    /// fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error> {
+    ///     Ok(Box::new(api::SolverFacade::<MySolver>::new(self, config, manager)?))
+    /// }
+    /// ```
     pub fn new(
         backend: &<<S as Solver>::Manager as Manager>::Backend,
         config: &smt::Config,
@@ -193,6 +214,16 @@ impl<M: 'static + Manager> backend::Manager for ManagerFacade<M> {
 type BindMap<Term> = rpds::HashTrieMap<smt::Variable, Term>;
 
 impl<M: Manager> ManagerFacade<M> {
+    /// Create a new [ManagerFacade].
+    ///
+    /// This method accepts any instance of the underlying [api::Manager](Manager) type `M`.
+    /// The resulting object can be returned directly from [backend::Backend::manager()].
+    ///
+    /// ```text
+    /// fn manager(&self) -> Box<dyn backend::Manager> {
+    ///     Box::new(api::ManagerFacade::new(MyManager::default()))
+    /// }
+    /// ```
     pub fn new(manager: M) -> Self {
         ManagerFacade {
             manager: Rc::new(manager),
@@ -206,7 +237,7 @@ impl<M: Manager> ManagerFacade<M> {
         }
     }
 
-    pub fn sort(&self, sort: &smt::Sort) -> Result<M::Sort> {
+    pub(crate) fn sort(&self, sort: &smt::Sort) -> Result<M::Sort> {
         match &sort.head {
             smt::SortHead::Bound(func) => match func {
                 smt::Function::Variable(_) => unreachable!(),
@@ -222,15 +253,7 @@ impl<M: Manager> ManagerFacade<M> {
         }
     }
 
-    pub fn sorts(&self, sorts: &[smt::Sort]) -> Result<Vec<M::Sort>> {
-        let mut vec = Vec::new();
-        for sort in sorts {
-            vec.push(self.sort(sort)?)
-        }
-        Ok(vec)
-    }
-
-    pub fn term(&self, term: &smt::Term, bindmap: &BindMap<M::Term>) -> Result<M::Term> {
+    pub(crate) fn term(&self, term: &smt::Term, bindmap: &BindMap<M::Term>) -> Result<M::Term> {
         if let Some(term) = self.terms.borrow().get(term) {
             return Ok(term.clone());
         }
@@ -247,7 +270,11 @@ impl<M: Manager> ManagerFacade<M> {
         Ok(t)
     }
 
-    pub fn terms(&self, terms: &[smt::Term], bindmap: &BindMap<M::Term>) -> Result<Vec<M::Term>> {
+    pub(crate) fn terms(
+        &self,
+        terms: &[smt::Term],
+        bindmap: &BindMap<M::Term>,
+    ) -> Result<Vec<M::Term>> {
         let mut vec = Vec::new();
         for sort in terms {
             vec.push(self.term(sort, bindmap)?)
@@ -255,7 +282,7 @@ impl<M: Manager> ManagerFacade<M> {
         Ok(vec)
     }
 
-    pub fn declare(&self, solver: &M::Solver, decl: smt::Declared) -> Result<()> {
+    pub(crate) fn declare(&self, solver: &M::Solver, decl: smt::Declared) -> Result<()> {
         if decl.range == smt::Sort::sort() {
             self.declare_sort(decl)
         } else {
@@ -263,7 +290,7 @@ impl<M: Manager> ManagerFacade<M> {
         }
     }
 
-    pub fn define(&self, solver: &M::Solver, def: smt::Defined) -> Result<()> {
+    pub(crate) fn define(&self, solver: &M::Solver, def: smt::Defined) -> Result<()> {
         if !M::FUNC_DEF_SUPPORTED {
             return Ok(());
         }
