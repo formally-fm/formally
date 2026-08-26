@@ -221,10 +221,10 @@
 //!
 //! ## Parsing and executing SMT-LIBv2 scripts
 //!
-//! This crate provides full support for parsing and executing scripts in the SMT-LIBv2 language as
-//! defined by the [official specification document](https://smt-lib.org/language.shtml), currently
-//! updated to version 2.7. Everything that regards the SMT-LIBv2 language is contained in the
-//! [smtlib] module so we refer to that module's documentation for details.
+//! This crate supports for parsing and executing scripts in the SMT-LIBv2 language as defined by 
+//! the [official specification document](https://smt-lib.org/language.shtml), currently updated to 
+//! version 2.7. Everything that regards the SMT-LIBv2 language is contained in the [smtlib] module 
+//! so we refer to that module's documentation for details.
 //!
 //! ## SMT backends
 //!
