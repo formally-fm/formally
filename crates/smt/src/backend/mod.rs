@@ -26,10 +26,11 @@
 //!
 //! This module provides the supported SMT backends and facilities to write new ones.
 //!
-//! *Currently* only the [Z3](z3::Z3) is provided, but other ones will follow soon.
+//! Currently, we provide a [Z3](z3::Z3) and a [cvc5](cvc5::Cvc5) backends, with others following
+//! later.
 //!
 //! The backend is chosen when instantiating a [TermManager](smt::TermManager) or, as a shortcut,
-//! with the [Solver::new_with_backend()](smt::Solver::with_backend) function when constructing
+//! with the [Solver::with_backend()](smt::Solver::with_backend) function when constructing
 //! a [Solver](smt::Solver).
 //!
 //! ```
@@ -52,85 +53,50 @@
 //!
 //! # How to write new backends
 //!
-//! A backend is a type implementing the [Backend] trait. This trait only provides two methods:
+//! A backend is a type implementing the [Backend] trait. This trait only provides three methods:
 //! 1. [name()](Backend::name()), which just returns a string with the name of the backend.
-//! 2. [instance()](Backend::solver()), which returns the backend *instance*.
+//! 2. [manager()](Backend::manager()), which returns an instance of a backend's *term manager*
+//!    (also called *context* in some backends).
+//! 2. [solver()](Backend::solver()), which returns an instance of a backend's *solver*
 //!
-//! An instance is an object of a type that implements the [Solver] trait, and is the type doing
-//! the real job.
+//! A high-level user of the framework never calls these methods.
 //! 1. The backend type is what you pass around to tell *which* backend you want to use, e.g. in the
 //!    [Config] of a [Solver].
-//! 2. The instance type is the actual backend.
+//! 2. The [backend::Manager](Manager) and [backend::Solver](Manager) instances do the actual job,
+//!    but are used internally by the [Solver](smt::Solver) type.
 //!
-//! The concrete instance type is usually not part of the public API of a backend, but is hidden
-//! behind the `Box<dyn Instance>` return type of [Backend::solver()].
+//! # The API facade
 //!
-//! We refer to the documentation of [Solver] for an understanding of each method of the trait.
+//! The [api] module contains two types, [SolverFacade](api::SolverFacade) and
+//! [ManagerFacade](api::ManagerFacade), that help implementing a backend based on common
+//! programmatic APIs (as opposed to calling a command-line tool). Using the API facade should be
+//! preferred respecting to implementing [Backend] directly because it hides a non-trivial amounts
+//! of complexity. We refer to the documentation of the [api] module for details.
 //!
-//! What follows explain general concepts and requirements.
+//! # How to write a backend from scratch
+//!
+//! When the API facade is not sufficient or suitable, a [Backend] instance has to be written from
+//! scratch. The documentation of the [Backend], [Manager] and [Solver] traits provide specific
+//! details. What follows explain general concepts and requirements.
+//!
+//! ## Managers and Solvers
+//!
+//! Most SMT APIs distinguish between a *term manager* (or *context*) which handles the life of
+//! terms, and a *solver* which actually perform the reasoning process. The backend thus provides
+//! an instance [Manager] for the former and [Solver] for the latter. the [manager](Manager) is
+//! meant to be used exclusively by the corresponding [Solver] and the trait does not actually
+//! provide any method beside [Manager::backend()]. Since `Manager: Any`, under the hood the backend
+//! can downcast `&dyn Manager` to `&T` for any specific type `T` and use it as needed.
+//!
+//! Note that different [solvers][Solver] can be created with the same [Manager] through the
+//! [Backend::solver()] method, so the backend code is expected to account for this fact.
 //!
 //! ## Theories and logics
 //!
 //! The logic to instantiate the backend with is set by name in the [Config] object. The backend
 //! instance is then expected to provide a `&dyn Logic` reference through the
-//! [logic()](Solver::logic()) method. For standard SMT-LIBv2 logics, backend can use the
+//! [logic()](Solver::logic()) method. For standard SMT-LIBv2 logics, backends can use the
 //! [standard_logic()](logics::standard_logic()) function to lookup a standard logic by name.
-//!
-//! However, each backend instance is responsible to provide the logic named `"ALL"`, which by
-//! the SMT-LIBv2 specification correspond to a logic with no syntactic restriction based on the
-//! combination of all the theories supported by the solver. This logic can be internally declared
-//! using the [logic!](smt::logic!) macro and returned when the given logic is `"ALL"`. For example:
-//! ```rust,no_run
-//! # mod formally {
-//! #     pub extern crate formally_support as support;
-//! #     pub extern crate formally_smt as smt;
-//! # }
-//! # use formally::{
-//! #     support::*,
-//! #     smt::{
-//! #         self, Config, logic, backend::{Backend,Solver,Manager,Error},
-//! #         logics::{standard_logic}, theories::*
-//! #     }
-//! # };
-//! # use std::{result::Result, rc::Rc};
-//! struct MyBackend {
-//!     // ... //!
-//! }
-//! logic! {
-//!    name: ALL,
-//!    theories: [ Core, Ints, Reals, Arrays ],
-//!    requirements: [ ]
-//! }
-//! // ...
-//! impl Backend for MyBackend {
-//!     fn name(&self) -> &str {
-//!         "MyBackend"
-//!     }
-//!     // ...
-//! #   fn manager(&self) -> Box<dyn Manager> {
-//! #     todo!()
-//! #   }
-//!     fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error> {
-//!         // ...
-//!         if let Some(logic) = &config.logic {
-//!             let logic = if logic.name() == "ALL" {
-//!                 &ALL
-//!             } else {
-//!                 if let Some(logic) = standard_logic(&logic) {
-//!                     logic
-//!                 } else {
-//!                     return Err(todo!());
-//!                 }
-//!             };
-//!             // ...
-//!         }
-//!         // ...
-//! #       todo!()
-//!     }
-//!     // ...
-//! }
-//! # fn main() { }
-//! ```
 //!
 //! However, note that backends do not necessarily have to associate names of standard logics (e.g.
 //! `"LIA"`) to the corresponding types declared in the [logics] module. What *is* expected is that
@@ -268,10 +234,10 @@ pub trait Backend {
     /// Return the name of the backend.
     fn name(&self) -> &str;
 
-    /// Create an instance of the backend term manager based on the given [Config].
+    /// Create an instance of the backend term manager.
     fn manager(&self) -> Box<dyn Manager>;
 
-    /// Create an instance of the backend solver based on the given `Config` and `Manager`
+    /// Create an instance of the backend solver based on the given [Config] and [Manager]
     fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error>;
 }
 
@@ -281,6 +247,11 @@ impl Debug for dyn Backend {
     }
 }
 
+/// The trait for *term managers* of SMT backends.
+///
+/// This trait does not provide any method besides [backend()](Manager::backend()) because it is
+/// only meant to be used in `dyn` objects which are downcasted as needed by the corresponding
+/// [solver][Solver].
 pub trait Manager: Any {
     /// Return the backend this manager is an instance of.
     ///
@@ -289,7 +260,7 @@ pub trait Manager: Any {
     fn backend(&self) -> &dyn Backend;
 }
 
-/// The trait for instances of SMT backends.
+/// The trait for *solvers* of SMT backends.
 ///
 /// Types implementing this trait are the ones doing the hard work for backends.
 ///
@@ -298,6 +269,7 @@ pub trait Manager: Any {
 ///
 /// However, please read before the documentation on [how to write a new backend](smt::backend).
 pub trait Solver {
+    /// Return the manager this solver was built on.
     fn manager(&self) -> &dyn Manager;
 
     /// Return the backend this instance is an instance of.
@@ -306,6 +278,10 @@ pub trait Solver {
     /// backend.
     fn backend(&self) -> &dyn Backend;
 
+    /// Update the configuration of the solver based on the new [Config].
+    ///
+    /// The [Config::logic] field should be ignored (and only considered in the construction of the
+    /// solver).
     fn config(&self, config: &Config) -> Result<(), Error>;
 
     /// Return the logic object associated with the logic selected by the original [Config] object.
@@ -323,7 +299,7 @@ pub trait Solver {
 
     /// Register a new [Defined] object in the backend instance.
     ///
-    /// In a few cases, defined entities need to be defined to the backend somehow before being
+    /// In some cases, defined entities need to be defined to the backend somehow before being
     /// used in asserted terms. This method allows a backend to do so.
     ///
     /// This method *can assume* that the sorts mentioned by the [Defined] object are suflly
