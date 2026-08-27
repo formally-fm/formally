@@ -405,7 +405,7 @@ macro_rules! theories {
 /// #     pub extern crate formally_support as support;
 /// #     pub extern crate formally_smt as smt;
 /// # }
-/// # use formally::{smt::{*, backend::z3::Z3}, support::*};
+/// # use formally::{smt::{*, backends::z3::Z3}, support::*};
 /// # fn main() -> Result<()> {
 /// let mut solver = Solver::with_backend(&Config::default(), Z3)?;
 ///
@@ -445,7 +445,7 @@ macro_rules! sort {
 /// #     pub extern crate formally_support as support;
 /// #     pub extern crate formally_smt as smt;
 /// # }
-/// # use formally::{smt::{*, backend::z3::Z3}, support::*};
+/// # use formally::{smt::{*, backends::z3::Z3}, support::*};
 /// # fn main() -> Result<()> {
 /// # let mut solver = Solver::with_backend(&Config::default(), Z3)?;
 /// #
@@ -470,7 +470,7 @@ macro_rules! var {
 /// #     pub extern crate formally_support as support;
 /// #     pub extern crate formally_smt as smt;
 /// # }
-/// # use formally::{smt::{*, backend::z3::Z3}, support::*};
+/// # use formally::{smt::{*, backends::z3::Z3}, support::*};
 /// # fn main() -> Result<()> {
 /// # let mut solver = Solver::with_backend(&Config::default(), Z3)?;
 /// #
@@ -485,6 +485,8 @@ macro_rules! vars {
         [$($crate::var!($name $($sort)*)),*]
     };
 }
+
+pub use formally_smt_macros::backend;
 
 #[doc(hidden)]
 pub mod proc {

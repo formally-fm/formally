@@ -24,11 +24,7 @@
 
 use crate::formally;
 use formally::{
-    smt::{
-        backend::{Backend, z3::Z3},
-        logics::Logic,
-        *,
-    },
+    smt::{backends::Backend, logics::Logic, *},
     support::*,
 };
 
@@ -53,7 +49,7 @@ use std::{
 /// #     pub extern crate formally_smt as smt;
 /// #     pub extern crate formally_support as support;
 /// # }
-/// # use formally::{smt::{*, backend::z3::Z3}, support::*};
+/// # use formally::{smt::{*, backends::z3::Z3}, support::*};
 /// # fn main() -> Result<()> {
 /// let config =
 ///     Config::default()
@@ -177,13 +173,13 @@ impl Env {
 /// #    pub extern crate formally_smt as smt;
 /// #    pub extern crate formally_support as support;
 /// # }
-///  use formally::{smt::{*, backend::z3::Z3}};
+///  use formally::{smt::{*, backends::z3::Z3}};
 /// # use formally::support::*;
 ///
 /// # use std::rc::Rc;
 /// #
 /// # fn main() -> Result<()> {
-///  let manager = Rc::new(TermManager::new(Z3));
+///  let manager = Rc::new(TermManager::with_backend(Z3));
 ///  let config = Config::new();
 ///  let mut slv1 = Solver::with_manager(&config, manager.clone())?;
 ///  let mut slv2 = Solver::with_manager(&config, manager)?;
@@ -210,7 +206,7 @@ impl Env {
 /// that allows to at least share the same terms among different threads.
 #[derive(Clone)]
 pub struct TermManager {
-    backend_manager: Rc<dyn backend::Manager>,
+    backend_manager: Rc<dyn backends::Manager>,
     pool: Rc<dyn TermPool>,
     decls: RefCell<HashSet<Arc<Declaration<Sort, Sort>>>>,
     defs: RefCell<HashSet<Arc<Definition<Sort, Sort, Term>>>>,
@@ -250,15 +246,23 @@ impl Debug for TermManager {
     }
 }
 
-impl Default for TermManager {
-    fn default() -> Self {
-        TermManager::new(Z3)
-    }
-}
-
 impl TermManager {
+    /// Construct a [TermManager] with the default backend (if any is available).
+    pub fn new() -> Result<TermManager> {
+        Ok(TermManager::with_backend(
+            backends::Register::default_backend()?,
+        ))
+    }
+
+    /// Construct a [TermManager] over a given [Backend] looked up by name, if it exists.
+    pub fn with_backend_name<'a>(backend: impl Into<Identifier<'a>>) -> Result<TermManager> {
+        let backend = backends::Register::backend(backend)?;
+
+        Ok(TermManager::with_backend(backend))
+    }
+
     /// Construct a [TermManager] over a given [Backend].
-    pub fn new(backend: impl Backend) -> TermManager {
+    pub fn with_backend(backend: impl Backend) -> TermManager {
         TermManager {
             backend_manager: Rc::from(backend.manager()),
             pool: Rc::new(HashPool::new()),
@@ -300,7 +304,7 @@ impl TermManager {
 ///
 /// [Solver] implements [Stack] to provide the usual incremental interface of most SAT/SMT solvers.
 pub struct Solver {
-    backend_solver: Box<dyn backend::Solver>,
+    backend_solver: Box<dyn backends::Solver>,
     env: Env,
     manager: Rc<TermManager>,
 }
@@ -324,14 +328,24 @@ impl Solver {
 
     /// Create a [Solver] over a given [Backend].
     ///
-    /// Backends provided by this crate are defined in [formally::smt::backend](backend).
+    /// Backends provided by this crate are defined in [formally::smt::backend](backends).
     pub fn with_backend(config: &Config, backend: impl Backend) -> Result<Solver> {
-        Solver::with_manager(config, TermManager::new(backend))
+        Solver::with_manager(config, TermManager::with_backend(backend))
+    }
+
+    /// Create a [Solver] over the given [Backend] specified by name, if it exists.
+    ///
+    /// Backends provided by this crate are defined in [formally::smt::backend](backends).
+    pub fn with_backend_name<'a>(
+        config: &Config,
+        backend: impl Into<Identifier<'a>>,
+    ) -> Result<Solver> {
+        Solver::with_manager(config, TermManager::with_backend_name(backend)?)
     }
 
     /// Create a [Solver] with a default backend and a dedicated [TermManager].
     pub fn new(config: &Config) -> Result<Solver> {
-        Solver::with_manager(config, TermManager::default())
+        Solver::with_manager(config, TermManager::new()?)
     }
 
     /// Get the currently selected [Logic].

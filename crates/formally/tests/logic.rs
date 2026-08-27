@@ -22,7 +22,6 @@
 // SOFTWARE.
 //
 
-use formally::smt::backend::{Backend, cvc5::Cvc5, z3::Z3};
 use formally::{smt::*, support::*};
 
 use std::rc::Rc;
@@ -45,7 +44,7 @@ fn doctest() -> Result<()> {
 
 #[test]
 fn manager() -> Result<()> {
-    let manager = Rc::new(TermManager::new(Cvc5));
+    let manager = Rc::new(TermManager::new()?);
     let config = Config::new();
     let mut slv1 = Solver::with_manager(&config, manager.clone())?;
     let mut slv2 = Solver::with_manager(&config, manager.clone())?;
@@ -72,9 +71,9 @@ fn manager() -> Result<()> {
 }
 
 #[rstest]
-fn solve(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
+fn solve(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
     let config = Config::new().produce_models(true);
-    let mut solver = Solver::with_backend(&config, backend)?;
+    let mut solver = Solver::with_backend_name(&config, backend)?;
 
     let p = solver.declare(Declaration::constant("p", sort!(Bool)))?;
     let q = solver.declare(Declaration::constant("q", sort!(Bool)))?;
@@ -105,9 +104,9 @@ fn solve(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
 }
 
 #[rstest]
-fn quantified(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
+fn quantified(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
     let config = Config::new();
-    let mut solver = Solver::with_backend(&config, backend)?;
+    let mut solver = Solver::with_backend_name(&config, backend)?;
 
     let density = term!(
         (forall ((x Real) (y Real)) (=> (< x y) (exists ((z Real)) (and (> z x) (< z y)))))
@@ -120,9 +119,9 @@ fn quantified(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
 }
 
 #[rstest]
-fn definitions(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
+fn definitions(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
     let config = Config::new().produce_models(true);
-    let mut solver = Solver::with_backend(&config, backend)?;
+    let mut solver = Solver::with_backend_name(&config, backend)?;
 
     solver.declare(Declaration::constant("x", sort!(Int)))?;
     solver.declare(Declaration::constant("y", sort!(Int)))?;
@@ -143,9 +142,9 @@ fn definitions(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
 }
 
 #[rstest]
-fn variables(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
+fn variables(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
     let config = Config::new().produce_models(true);
-    let mut solver = Solver::with_backend(&config, backend)?;
+    let mut solver = Solver::with_backend_name(&config, backend)?;
 
     solver.define(Definition::function(
         "f",
@@ -166,9 +165,9 @@ fn variables(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
 }
 
 #[rstest]
-fn arrays(#[values(Z3, Cvc5)] backend: impl Backend) -> Result<()> {
+fn arrays(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
     let config = Config::new().produce_models(true);
-    let mut solver = Solver::with_backend(&config, backend)?;
+    let mut solver = Solver::with_backend_name(&config, backend)?;
 
     solver.declare(Declaration::constant("a1", sort!(Array Int Int)))?;
     solver.declare(Declaration::constant("a2", sort!(Array Int Int)))?;

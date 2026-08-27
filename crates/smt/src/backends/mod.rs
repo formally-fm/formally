@@ -1,7 +1,7 @@
 //
 // ::formally - the open-source formal methods toolchain
 //
-// Copyright (c) 2025 Nicola Gigante
+// Copyright (c) 2026 Nicola Gigante
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -39,10 +39,10 @@
 //! #     pub extern crate formally_smt as smt;
 //! # }
 //! # use formally::support::*;
-//! use formally::smt::{*, backend::z3::Z3};
+//! use formally::smt::{*, backends::z3::Z3};
 //! # fn main() -> Result<()> {
 //! let config = Config::default();
-//! let manager = TermManager::new(Z3);
+//! let manager = TermManager::with_backend(Z3);
 //! let solver = Solver::with_manager(&config, manager)?;
 //!
 //! // ...
@@ -62,7 +62,7 @@
 //! A high-level user of the framework never calls these methods.
 //! 1. The backend type is what you pass around to tell *which* backend you want to use, e.g. in the
 //!    [Config] of a [Solver].
-//! 2. The [backend::Manager](Manager) and [backend::Solver](Manager) instances do the actual job,
+//! 2. The [backends::Manager](Manager) and [backends::Solver](Manager) instances do the actual job,
 //!    but are used internally by the [Solver](smt::Solver) type.
 //!
 //! # The API facade
@@ -72,6 +72,9 @@
 //! programmatic APIs (as opposed to calling a command-line tool). Using the API facade should be
 //! preferred respecting to implementing [Backend] directly because it hides a non-trivial amounts
 //! of complexity. We refer to the documentation of the [api] module for details.
+//!
+//! In any case, remember to register your backend using the [backend](smt::backend) attribute for
+//! it to be available when looking up backends by name.
 //!
 //! # How to write a backend from scratch
 //!
@@ -141,7 +144,10 @@
 
 pub mod api;
 pub mod cvc5;
+mod register;
 pub mod z3;
+
+pub use register::*;
 
 use crate::formally;
 use formally::{
@@ -229,8 +235,12 @@ impl Diagnosable for Error {
 /// The trait for SMT backends.
 ///
 /// Types implementing this trait represent backends. See the top-level documentation
-/// for details about [how to write a new backend](smt::backend).
-pub trait Backend {
+/// for details about [how to write a new backend](smt::backends).
+///
+/// The trait requires [Send] and [Sync] but that is trivial to satisfy because the backend types
+/// themselves are usually just unit structs doing nothing. The returned [Manager] and [Solver]
+/// types do *not* need to (and usually cannot) implement [Send] nor [Sync].
+pub trait Backend: Send + Sync {
     /// Return the name of the backend.
     fn name(&self) -> &str;
 
@@ -239,6 +249,20 @@ pub trait Backend {
 
     /// Create an instance of the backend solver based on the given [Config] and [Manager]
     fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error>;
+}
+
+impl Backend for &dyn Backend {
+    fn name(&self) -> &str {
+        (*self).name()
+    }
+
+    fn manager(&self) -> Box<dyn Manager> {
+        (*self).manager()
+    }
+
+    fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error> {
+        (*self).solver(config, manager)
+    }
 }
 
 impl Debug for dyn Backend {
@@ -267,7 +291,7 @@ pub trait Manager: Any {
 /// The documentation of each method lists its intended purpose and what external preconditions
 /// the method can assume to hold when the backend is used through a [Solver].
 ///
-/// However, please read before the documentation on [how to write a new backend](smt::backend).
+/// However, please read before the documentation on [how to write a new backend](smt::backends).
 pub trait Solver {
     /// Return the manager this solver was built on.
     fn manager(&self) -> &dyn Manager;

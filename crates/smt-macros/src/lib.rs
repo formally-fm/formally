@@ -1,7 +1,7 @@
 //
 // ::formally - the open-source formal methods toolchain
 //
-// Copyright (c) 2025 Nicola Gigante
+// Copyright (c) 2026 Nicola Gigante
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -35,13 +35,14 @@
 )]
 #![doc = ""]
 
+mod backend;
 mod logic;
 mod term;
 mod theories;
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::parse_macro_input;
+use syn::{DeriveInput, parse_macro_input};
 
 #[proc_macro]
 pub fn term(input: TokenStream) -> TokenStream {
@@ -69,4 +70,25 @@ pub fn logic(input: TokenStream) -> TokenStream {
     let root = parse_macro_input!(input as logic::Root);
 
     quote!(#root).into()
+}
+
+/// Register a SMT backend.
+///
+/// This attribute registers automatically a backend type to `formally::smt::Register` and all the
+/// other facilities in the framework looking up backends by name.
+///
+/// The type is expected to be a unit struct, such as the following:
+/// ```text
+/// use formally::smt;
+/// #[smt::backend]
+/// pub struct MyBackend;
+/// ```
+///
+/// This is the norm since the `Backend` trait only provides factory functions for the `Manager`
+/// and `Solver` types that do the actual work.
+#[proc_macro_attribute]
+pub fn backend(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as DeriveInput);
+
+    backend::backend(item).into()
 }

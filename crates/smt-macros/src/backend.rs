@@ -22,33 +22,28 @@
 // SOFTWARE.
 //
 
-mod formally {
-    pub use formally_smt as smt;
-    pub use formally_support as support;
-}
+use proc_macro2::TokenStream;
+use quote::quote;
+use syn::{Data, DeriveInput};
 
-use formally::{
-    smt::{backends::z3::Z3, *},
-    support::*,
-};
+pub fn backend(input: DeriveInput) -> TokenStream {
+    if let Data::Struct(st) = &input.data
+        && matches!(st.fields, syn::Fields::Unit)
+    {
+        let ident = &input.ident;
+        let staticident = syn::Ident::new(&format!("MY_BACKEND_{ident}"), ident.span());
+        return quote! {
+            #input
 
-#[test]
-fn term_macro() -> Result<()> {
-    let manager = TermManager::with_backend(Z3);
-    let mut solver = Solver::with_manager(&Config::new(), manager)?;
+            #[allow(nonstandard_style)]
+            #[formally::smt::exports::distributed_slice(formally::smt::backends::BACKENDS)]
+            static #staticident: &'static dyn formally::smt::backends::Backend = &#ident;
+        };
+    }
 
-    let p = solver.declare(Declaration::constant("p", theories::Core::Bool()))?;
-    solver.declare(Declaration::constant("q", theories::Core::Bool()))?;
+    quote! {
+        compile_error!("the #[backend] attribute can only be applied to unit structs");
 
-    let and = Identifier::from("and");
-    let q = Identifier::from("q");
-
-    let t = term!(not q);
-
-    solver.require(term!(p))?;
-    solver.require(term!(#and (=> #p #q) #t))?;
-
-    assert_eq!(solver.check()?, Answer::No);
-
-    Ok(())
+        #input
+    }
 }

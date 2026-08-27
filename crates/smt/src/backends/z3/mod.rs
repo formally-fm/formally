@@ -27,7 +27,7 @@ use crate::formally;
 use bindings as z3;
 use formally::smt::{
     self, ToTerm as _,
-    backend::{
+    backends::{
         self, Backend,
         api::{self},
     },
@@ -38,8 +38,9 @@ use formally::smt::{
 use itertools::Itertools;
 use std::rc::Rc;
 
-type Result<T, E = backend::Error> = std::result::Result<T, E>;
+type Result<T, E = backends::Error> = std::result::Result<T, E>;
 
+#[smt::backend]
 #[derive(Clone, Copy, Default)]
 pub struct Z3;
 
@@ -72,18 +73,18 @@ logic! {
 
 impl Backend for Z3 {
     fn name(&self) -> &str {
-        "cvc5"
+        "z3"
     }
 
-    fn manager(&self) -> Box<dyn backend::Manager> {
+    fn manager(&self) -> Box<dyn backends::Manager> {
         Box::new(api::ManagerFacade::new(Manager::default()))
     }
 
     fn solver(
         &self,
         config: &smt::Config,
-        manager: Rc<dyn backend::Manager>,
-    ) -> Result<Box<dyn backend::Solver>> {
+        manager: Rc<dyn backends::Manager>,
+    ) -> Result<Box<dyn backends::Solver>> {
         Ok(Box::new(api::SolverFacade::<Solver>::new(
             self, config, manager,
         )?))

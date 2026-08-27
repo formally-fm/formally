@@ -69,7 +69,7 @@ impl Borrow<TermKind> for Lookup<Arc<TermInner>> {
 /// consequently the type is not [Send] nor [Sync]. If the same [TermPool] has to be shared among
 /// different threads, look for [DashPool] instead.
 ///
-/// [HashPool] is the default [TermPool] implementation used by [TermManager::new()].
+/// [HashPool] is the default [TermPool] implementation used by [TermManager::with_backend()].
 #[derive(Debug, Default)]
 pub struct HashPool {
     pool: RefCell<HashSet<Lookup<Arc<TermInner>>>>,

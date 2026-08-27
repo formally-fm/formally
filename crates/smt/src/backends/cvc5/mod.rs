@@ -27,15 +27,16 @@ use crate::formally;
 use bindings as cvc5;
 use formally::smt::{
     self, ToTerm as _,
-    backend::{self, Backend, api},
+    backends::{self, Backend, api},
     logic,
     logics::{Logic, LogicEx},
     theories,
 };
 use std::rc::Rc;
 
-type Result<T, E = backend::Error> = std::result::Result<T, E>;
+type Result<T, E = backends::Error> = std::result::Result<T, E>;
 
+#[smt::backend]
 #[derive(Clone, Copy, Default)]
 pub struct Cvc5;
 
@@ -70,15 +71,15 @@ impl Backend for Cvc5 {
         "cvc5"
     }
 
-    fn manager(&self) -> Box<dyn backend::Manager> {
+    fn manager(&self) -> Box<dyn backends::Manager> {
         Box::new(api::ManagerFacade::new(Manager::default()))
     }
 
     fn solver(
         &self,
         config: &smt::Config,
-        manager: Rc<dyn backend::Manager>,
-    ) -> Result<Box<dyn backend::Solver>> {
+        manager: Rc<dyn backends::Manager>,
+    ) -> Result<Box<dyn backends::Solver>> {
         Ok(Box::new(api::SolverFacade::<Solver>::new(
             self, config, manager,
         )?))
@@ -313,7 +314,7 @@ impl api::Manager for Manager {
                 Some(Core::True().into_term_in(pool))
             } else {
                 Some(Core::False().into_term_in(pool))
-            }
+            };
         } else if let Some(value) = self.cvc5manager.get_integer_value(term) {
             return Some(smt::Constant::from(value).into_term_in(pool));
         } else if let Some(value) = self.cvc5manager.get_real_value(term) {

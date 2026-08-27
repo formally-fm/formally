@@ -33,8 +33,8 @@
 //! scratch, because they hide a non-trivial amount of complexity.
 //!
 //! The module provides two types, [ManagerFacade] and [SolverFacade], which respectively implement
-//! [backend::Manager](smt::backend::Manager) and [backend::Solver](smt::backend::Solver) on top of
-//! types provided by the backend's implementor.
+//! [backends::Manager](smt::backends::Manager) and [backends::Solver](smt::backends::Solver) on top
+//! of types provided by the backend's implementor.
 //!
 //! These types must implement the traits [api::Manager](Manager) and [api::Solver](Solver) which
 //! have a seemingly larger surface than the similarly named ones from the parent module, but are
@@ -42,6 +42,9 @@
 //!
 //! Then, your [Backend] instance can simply provide instances of [ManagerFacade] and [SolverFacade]
 //! in its [Backend::manager()] and [Backend::solver()] methods.
+//!
+//! Finally, remember to register your backend using the [backend](smt::backend) attribute for
+//! it to be available when looking up backends by name.
 
 mod facade;
 pub use facade::ManagerFacade;
@@ -50,7 +53,7 @@ pub use facade::SolverFacade;
 use crate::formally;
 use formally::smt::{
     self,
-    backend::{Backend, Error},
+    backends::{Backend, Error},
     logics::{Logic, LogicEx},
 };
 
@@ -59,7 +62,7 @@ use std::{hash::Hash, rc::Rc};
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Trait to allow [api::ManagerFacade](ManagerFacade) to implement the
-/// [backend::Manager](smt::backend::Manager) trait.
+/// [backends::Manager](smt::backends::Manager) trait.
 ///
 /// This trait asks you to implement the bare minimum to convert [Term](smt::Term) and
 /// [Sort](smt::Sort) objects into the underlying representation of terms and sorts of your SMT API.
@@ -214,7 +217,7 @@ pub trait Manager: Default + Sized {
 }
 
 /// Trait to allow [api::SolverFacade](SolverFacade) to implement the
-/// [backend::Solver](smt::backend::Solver) trait.
+/// [backends::Solver](smt::backends::Solver) trait.
 ///
 /// Similarly to [api::Manager](Manager), this trait asks the implementor to provide the bare
 /// minimum access to the backend solver's API.

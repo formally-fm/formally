@@ -46,7 +46,7 @@
 //! rarely need to be mentioned directly.
 //!
 //! Instead, people implementing new *backends* will need to access this module quite
-//! often. We refer to the documentation on [how to write a new backend](crate::backend) for
+//! often. We refer to the documentation on [how to write a new backend](crate::backends) for
 //! details.
 
 use crate::*;

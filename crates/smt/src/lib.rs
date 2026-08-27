@@ -226,12 +226,12 @@
 //!
 //! ## SMT backends
 //!
-//! Backends are types implementing the [Backend](backend::Backend) trait. Currently, we only
+//! Backends are types implementing the [Backend](backends::Backend) trait. Currently, we only
 //! provide two backends:
-//!  - [backend::z3::Z3], implemented on top of the [z3_sys] crate.
-//!  - [backend::cvc5::Cvc5], implemented on top of the [cvc5_sys] crate.
+//!  - [backends::z3::Z3], implemented on top of the [z3_sys] crate.
+//!  - [backends::cvc5::Cvc5], implemented on top of the [cvc5_sys] crate.
 //!
-//! See the documentation of the [Backend](backend::Solver) trait for information about how to
+//! See the documentation of the [Backend](backends::Solver) trait for information about how to
 //! implement new backends.
 //!
 //! ## Error handling
@@ -409,8 +409,9 @@ mod type_check;
 
 #[doc(hidden)]
 pub mod macros;
+pub use macros::backend;
 
-pub mod backend;
+pub mod backends;
 pub mod logics;
 pub mod smtlib;
 pub mod theories;
