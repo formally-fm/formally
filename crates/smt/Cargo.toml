@@ -17,7 +17,7 @@ path = "src/lib.rs"
 [features]
 z3 = ["z3-sys"]
 cvc5 = ["cvc5-sys"]
-default = ["z3", "cvc5"]
+default = []
 __subcratedoc = []
 
 [dependencies]
