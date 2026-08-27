@@ -62,7 +62,13 @@ impl Diagnosable for BackendNotFound<'_> {
 impl Register {
     /// Return the default backend.
     pub fn default_backend() -> Result<&'static dyn Backend, BackendNotFound<'static>> {
-        Self::backend("cvc5")
+        if cfg!(feature = "cvc5") {
+            Self::backend("cvc5")
+        } else if cfg!(feature = "z3") {
+            Self::backend("z3")
+        } else {
+            Err(BackendNotFound(Identifier::from("default")))
+        }
     }
 
     /// Return the registered backend that goes after the give name, if it exists.

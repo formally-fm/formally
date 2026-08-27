@@ -18,11 +18,15 @@ document-features = "0.2.12"
 
 [features]
 #! This project has the following Cargo features:
-default = ["io", "smt"]
+default = ["io", "smt", "smt-z3", "smt-cvc5"]
 ## Enable the [formally::io] module.
 io = ["formally-io"]
 ## Enable the [formally::smt] module.
 smt = ["io", "formally-smt"]
+## Enable the Z3 backend for the [formally::smt] module.
+smt-z3 = ["formally-smt/z3"]
+## Enable the cvc5 backend for the [formally::smt] module.
+smt-cvc5 = ["formally-smt/cvc5"]
 
 [dev-dependencies]
 rstest = "0.26.0"

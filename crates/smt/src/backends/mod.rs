@@ -142,9 +142,14 @@
 //!    deadlocks, etc.. In other words, backends are not *forced* to detect the violation of the
 //!    preconditions, and can have arbitrary (but *not* undefined) behavior in those cases.
 
-pub mod api;
-pub mod cvc5;
 mod register;
+
+pub mod api;
+
+#[cfg(feature = "cvc5")]
+pub mod cvc5;
+
+#[cfg(feature = "z3")]
 pub mod z3;
 
 pub use register::*;
