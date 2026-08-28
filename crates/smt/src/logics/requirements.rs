@@ -54,13 +54,13 @@ use formally::support::*;
 pub trait LogicRequirement {
     /// Check a term.
     #[allow(unused)]
-    fn check_term(logic: &dyn Logic, context: &Context, term: &Term) -> Result<()> {
+    fn check_term(logic: &dyn Logic, term: &Term) -> Result<()> {
         Ok(())
     }
 
     /// Check a user function to be declared or defined.
     #[allow(unused)]
-    fn check_function(logic: &dyn Logic, context: &Context, function: &UserFunction) -> Result<()> {
+    fn check_function(logic: &dyn Logic, function: &UserFunction) -> Result<()> {
         Ok(())
     }
 }
@@ -81,83 +81,102 @@ pub struct QuantifierFree;
 pub struct NoUF;
 
 impl LogicRequirement for Linear {
-    fn check_term(logic: &dyn Logic, context: &Context, term: &Term) -> Result<()> {
+    fn check_term(logic: &dyn Logic, term: &Term) -> Result<()> {
         match term.kind() {
             TermKind::Constant(_) => Ok(()),
-            TermKind::Atom(Atom::Unbound(UnboundAtom { arguments, .. })) => {
-                for arg in arguments {
-                    Linear::check_term(logic, context, arg)?;
+            TermKind::Atom(atom) => {
+                if let FunctionRef::Bound(bound) = &atom.head {
+                    use theories::Ints;
+                    use theories::Reals;
+
+                    let forbidden = [
+                        Ints::mult(),
+                        Reals::mult(),
+                        Ints::div(),
+                        Reals::div(),
+                        Ints::mod_(),
+                        Ints::abs(),
+                    ];
+                    if let Function::Primitive(prim) = &bound.function
+                        && forbidden.contains(prim)
+                    {
+                        let nonlinear = atom
+                            .arguments
+                            .iter()
+                            .filter(|arg| {
+                                !matches!(
+                                    arg.kind(),
+                                    TermKind::Constant(
+                                        Constant::Integer { .. } | Constant::Rational { .. }
+                                    )
+                                )
+                            })
+                            .count();
+                        if nonlinear > 1 {
+                            error!(
+                                term.span(),
+                                "non-linear terms are not admitted in logic `{}`",
+                                logic.name()
+                            );
+                            note!(
+                                bound.span,
+                                "function `{}` can only be used with a single non-constant argument, found {}",
+                                bound.function.name(),
+                                nonlinear
+                            );
+                            return Err(DiagnosticEmitted);
+                        }
+                    }
+                }
+                for arg in &*atom.arguments {
+                    Linear::check_term(logic, arg)?;
                 }
                 Ok(())
             }
-            TermKind::Atom(Atom::Bound(BoundAtom {
-                head, arguments, ..
-            })) => {
-                use theories::Ints;
-                use theories::Reals;
-
-                let forbidden = [
-                    Ints::mult(),
-                    Reals::mult(),
-                    Ints::div(),
-                    Reals::div(),
-                    Ints::mod_(),
-                    Ints::abs(),
-                ];
-                if let Function::Primitive(prim) = &head.function
-                    && forbidden.contains(prim)
-                {
-                    let nonlinear = arguments
-                        .iter()
-                        .filter(|arg| {
-                            !matches!(
-                                arg.kind(),
-                                TermKind::Constant(
-                                    Constant::Integer { .. } | Constant::Rational { .. }
-                                )
-                            )
-                        })
-                        .count();
-                    if nonlinear > 1 {
-                        error!(
-                            context,
-                            term.span(),
-                            "non-linear terms are not admitted in logic `{}`",
-                            logic.name()
-                        );
-                        note!(
-                            context,
-                            head.span,
-                            "function `{}` can only be used with a single non-constant argument, found {}",
-                            head.function.name(),
-                            nonlinear
-                        );
-                        return Err(DiagnosticEmitted);
-                    }
+            TermKind::Quantified(quant) => Linear::check_term(logic, &quant.body),
+            TermKind::Let(let_) => {
+                for bind in &*let_.bindings {
+                    Linear::check_term(logic, &bind.def)?
                 }
-
-                for arg in arguments {
-                    Linear::check_term(logic, context, arg)?;
-                }
-                Ok(())
+                Linear::check_term(logic, &let_.body)
             }
         }
     }
 }
 
 impl LogicRequirement for QuantifierFree {
-    fn check_term(_logic: &dyn Logic, _context: &Context, _term: &Term) -> Result<()> {
-        // Fill here when we will support quantifiers
-        Ok(())
+    fn check_term(logic: &dyn Logic, term: &Term) -> Result<()> {
+        match term.kind() {
+            TermKind::Constant(_) => Ok(()),
+            TermKind::Atom(atom) => {
+                for arg in &*atom.arguments {
+                    QuantifierFree::check_term(logic, arg)?;
+                }
+                Ok(())
+            }
+            TermKind::Quantified(_) => {
+                error!(
+                    term.span(),
+                    "quantified formulas are not admitted in logic `{}`",
+                    logic.name()
+                );
+                Err(DiagnosticEmitted)
+            }
+            TermKind::Let(let_) => {
+                for bind in &*let_.bindings {
+                    QuantifierFree::check_term(logic, &bind.def)?
+                }
+                QuantifierFree::check_term(logic, &let_.body)
+            }
+        }
     }
 }
 
 impl LogicRequirement for NoUF {
-    fn check_function(logic: &dyn Logic, context: &Context, function: &UserFunction) -> Result<()> {
+    fn check_function(logic: &dyn Logic, function: &UserFunction) -> Result<()> {
         match function {
             UserFunction::Declared(decl) if !decl.domain.is_empty() => {
                 error!(
-                    context,
                     decl.span(),
                     "uninterpreted functions are not allowed in logic `{}`",
                     logic.name()

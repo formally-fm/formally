@@ -48,19 +48,10 @@ use derive_more::Display;
 ///
 /// It is often controverial to decide whether a [Located] type should compare equal accounting for
 /// its span or not. For this reason, [Loc] intentionally does not implement [PartialEq] nor [Eq].
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
 pub struct Loc<T> {
     pub value: T,
     pub span: Option<Span>,
-}
-
-impl<T: Default> Default for Loc<T> {
-    fn default() -> Self {
-        Self {
-            value: Default::default(),
-            span: Default::default(),
-        }
-    }
 }
 
 impl<T> Loc<T> {
@@ -204,6 +195,9 @@ impl Sub for Location {
 pub enum Span {
     /// The [Span] represents the whole source file at the given [Origin].
     Whole(Origin),
+    /// The [Span] represents a built-in or primitive entity such as functions defined by SMT
+    /// theories
+    Builtin,
     /// The [Span] represents the interval between `begin` (included) and `end` (excluded) at the
     /// given [Origin].
     Span {
@@ -234,6 +228,7 @@ impl Display for Span {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Span::Whole(origin) => Display::fmt(origin, f),
+            Span::Builtin => write!(f, "builtin"),
             Span::Span { origin, begin, end } => {
                 if end.column > begin.column + 1 {
                     write!(
@@ -280,8 +275,8 @@ impl Located for Option<Span> {
 /// the result.
 ///
 /// Example:
-/// ```rust,ignore
-/// let term = smt::Term::new(...).over(span);
+/// ```text
+/// let term = term!(* x y).over(span);
 /// ```
 ///
 /// [Locatable] can be automatically derived (see the corresponding proc-macro for details).
@@ -326,6 +321,11 @@ impl<'a> Identifier<'a> {
         &self.name
     }
 
+    /// Turn the identifier into the inner `Cow<'a, str>`
+    pub fn into_inner(self) -> Cow<'a, str> {
+        self.name
+    }
+
     /// Turn the identifier into its inner string.
     pub fn into_string(self) -> String {
         self.name.into_owned()
@@ -365,5 +365,11 @@ impl From<String> for Identifier<'_> {
 impl<'a> From<&'a str> for Identifier<'a> {
     fn from(name: &'a str) -> Self {
         Identifier::new(name)
+    }
+}
+
+impl<'a> From<Cow<'a, str>> for Identifier<'a> {
+    fn from(name: Cow<'a, str>) -> Self {
+        Identifier { name, span: None }
     }
 }

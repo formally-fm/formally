@@ -47,29 +47,45 @@
 //! 4. A simple toy command-line frontend to test the [formally::smt](smt) module.
 //!
 //! The [formally::smt](smt) module is quite under heavy development but can already handle simple
-//! SMT-LIBv2 scripts, solving them with a [Z3](https://github.com/Z3Prover/z3) backend.
+//! SMT-LIBv2 scripts, solving them with a [Z3](https://github.com/Z3Prover/z3) or
+//! [cvc5](https://cvc5.github.io) backend.
 //!
 //! # How to build the crate
 //!
-//! The Z3 backend is based on the [z3_sys](https://crates.io/crates/z3-sys) crate which does not
-//! discover Z3's library automatically, so we currently need to set include paths and linker
-//! arguments manually.
+//! The Z3 and cvc5 backends are based on the [z3-sys](https://crates.io/crates/z3-sys) and
+//! [cvc5-sys](https://crates.io/crates/cvc5-sys) crates, respectively, which do not
+//! discover the backend libraries automatically, so we currently need to set include paths and
+//! linker arguments manually.
 //!
-//! This is done by setting the `Z3_SYS_Z3_HEADER` environment variable with the path to
-//! `z3.h` and passing the correct `-L` flag to the compiler to find the shared library.
+//! This is done as follows:
+//! 1. for Z3 (for the `smt-z3` feature):
+//!    1. setting the `Z3_SYS_Z3_HEADER` environment variable with the path to `z3.h`, and
+//!    2. passing the correct `-L` flag to the compiler to find the shared library.
+//! 2. for cvc5 (for the `smt-cvc5` feature):
+//!    1. setting the `CVC5_LIB_DIR` and `CVC5_INCLUDE_DIR` environment variables with the path to
+//!       the library's directory and the include directory, respectively.
+//!    2. on macOS, setting the `rpath` of the final executable by specifying the
+//!       `-Wl,-rpath,$CVC5_LIB_DIR` option
 //!
-//! This can be done conveniently and once and for all by adding the following lines to Cargo's
-//! `config.toml` (see the *Configuration* section in the
+//! This can be done conveniently and once and for all by editing Cargo's `config.toml` (see the 
+//! *Configuration* section in the 
 //! [Cargo Book](https://doc.rust-lang.org/cargo/reference/config.html)):
 //!
-//! For example, supposing Z3 has been installed with Homebrew on a macOS system:
+//! For example, suppose you are on a macOS system, Z3 has been installed with Homebrew and
+//! the binary distribution of cvc5 has been downloaded from GitHub to `/Users/john/cvc5`.
+//!
+//! Then, write this into `~/.cargo/config.toml`:
 //! ```cargo
 //! [env]
-//! Z3_SYS_Z3_HEADER="/opt/homebrew/Cellar/z3/4.15.3/include/z3.h"
+//! Z3_SYS_Z3_HEADER="/opt/homebrew/Cellar/z3/4.15.4/include/z3.h"
+//! CVC5_LIB_DIR="/Users/john/cvc5"
+//! CVC5_INCLUDE_DIR="/Users/john/cvc5"
 //!
 //! [build]
-//! rustflags=["-C", "link-arg=-L/opt/homebrew/Cellar/z3/4.15.3/lib/"]
-//! rustdocflags=["-C", "link-arg=-L/opt/homebrew/Cellar/z3/4.15.3/lib/"]
+//! rustflags=[
+//!     "-C", "link-arg=-L/opt/homebrew/Cellar/z3/5.1.0/lib",
+//!     "-C", "link-arg=-Wl,-rpath,/Users/john/cvc5"
+//! ]
 //! ```
 //! Version numbers have to be changed accordingly, of course.
 //!

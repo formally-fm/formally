@@ -26,22 +26,43 @@ use formally::{
     io::parse::{Parsable, Parse},
     smt::{
         Config,
+        backends::Register,
         smtlib::{ast, interpreter::*},
     },
-    support::{Contextual, DiagnosticEmitted},
+    support::{Diagnostic, DiagnosticEmitted},
 };
+
+use clap::{Args, Parser, Subcommand};
+use itertools::*;
 
 use std::{path::*, process::ExitCode};
 
-use clap::{Parser, Subcommand};
+fn backend_opt_help() -> String {
+    let mut backends = Vec::new();
+    for backend in Register::backends() {
+        if let Ok(name) = backend.name() {
+            backends.push(name);
+        }
+    }
+
+    format!(
+        "The SMT backend to use. Available backends: {}",
+        backends.into_iter().join(", ")
+    )
+}
+
+#[derive(Args)]
+struct Solve {
+    #[arg(short = 'B', long, help = backend_opt_help())]
+    backend: Option<String>,
+    /// The path to the SMT-LIB script to solve
+    filename: PathBuf,
+}
 
 #[derive(Subcommand)]
 enum Command {
     /// Solve SMT-LIB scripts
-    Solve {
-        /// The path to the SMT-LIB script to solve
-        filename: PathBuf,
-    },
+    Solve(Solve),
 }
 
 #[derive(Parser)]
@@ -54,7 +75,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Command::Solve { filename } => solve(filename),
+        Command::Solve(args) => solve(args),
     };
 
     match result {
@@ -63,24 +84,28 @@ fn main() -> ExitCode {
     }
 }
 
-fn solve(filename: PathBuf) -> Result<(), DiagnosticEmitted> {
-    let emitter = SMTLibEmitter::new();
+fn solve(args: Solve) -> Result<(), DiagnosticEmitted> {
+    Diagnostic::with(SMTLibEmitter::new(), || {
+        let ast::Script { commands, .. } = match ast::Script::parser().parse(args.filename) {
+            Ok(script) => script,
+            Err(_) => return Err(DiagnosticEmitted),
+        };
 
-    let ast::Script { commands, .. } = match ast::Script::parser().parse(&emitter, filename) {
-        Ok(script) => script,
-        Err(_) => return Err(DiagnosticEmitted),
-    };
+        let mut interpreter = match args.backend {
+            Some(backend) => {
+                Interpreter::with_backend(Config::default(), Register::backend(backend)?)
+            }
+            None => Interpreter::new(Config::default()),
+        };
 
-    let config = Config::new().with_emitter(emitter);
-    let mut interpreter = Interpreter::new(config);
+        for cmd in commands {
+            interpreter.command(cmd).ok();
 
-    for cmd in commands {
-        interpreter.command(cmd).ok();
-
-        if interpreter.has_exited() {
-            break;
+            if interpreter.has_exited() {
+                break;
+            }
         }
-    }
 
-    Ok(())
+        Ok(())
+    })
 }

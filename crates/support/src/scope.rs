@@ -42,8 +42,7 @@ use itertools::Itertools;
 /// The difference from a standard iterator is that [LookupSet] remembers enough information to
 /// allow the [one()](LookupSet::one) method to emit detailed error diagnostics. See
 /// [one()](LookupSet::one) for details.
-pub struct LookupSet<'s, 'i, T, V = &'s T> {
-    context: Context,
+pub struct LookupSet<'s, 'i, T: Hash + Eq, V = &'s T> {
     name: Identifier<'i>,
     scope: &'s Scope<T>,
     iterator: Box<dyn 's + Iterator<Item = &'s T>>,
@@ -51,19 +50,8 @@ pub struct LookupSet<'s, 'i, T, V = &'s T> {
     empty: bool,
 }
 
-impl<T, V> Contextual for LookupSet<'_, '_, T, V> {
-    fn context(&self) -> Context {
-        self.context.clone()
-    }
-
-    fn set_context(&mut self, ctx: Context) {
-        self.context = ctx;
-    }
-}
-
-impl<'s, 'i, T: 's, V: 's> LookupSet<'s, 'i, T, V> {
+impl<'s, 'i, T: 's + Hash + Eq, V: 's> LookupSet<'s, 'i, T, V> {
     fn new(
-        context: Context,
         name: Identifier<'i>,
         scope: &'s Scope<T>,
         entities: impl 's + IntoIterator<Item = &'s T>,
@@ -72,7 +60,6 @@ impl<'s, 'i, T: 's, V: 's> LookupSet<'s, 'i, T, V> {
         let mut iterator = entities.into_iter().peekable();
         let empty = iterator.peek().is_none();
         LookupSet {
-            context,
             name,
             scope,
             iterator: Box::new(iterator),
@@ -99,10 +86,8 @@ impl<'s, 'i, T: 's, V: 's> LookupSet<'s, 'i, T, V> {
         self,
         f: impl 's + Fn(V) -> Result<Option<R>>,
     ) -> LookupSet<'s, 'i, T, R> {
-        let context = self.context();
         let filter_map = self.filter_map;
         LookupSet::new(
-            context,
             self.name,
             self.scope,
             self.iterator,
@@ -147,16 +132,12 @@ impl<'s, 'i, T: 's, V: 's> LookupSet<'s, 'i, T, V> {
 
     /// If the current [LookupSet] is not empty, return it as-is, otherwise call the `other` closure
     /// and return its result.
-    ///
-    /// The returned [LookupSet] inherits the current one's [Context] (used to locate the [Emitter]
-    /// for the error diagnostics emitted by [one()](LookupSet::one)).
     pub fn or_else(self, other: impl 's + FnOnce() -> LookupSet<'s, 'i, T, V>) -> Self {
-        let ctx = self.context();
         let mut this = self.iterator.peekable();
         if this.peek().is_some() {
-            LookupSet::new(ctx, self.name, self.scope, this, self.filter_map)
+            LookupSet::new(self.name, self.scope, this, self.filter_map)
         } else {
-            other().with_context(ctx)
+            other()
         }
     }
 }
@@ -179,8 +160,6 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
     /// filtered (see [filter()](LookupSet::filter)), then a list of non-matching symbols is
     /// produced as attached notes.
     pub fn one(self) -> Result<V> {
-        let ctx = self.context();
-
         let mut all = Vec::new();
         let mut filtered = Vec::new();
 
@@ -198,15 +177,13 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
             (Some((_, v)), None) => Ok(v),
             (Some((t1, _)), Some((t2, _))) => {
                 error!(
-                    &ctx,
                     self.name.span(),
-                    "ambiguous reference to symbol '{}'",
-                    self.name
+                    "ambiguous reference to symbol '{}'", self.name
                 );
-                note!(&ctx, t1.span(), "matching symbol declared here");
-                note!(&ctx, t2.span(), "matching symbol declared here");
+                note!(t1.span(), "matching symbol declared here");
+                note!(t2.span(), "matching symbol declared here");
                 for (t, _) in filtered {
-                    note!(&ctx, t.span(), "matching symbol declared here");
+                    note!(t.span(), "matching symbol declared here");
                 }
                 Err(DiagnosticEmitted)
             }
@@ -214,21 +191,19 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
                 let mut all = all.peekable();
                 match all.peek() {
                     Some(_) => {
-                        error!(&ctx, self.name.span(), "no matching symbol '{}'", self.name);
+                        error!(self.name.span(), "no matching symbol '{}'", self.name);
 
                         for element in all {
                             if element.span().is_some() {
-                                note!(&ctx, element.span(), "non-matching symbol declared here");
+                                note!(element.span(), "non-matching symbol declared here");
                             }
                         }
                         Err(DiagnosticEmitted)
                     }
                     None => {
                         error!(
-                            &ctx,
                             self.name.span(),
-                            "undefined reference to symbol '{}'",
-                            self.name
+                            "undefined reference to symbol '{}'", self.name
                         );
                         Err(DiagnosticEmitted)
                     }
@@ -261,7 +236,7 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
 /// # fn main() -> Result<()> {
 /// let mut scope = Scope::new();
 /// scope.push();
-/// scope.add("x", term!(and p q));
+/// scope.add("x", Loc::new(42));
 ///
 /// println!("x: {}", scope.lookup(Identifier::from("x")).one()?);
 ///
@@ -273,6 +248,9 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
 ///
 /// Here the [LookupSet::one()] method requires a single result to exist and emits detailed
 /// diagnostics if this is not the case. See its documentation for details.
+///
+/// The element type needs to implement [Hash] and [Eq]. These are used to ensure that if the same
+/// element is added twice under the same name, it is treated as a single entry.
 ///
 /// [Scope] objects support being *nested* under other [Scope] objects. Nesting simulates how
 /// one would implement a nested scope in a typical language, such as the scope under a function
@@ -308,13 +286,12 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
 /// declared in `scope` with name `"x"` shadows all the elements with the same name in `parent`. The
 /// second one succeeds as well because `"y"` is found in the parent.
 #[perfect_derive(Default, Clone)]
-pub struct Scope<T> {
-    context: Context,
-    elements: Stacked<rpds::HashTrieMapSync<String, rpds::VectorSync<T>>>,
+pub struct Scope<T: Hash + Eq> {
+    elements: Stacked<rpds::HashTrieMapSync<String, rpds::HashTrieSetSync<T>>>,
     parent: Option<Arc<Scope<T>>>,
 }
 
-impl<T> Scope<T> {
+impl<T: Hash + Eq> Scope<T> {
     /// Construct an empty [Scope]
     pub fn new() -> Self {
         Scope::default()
@@ -337,26 +314,24 @@ impl<T> Scope<T> {
     pub fn add(&mut self, name: &str, element: T) {
         if !self.elements.contains_key(name) {
             self.elements
-                .insert_mut(name.to_string(), rpds::Vector::new_sync());
+                .insert_mut(name.to_string(), rpds::HashTrieSetSync::new_sync());
         }
-        self.elements.get_mut(name).unwrap().push_back_mut(element);
+        self.elements.get_mut(name).unwrap().insert_mut(element);
     }
 
     pub fn lookup<'i>(&self, name: impl Into<Identifier<'i>>) -> LookupSet<'_, 'i, T, &'_ T> {
         let name = name.into();
         if let Some(elements) = self.elements.get(name.name()) {
-            LookupSet::new(self.context(), name, self, elements.iter(), |t| Ok(Some(t)))
+            LookupSet::new(name, self, elements.iter(), |t| Ok(Some(t)))
         } else if let Some(parent) = &self.parent {
-            parent.lookup(name).with_context(self.context())
+            parent.lookup(name)
         } else {
-            LookupSet::new(self.context(), name, self, std::iter::empty(), |t| {
-                Ok(Some(t))
-            })
+            LookupSet::new(name, self, std::iter::empty(), |t| Ok(Some(t)))
         }
     }
 }
 
-impl<T: Clone> Scope<T> {
+impl<T: Clone + Hash + Eq> Scope<T> {
     /// Clone all the elements of the given scope into `self`, registering them under the same
     /// names.
     pub fn merge(&mut self, other: &Scope<T>) {
@@ -368,17 +343,7 @@ impl<T: Clone> Scope<T> {
     }
 }
 
-impl<T> Contextual for Scope<T> {
-    fn context(&self) -> Context {
-        self.context.clone()
-    }
-
-    fn set_context(&mut self, ctx: Context) {
-        self.context = ctx;
-    }
-}
-
-impl<T> Stack for Scope<T> {
+impl<T: Hash + Eq> Stack for Scope<T> {
     fn push(&mut self) -> Result<()> {
         self.elements.push()
     }

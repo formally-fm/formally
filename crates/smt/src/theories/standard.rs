@@ -24,169 +24,190 @@
 
 use crate::*;
 
-theory! {
+theories! {
     /// The core SMT-LIBv2 theory, with basic Boolean connectives.
     ///
     /// See [the official specification](https://smt-lib.org/theories-Core.shtml).
-    identifier: pub Core,
-    name: "Core",
-    sorts: {
+    pub Core {
         /// The sort of Boolean terms.
-        Bool
-    },
-    constants: {
+        type Bool;
+
         /// The true constant.
-        True: Core::Bool();
+        const True: Core::Bool();
+
         /// The false constant.
-        False: Core::Bool();
-    },
-    functions: {
+        const False: Core::Bool();
+
         /// Logical negation.
-        not(Core::Bool()) -> Core::Bool();
+        fn not(Core::Bool()) -> Core::Bool();
 
         /// Logical implication.
-        implies/"=>"(Core::Bool(), Core::Bool()) :right_assoc -> Core::Bool();
+        #[name = "=>"]
+        #[right_assoc]
+        fn implies(Core::Bool(), Core::Bool()) -> Core::Bool();
 
         /// Logical conjunction.
-        and(Core::Bool(), Core::Bool()) :left_assoc -> Core::Bool();
+        #[left_assoc]
+        fn and(Core::Bool(), Core::Bool()) -> Core::Bool();
 
         /// Logical disjunction.
-        or(Core::Bool(), Core::Bool()) :left_assoc -> Core::Bool();
+        #[left_assoc]
+        fn or(Core::Bool(), Core::Bool()) -> Core::Bool();
 
         /// Logical exclusive disjunction.
-        xor(Core::Bool(), Core::Bool()) :left_assoc -> Core::Bool();
+        #[left_assoc]
+        fn xor(Core::Bool(), Core::Bool()) -> Core::Bool();
 
         /// Equality.
-        equals/"="[A](A, A) :chainable -> Core::Bool();
+        #[name = "="]
+        #[chainable]
+        fn equals<A>(A, A) -> Core::Bool();
 
         /// Disequality.
-        distinct[A](A, A) :pairwise -> Core::Bool();
+        #[pairwise]
+        fn distinct<A>(A, A) -> Core::Bool();
 
         /// If-then-else choice construct.
-        ite[A](Core::Bool(), A, A) -> A;
+        fn ite<A>(Core::Bool(), A, A) -> A;
     }
-}
 
-theory! {
     /// The theory of reals.
     ///
     /// See [the official specification](https://smt-lib.org/theories-Reals.shtml).
-    identifier: pub Reals,
-    name: "Reals",
-    sorts: {
+    pub Reals {
         /// The sort of real numbers.
-        Real
-    },
-    functions: {
+        type Real;
+
         /// Unary negation.
-        unary_minus/"-" (Reals::Real()) -> Reals::Real();
+        #[name = "-"]
+        fn unary_minus(Reals::Real()) -> Reals::Real();
 
         /// Subtraction.
-        minus/"-" (Reals::Real(), Reals::Real()) :left_assoc -> Reals::Real();
+        #[name = "-"]
+        #[left_assoc]
+        fn minus(Reals::Real(), Reals::Real()) -> Reals::Real();
 
         /// Addition.
-        plus/"+" (Reals::Real(), Reals::Real()) :left_assoc -> Reals::Real();
+        #[name = "+"]
+        #[left_assoc]
+        fn plus(Reals::Real(), Reals::Real()) -> Reals::Real();
 
         /// Multiplication.
-        mult/"*" (Reals::Real(), Reals::Real()) :left_assoc -> Reals::Real();
+        #[name = "*"]
+        #[left_assoc]
+        fn mult(Reals::Real(), Reals::Real()) -> Reals::Real();
 
         /// Division.
-        div/"/" (Reals::Real(), Reals::Real()) :left_assoc -> Reals::Real();
+        #[name = "/"]
+        #[left_assoc]
+        fn div (Reals::Real(), Reals::Real()) -> Reals::Real();
 
         /// Less-than-or-equal comparison.
-        le/"<=" (Reals::Real(), Reals::Real()) :chainable -> Core::Bool();
+        #[name = "<="]
+        #[chainable]
+        fn le(Reals::Real(), Reals::Real()) -> Core::Bool();
 
         /// Less-than comparison.
-        lt/"<" (Reals::Real(), Reals::Real()) :chainable -> Core::Bool();
+        #[name = "<"]
+        #[chainable]
+        fn lt(Reals::Real(), Reals::Real()) -> Core::Bool();
 
         /// Greater-than-or-equal comparison.
-        ge/">=" (Reals::Real(), Reals::Real()) :chainable -> Core::Bool();
+        #[name = ">="]
+        #[chainable]
+        fn ge(Reals::Real(), Reals::Real()) -> Core::Bool();
 
         /// Greater-than comparison.
-        gt/">" (Reals::Real(), Reals::Real()) :chainable -> Core::Bool();
-    }
-}
+        #[name = ">"]
+        #[chainable]
+        fn gt(Reals::Real(), Reals::Real()) -> Core::Bool();
 
-theory! {
+    }
+
     /// The theory of integers.
     ///
     /// See [the official specification](https://smt-lib.org/theories-Ints.shtml).
-    identifier: pub Ints,
-    name: "Ints",
-    sorts: {
+    pub Ints {
         /// The sort of real numbers.
-        Int
-    },
-    functions: {
+        type Int;
+
         /// Unary negation.
-        unary_minus/"-" (Ints::Int()) -> Ints::Int();
+        #[name = "-"]
+        fn unary_minus (Ints::Int()) -> Ints::Int();
 
         /// Subtraction.
-        minus/"-" (Ints::Int(), Ints::Int()) :left_assoc -> Ints::Int();
+        #[name = "-"]
+        #[left_assoc]
+        fn minus (Ints::Int(), Ints::Int()) -> Ints::Int();
 
         /// Addition.
-        plus/"+" (Ints::Int(), Ints::Int()) :left_assoc -> Ints::Int();
+        #[name = "+"]
+        #[left_assoc]
+        fn plus (Ints::Int(), Ints::Int()) -> Ints::Int();
 
         /// Multiplication.
-        mult/"*" (Ints::Int(), Ints::Int()) :left_assoc -> Ints::Int();
+        #[name = "*"]
+        #[left_assoc]
+        fn mult (Ints::Int(), Ints::Int()) -> Ints::Int();
 
         /// Division.
-        div/"/" (Ints::Int(), Ints::Int()) :left_assoc -> Ints::Int();
+        #[name = "/"]
+        #[left_assoc]
+        fn div (Ints::Int(), Ints::Int()) -> Ints::Int();
 
         /// Modulo operation.
-        mod_/"mod" (Ints::Int(), Ints::Int()) -> Ints::Int();
+        #[name = "mod"]
+        fn mod_ (Ints::Int(), Ints::Int()) -> Ints::Int();
 
         /// Absolute value.
-        abs (Ints::Int(), Ints::Int()) -> Ints::Int();
+        fn abs (Ints::Int()) -> Ints::Int();
 
         /// Less-than-or-equal comparison.
-        le/"<=" (Ints::Int(), Ints::Int()) :chainable -> Core::Bool();
+        #[name = "<="]
+        #[chainable]
+        fn le (Ints::Int(), Ints::Int()) -> Core::Bool();
 
         /// Less-than comparison.
-        lt/"<" (Ints::Int(), Ints::Int()) :chainable -> Core::Bool();
+        #[name = "<"]
+        #[chainable]
+        fn lt (Ints::Int(), Ints::Int()) -> Core::Bool();
 
         /// Greater-than-or-equal comparison.
-        ge/">=" (Ints::Int(), Ints::Int()) :chainable -> Core::Bool();
+        #[name = ">="]
+        #[chainable]
+        fn ge (Ints::Int(), Ints::Int()) -> Core::Bool();
 
         /// Greater-than comparison.
-        gt/">" (Ints::Int(), Ints::Int()) :chainable -> Core::Bool();
+        #[name = ">"]
+        #[chainable]
+        fn gt (Ints::Int(), Ints::Int()) -> Core::Bool();
     }
-}
 
-theory! {
     /// The combined theory of integers and reals.
     ///
     /// See [the official specification](https://smt-lib.org/theories-Reals_Ints.shtml).
-    identifier: pub Reals_Ints,
-    name: "Reals_Ints",
-    extends: [ Ints, Reals ],
-    functions: {
+    pub RealsInts : Ints, Reals {
         /// Convert integers to reals.
-        to_real(Ints::Int()) -> Reals::Real();
+        fn to_real(Ints::Int()) -> Reals::Real();
 
         /// Convert reals to integers.
-        to_int(Reals::Real()) -> Ints::Int();
+        fn to_int(Reals::Real()) -> Ints::Int();
 
         /// Test if a real is an integer.
-        is_int(Reals::Real()) -> Core::Bool();
+        fn is_int(Reals::Real()) -> Core::Bool();
     }
-}
 
-theory! {
     /// The theory of arrays.
     ///
     /// See [the official specification](https://smt-lib.org/theories-ArraysEx.shtml).
-    identifier: pub Arrays,
-    name: "Arrays",
-    sorts: {
+    pub Arrays {
         /// The sort of arrays from indices of sort `X` to elements of sort `Y`.
-        Array(X: Sort::sort(), Y: Sort::sort())
-    },
-    functions: {
+        type Array(X: Sort::sort(), Y: Sort::sort());
+
         /// Reads an element of an array.
-        select[X, Y](Arrays::Array(X, Y), X) -> Y;
+        fn select<X, Y>(Arrays::Array(X, Y), X) -> Y;
 
         /// Writes an element to an array.
-        store[X, Y](Arrays::Array(X, Y), X, Y) -> Arrays::Array(X, Y);
+        fn store<X, Y>(Arrays::Array(X, Y), X, Y) -> Arrays::Array(X, Y);
     }
 }

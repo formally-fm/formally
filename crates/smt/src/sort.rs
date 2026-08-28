@@ -25,46 +25,82 @@
 use crate::*;
 use formally::support::*;
 
+use derive_more::{Display, From};
 use transitive::Transitive;
 
 use std::{
     collections::HashMap,
-    fmt::{Debug, Formatter},
+    fmt::{Debug, Display, Formatter},
     iter::zip,
+    sync::Arc,
 };
 
+/// Trait for types that support name resolution, type checking, and conversion into sorts.
+///
+/// Most methods in the framework that would accept a sort accept instead a generic instance of
+/// [ToSort]. The purpose of this generality is mainly that of allowing one to accept a [Term]
+/// representing a sort instead of an actual [Sort] object.
+///
+/// Since [Sort] is a purely semantic object, it does not track location information. This means
+/// that errors in name resolution and type checking would produce error messages without precise
+/// location information. Front-ends (such as the SMT-LIBv2 frontend we provide) may therefore want
+/// instead to parse the sorts as [Term] objects and then pass those terms to whatever method
+/// expects a [ToSort]. Type checking and name resolution would then be performed on the [Term]
+/// directly before conversion into [Sort], obtaining informative error messages.
+///
+/// This trait is automatically implemented for every type implementing [Resolve], [TypeCheck] and
+/// `TryInto<Sort, Error: Emit>`.
+pub trait ToSort: Resolve + TypeCheck + TryInto<Sort, Error: Emit> {}
+
+impl<T: Resolve + TypeCheck + TryInto<Sort, Error: Emit>> ToSort for T {}
+
+/// Marker type to ask for type inference.
+///
+/// This type is currently used in the return type of [Binding::new()] to signal that the sort
+/// of the binding must be inferred from the body.
+#[derive(Clone, Copy)]
+pub struct Infer;
+
+impl Resolve for Infer {
+    fn resolve(&self, _env: &Env, _pool: &dyn TermPool, _role: Role) -> Result<Self> {
+        Ok(*self)
+    }
+}
+
+impl TypeCheck for Infer {
+    fn type_check(&self) -> Result<Sort> {
+        internal!(None, "type checking of an inference placeholder");
+        Err(DiagnosticEmitted)
+    }
+}
+
+impl TryFrom<Infer> for Sort {
+    type Error = Diagnostic;
+
+    fn try_from(_value: Infer) -> Result<Self, Diagnostic> {
+        Err(Diagnostic::new(
+            None,
+            "type checking of an inference place holder".to_string(),
+        ))
+    }
+}
+
 /// An argument in a parametric sort such as `Int` and `Real` in `(Array Int Real)`.
-#[derive(Clone, Debug, Transitive)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Transitive)]
 #[allow(clippy::duplicated_attributes)]
 pub enum SortArgument {
-    /// A constant argument (e.g., `32` in `(_ BitVec 32)`).
-    Value(Constant),
-    /// A sort argument (e.g., `Int` and `Real` in `(Array Int Real`).
+    /// An integer argument (e.g., `32` in `(_ BitVec 32)`).
+    Value(Arc<Integer>),
+    /// A sort argument (e.g., `Int` and `Real` in `(Array Int Real)`).
     Sort(Sort),
 }
 
 impl SortArgument {
-    /// Compare two sort arguments semantically (i.e. excluding source spans).
-    pub fn equal(first: &SortArgument, second: &SortArgument) -> bool {
-        match (first, second) {
-            (SortArgument::Value(c1), SortArgument::Value(c2)) => match (c1, c2) {
-                (Constant::Integer { value: v1, .. }, Constant::Integer { value: v2, .. }) => {
-                    v1 == v2
-                }
-                (Constant::Rational { value: v1, .. }, Constant::Rational { value: v2, .. }) => {
-                    v1 == v2
-                }
-                _ => false,
-            },
-            (SortArgument::Sort(s1), SortArgument::Sort(s2)) => Sort::equal(s1, s2),
-            _ => false,
-        }
-    }
-
+    #[allow(clippy::mutable_key_type)]
     pub(crate) fn matches_with(
         &self,
         instance: &SortArgument,
-        matches: &mut HashMap<Parameter, Sort>,
+        matches: &mut HashMap<Variable, Sort>,
     ) -> bool {
         match (self, instance) {
             (SortArgument::Value(this), SortArgument::Value(inst)) => this == inst,
@@ -76,9 +112,9 @@ impl SortArgument {
     }
 }
 
-impl From<Constant> for SortArgument {
-    fn from(value: Constant) -> Self {
-        SortArgument::Value(value)
+impl From<Integer> for SortArgument {
+    fn from(value: Integer) -> Self {
+        SortArgument::Value(Arc::new(value))
     }
 }
 
@@ -88,160 +124,175 @@ impl<T: Into<Sort>> From<T> for SortArgument {
     }
 }
 
-/// An SMT sort.
+/// The head of a [Sort], i.e. the sort constructor being applied.
 ///
-/// Sorts are the types of terms in the SMT lingo, and the [Sort] type is the result of [type
-/// checking][Term::type_check()]. Sorts can be constructed directly starting from
-/// [functions](Function) whose range is the special sort [Sort::sort()] (i.e., the sort of sorts).
-/// They can also be first constructed as [terms][Term], e.g. by parsing SMT-LIBv2 source or with
-/// the [term] macro, and then evaluated as sorts using [evaluate()](Sort::evaluate()).
+/// Similar to [atoms](Atom), a sort can be *bound* or *unbound*. The latter only refer to their
+/// sort constructor by name and need name resolution to be usable.
 ///
-/// Sort themselves have a structure similar to [bound atoms][BoundAtom], i.e. a [Function] applied
-/// to arguments. The function must have the special sort [Sort::sort()]. Such functions are
-/// sometimes called *sort constructors*. Moreover, arguments are
-/// not arbitrary terms but [SortArgument] objects which can be either another sort or a constant.
-/// This allows the representation of both SMT-LIBv2 sorts such as `(Array Int Real)` and `(_ BitVec
-/// 32)`.
-///
-/// Notably, [Sort] does *not* implement [Hash](std::hash::Hash), [PartialEq] and [Eq]. This is
-/// because comparing sorts is a semantic operation, so the canonical implementation of these traits
-/// would include also the `span` field, which should instead be excluded from a semantic
-/// comparison. However, excluding fields from [PartialEq] implementations is surprising and should
-/// be avoided.
-///
-/// For this reason, semantic comparison, excluding spans, is implemented as the [Sort::equal]
-/// associated function.
+/// See also the [ToSort] trait.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, From, Transitive)]
 #[allow(clippy::duplicated_attributes)]
-#[derive(Clone, Located, Locatable)]
+#[transitive(from(Variable, Function))]
+#[transitive(from(Primitive, Function))]
+#[transitive(from(UserFunction, Function))]
+#[transitive(from(Declared, UserFunction))]
+#[transitive(from(Defined, UserFunction))]
+pub enum SortHead {
+    Bound(Function),
+    Unbound(Identifier<'static>),
+}
+
+impl SortHead {
+    pub fn name(&self) -> &Identifier<'static> {
+        match self {
+            SortHead::Bound(bound) => bound.name(),
+            SortHead::Unbound(name) => name,
+        }
+    }
+}
+
+impl From<FunctionRef> for SortHead {
+    fn from(funcref: FunctionRef) -> Self {
+        match funcref {
+            FunctionRef::Bound(bound) => SortHead::Bound(bound.function),
+            FunctionRef::Unbound(unbound) => SortHead::Unbound(unbound),
+        }
+    }
+}
+
+impl From<SortHead> for FunctionRef {
+    fn from(head: SortHead) -> Self {
+        match head {
+            SortHead::Bound(function) => FunctionRef::Bound(BoundRef {
+                function,
+                span: None,
+            }),
+            SortHead::Unbound(name) => FunctionRef::Unbound(name),
+        }
+    }
+}
+
+impl Display for SortHead {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SortHead::Bound(func) => write!(f, "{}", func.name()),
+            SortHead::Unbound(name) => write!(f, "{name}"),
+        }
+    }
+}
+
+/// The sort of a term.
+///
+/// [Sort] represent the semantic notion of sort of a term, i.e. its type. Sorts are represented by
+/// the application of some arguments to a function, called *sort constructor*, whose range must be
+/// [Sort::sort()], the sort of sorts.
+///
+/// In contrast to [Term], sorts can be constructed directly and are not uniqued.
+///
+/// Most methods that would accept a [Sort] accept instead a generic instance of the [ToSort] trait.
+/// See its documentation for details.
+#[allow(clippy::duplicated_attributes)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 pub struct Sort {
     /// The sort constructor that is being applied.
-    pub head: Function,
+    pub head: SortHead,
     /// The sort's arguments.
-    pub arguments: Vec<SortArgument>,
-    /// The sort's source span.
-    pub span: Option<Span>,
+    pub arguments: SArc<[SortArgument]>,
 }
 
 impl<T: Into<Function>> From<T> for Sort {
     fn from(value: T) -> Self {
         Sort {
-            head: value.into(),
-            arguments: Vec::new(),
-            span: None,
+            head: SortHead::Bound(value.into()),
+            arguments: SArc::default(),
+        }
+    }
+}
+
+impl From<Identifier<'_>> for Sort {
+    fn from(value: Identifier<'_>) -> Self {
+        Sort {
+            head: SortHead::Unbound(value.into_owned()),
+            arguments: SArc::default(),
         }
     }
 }
 
 impl Debug for Sort {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if Sort::equal(self, &Sort::sort()) {
+        if *self == Sort::sort() {
             write!(f, "Sort::sort()")
         } else {
-            f.debug_struct("Sort")
-                .field("head", &self.head)
-                .field("span", &self.span)
-                .finish()
+            f.debug_struct("Sort").field("head", &self.head).finish()
         }
     }
 }
 
-impl From<Sort> for Term {
-    /// Extract a [Term] representing the given sort.
-    ///
-    /// The resulting term can be turned into a sort again by [Sort::evaluate()].
-    fn from(sort: Sort) -> Self {
-        let arguments = sort
-            .arguments
-            .into_iter()
-            .map(|arg| match arg {
-                SortArgument::Value(c) => Term::from(c),
-                SortArgument::Sort(s) => Term::from(s),
-            })
-            .collect();
-        Term::from(Atom::Bound(BoundAtom {
-            head: Reference {
-                function: sort.head,
-                span: None,
-            },
-            arguments,
-            span: None,
-        }))
+/// Error type for `TryFrom<Term> for Sort`
+#[derive(Debug, Clone, Located, Display)]
+#[display("sort term must be an atom")]
+pub struct InvalidSortTerm {
+    span: Option<Span>,
+}
+
+impl Diagnosable for InvalidSortTerm {}
+
+impl TryFrom<Term> for Sort {
+    type Error = InvalidSortTerm;
+
+    fn try_from(term: Term) -> Result<Sort, InvalidSortTerm> {
+        let TermKind::Atom(atom) = term.kind() else {
+            return Err(InvalidSortTerm { span: term.span() });
+        };
+
+        let mut arguments = Vec::with_capacity(atom.arguments.len());
+        for arg in &*atom.arguments {
+            match arg.kind() {
+                TermKind::Constant(c) => match c {
+                    Constant::Integer { value, .. } => {
+                        arguments.push(SortArgument::Value((*value).clone()))
+                    }
+                    Constant::Rational { .. } => return Err(InvalidSortTerm { span: term.span() }),
+                },
+                _ => arguments.push(SortArgument::Sort(Sort::try_from(arg.clone())?)),
+            }
+        }
+
+        let head = SortHead::from(atom.head.clone());
+
+        Ok(Sort {
+            head,
+            arguments: SArc::from(arguments.into_boxed_slice()),
+        })
     }
 }
 
 impl Sort {
-    /// Alias for `term.type_check(ctx)` which provide a slightly better notation.
-    pub fn of(term: &Term, ctx: Context) -> Result<Sort> {
-        term.type_check(ctx)
+    /// Alias for `term.type_check(ctx)` which provide a better notation.
+    pub fn of(term: &Term) -> Result<Sort> {
+        term.type_check()
     }
 
-    /// Compare two sorts semantically (i.e. excluding source spans).
-    pub fn equal(first: &Sort, second: &Sort) -> bool {
-        first.head == second.head
-            && zip(&first.arguments, &second.arguments).all(|(f, s)| SortArgument::equal(f, s))
-    }
-
-    /// Evaluate a term as a sort.
-    ///
-    /// A sort such as `(Array Int Real)` can be constructed using the term macro,
-    /// such as in `term!(Array Int Real)`, and then evaluated as a sort after
-    /// [name resolution](Term::resolve()).
-    ///
-    /// The evaluation checks that all the functions used have range [Sort::sort()] and that the
-    /// arguments are of the right kind (sort arguments or constants).
-    pub fn evaluate(term: &Term, ctx: Context) -> Result<Sort> {
-        let sort = Sort::of(term, ctx.clone())?;
-        if !Sort::equal(&sort, &Sort::sort()) {
-            error!(
-                &ctx,
-                term.span(),
-                "expected sort, found term of sort `{}`",
-                sort
-            );
-            return Err(DiagnosticEmitted);
-        }
-
-        let TermKind::Atom(Atom::Bound(BoundAtom {
-            head, arguments, ..
-        })) = term.kind()
-        else {
-            internal!(&ctx, term.span(), "sort term does not evaluate to a sort");
-            return Err(DiagnosticEmitted);
-        };
-
-        let mut evaluated = Vec::new();
-        for (sort, arg) in zip(head.function.domain(), arguments) {
-            if Sort::equal(&sort, &Sort::sort()) {
-                evaluated.push(SortArgument::Sort(Sort::evaluate(arg, ctx.clone())?))
-            } else {
-                match arg.kind() {
-                    TermKind::Constant(c) => evaluated.push(SortArgument::Value(c.clone())),
-                    TermKind::Atom(_) => {
-                        error!(&ctx, arg.span(), "sort arguments must be constant terms");
-                        return Err(DiagnosticEmitted);
-                    }
-                }
-            }
-        }
-
-        Ok(Sort {
-            head: head.function.clone(),
-            arguments: evaluated,
-            span: term.span(),
-        })
-    }
-
+    #[allow(clippy::mutable_key_type)]
     pub(crate) fn matches_with(
         &self,
         argument: &Sort,
-        matches: &mut HashMap<Parameter, Sort>,
+        matches: &mut HashMap<Variable, Sort>,
     ) -> bool {
-        match (&self.head, &argument.head) {
-            (Function::Parameter(this), _) => {
+        let SortHead::Bound(func) = &self.head else {
+            return false;
+        };
+
+        let SortHead::Bound(argfunc) = &argument.head else {
+            return false;
+        };
+
+        match (&func, &argfunc) {
+            (Function::Variable(this), _) => {
                 if let Some(this) = matches.get(this).cloned() {
                     this.head == argument.head
                         && this.arguments.len() == argument.arguments.len()
-                        && zip(&this.arguments, &argument.arguments)
+                        && zip(&*this.arguments, &*argument.arguments)
                             .all(|(this, arg)| this.matches_with(arg, matches))
                 } else {
                     matches.insert(this.clone(), argument.clone());
@@ -270,37 +321,35 @@ impl Sort {
         }
     }
 
-    pub(crate) fn instantiate(
-        &self,
-        matches: &HashMap<Parameter, Sort>,
-        ctx: Context,
-    ) -> Result<Sort> {
-        if let Function::Parameter(parameter) = &self.head {
-            return matches.get(parameter).cloned().ok_or_else(|| {
-                internal!(
-                    &ctx,
-                    None,
-                    "usage of unconstrained sort parameter: {}",
-                    parameter.name()
-                );
-                DiagnosticEmitted
-            });
+    #[allow(clippy::mutable_key_type)]
+    pub(crate) fn instantiate(&self, matches: &HashMap<Variable, Sort>) -> Result<Sort> {
+        match &self.head {
+            SortHead::Bound(func) if let Function::Variable(var) = &func => {
+                return matches.get(var).cloned().ok_or_else(|| {
+                    internal!(
+                        None,
+                        "usage of unconstrained sort parameter: {}",
+                        var.name()
+                    );
+                    DiagnosticEmitted
+                });
+            }
+            _ => {}
         }
 
-        let mut arguments = Vec::new();
-        for arg in &self.arguments {
+        let mut arguments = Vec::with_capacity(self.arguments.len());
+        for arg in &*self.arguments {
             match arg {
                 SortArgument::Value(term) => arguments.push(SortArgument::Value(term.clone())),
                 SortArgument::Sort(sort) => {
-                    arguments.push(SortArgument::Sort(sort.instantiate(matches, ctx.clone())?))
+                    arguments.push(SortArgument::Sort(sort.instantiate(matches)?))
                 }
             }
         }
 
         Ok(Sort {
             head: self.head.clone(),
-            arguments,
-            span: self.span.clone(),
+            arguments: SArc::from(arguments.into_boxed_slice()),
         })
     }
 }

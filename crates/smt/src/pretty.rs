@@ -57,12 +57,14 @@ impl From<Identifier<'_>> for ast::QualifiedIdentifier {
 impl From<Constant> for ast::Constant {
     fn from(cnst: Constant) -> Self {
         match cnst {
-            Constant::Integer { value, span } => {
-                ast::Constant::Numeral(ast::Numeral { value, span })
-            }
-            Constant::Rational { value, span } => {
-                ast::Constant::Decimal(ast::Decimal { value, span })
-            }
+            Constant::Integer { value, span } => ast::Constant::Numeral(ast::Numeral {
+                value: (*value).clone(),
+                span,
+            }),
+            Constant::Rational { value, span } => ast::Constant::Decimal(ast::Decimal {
+                value: (*value).clone(),
+                span,
+            }),
         }
     }
 }
@@ -72,13 +74,13 @@ impl From<Term> for ast::Term {
         match term.kind() {
             TermKind::Constant(cnst) => ast::Term::Constant(ast::Constant::from(cnst.clone())),
             TermKind::Atom(atom) => {
-                let (id, arguments) = match atom {
-                    Atom::Bound(BoundAtom {
-                        head, arguments, ..
-                    }) => (head.function.name().clone(), arguments),
-                    Atom::Unbound(UnboundAtom {
-                        head, arguments, ..
-                    }) => (head.clone(), arguments),
+                let (id, arguments) = match &atom.head {
+                    FunctionRef::Bound(BoundRef { function, .. }) => {
+                        (function.name().clone(), &*atom.arguments)
+                    }
+                    FunctionRef::Unbound(name) => {
+                        (name.clone(), &*atom.arguments)
+                    }
                 };
 
                 ast::Term::Application(ast::Application {
@@ -90,6 +92,55 @@ impl From<Term> for ast::Term {
                     span: None,
                 })
             }
+            TermKind::Quantified(quant) => match quant.quantifier {
+                Quantifier::Forall => ast::Term::Forall(ast::Forall {
+                    bindings: quant
+                        .variables
+                        .iter()
+                        .map(|var| ast::SortedVar::from(var.clone()))
+                        .collect(),
+                    body: Box::new(ast::Term::from(quant.body.clone())),
+                    span: quant.span.clone(),
+                }),
+                Quantifier::Exists => ast::Term::Exists(ast::Exists {
+                    bindings: quant
+                        .variables
+                        .iter()
+                        .map(|var| ast::SortedVar::from(var.clone()))
+                        .collect(),
+                    body: Box::new(ast::Term::from(quant.body.clone())),
+                    span: quant.span.clone(),
+                }),
+            },
+            TermKind::Let(let_) => ast::Term::Let(ast::Let {
+                bindings: let_
+                    .bindings
+                    .iter()
+                    .map(|bind| ast::Binding::from(bind.clone()))
+                    .collect(),
+                body: Box::new(ast::Term::from(let_.body.clone())),
+                span: let_.span.clone(),
+            }),
+        }
+    }
+}
+
+impl From<Variable> for ast::SortedVar {
+    fn from(var: Variable) -> Self {
+        ast::SortedVar {
+            name: ast::Symbol::from(var.name().clone()),
+            sort: ast::Sort::from(var.sort().clone()),
+            span: var.span().clone(),
+        }
+    }
+}
+
+impl From<Binding> for ast::Binding {
+    fn from(bind: Binding) -> Self {
+        ast::Binding {
+            name: ast::Symbol::from(bind.variable.name().clone()),
+            body: ast::Term::from(bind.def.clone()),
+            span: bind.span.clone(),
         }
     }
 }
@@ -102,7 +153,7 @@ impl From<Sort> for ast::Sort {
             ast::Sort::Simple(head)
         } else {
             let mut args = Vec::new();
-            for arg in value.arguments {
+            for arg in &*value.arguments {
                 match arg {
                     SortArgument::Value(_) => todo!(),
                     SortArgument::Sort(arg) => args.push(ast::Sort::from(arg.clone())),

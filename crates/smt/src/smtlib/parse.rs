@@ -616,13 +616,44 @@ impl<'c> Parsable<'c> for Command {
             "set-logic",
             Symbol::parser().map(|logic| Command::SetLogic(SetLogic { logic, span: None })),
         ))
-        // .or(keyword("set-option")
-        //     .then(ast::Option::ast())
-        //     .map(SetOption))
+        .or(command(
+            "set-option",
+            AstOption::parser().map(|option| Command::SetOption(SetOption { option, span: None })),
+        ))
         .located()
         .named("SMT-LIBv2 command", "SMT-LIBv2 commands")
         .parens()
         .named("SMT-LIBv2 command", "SMT-LIBv2 commands")
+    }
+}
+
+impl<'c> Parsable<'c> for AttributeValue {
+    fn parser() -> Parser<'c, Self> {
+        Constant::parser()
+            .map(AttributeValue::Constant)
+            .or(Symbol::parser().map(AttributeValue::Symbol))
+    }
+}
+
+impl<'c> Parsable<'c> for Attribute {
+    fn parser() -> Parser<'c, Self> {
+        Keyword::parser()
+            .and(AttributeValue::parser())
+            .map(|(keyword, value)| Attribute {
+                keyword,
+                value,
+                span: None,
+            })
+            .located()
+    }
+}
+
+impl<'c> Parsable<'c> for AstOption {
+    fn parser() -> Parser<'c, Self> {
+        Attribute::parser().map(|attr| match AstOption::try_from(attr.clone()) {
+            Ok(opt) => opt,
+            Err(_) => AstOption::Attribute(Box::new(attr)),
+        })
     }
 }
 

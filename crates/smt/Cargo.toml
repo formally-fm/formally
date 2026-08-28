@@ -15,7 +15,9 @@ crate-type = ["lib"]
 path = "src/lib.rs"
 
 [features]
-default = []
+z3 = ["z3-sys"]
+cvc5 = ["cvc5-sys"]
+default = ["z3", "cvc5"]
 __subcratedoc = []
 
 [dependencies]
@@ -23,12 +25,15 @@ formally-support = { path = "../support", version = "0.2025.12" }
 formally-io = { path = "../io", version = "0.2025.12" }
 formally-smt-macros = { path = "../smt-macros", version = "0.2025.121", features = ["__subcratedoc"] }
 
-derive_more = { version = "2.0.1", features = ["from", "as_ref", "display", "deref"] }
-itertools = "0.14.0"
+z3-sys = { version = "0.12.0", optional = true }
+cvc5-sys = { version = "0.4.0", optional = true }
+
+derive_more = { version = "2", features = ["from", "as_ref", "display", "deref"] }
+itertools = "0.15.0"
 paste = "1.0.15"
-rpds = "1"
 rug = "1"
 transitive = "1.2.0"
-z3-sys = "0.10.0"
-linkme = "0.3.35"
+linkme = "0.3.37"
 thiserror = "2.0.17"
+dashmap = "6.2.1"
+rpds = "1"

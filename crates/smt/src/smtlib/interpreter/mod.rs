@@ -35,7 +35,7 @@ use crate::formally;
 
 use formally::{
     io::print::Print,
-    smt::{self, Config, ModelProvider, smtlib::ast},
+    smt::{self, Config, ToTerm, backends::Backend, smtlib::ast},
     support::*,
 };
 
@@ -75,14 +75,13 @@ pub use emitter::*;
 /// error stream.
 #[allow(clippy::large_enum_variant)]
 #[allow(private_interfaces)]
-#[derive(Contextual)]
 pub enum Interpreter {
     #[doc(hidden)]
-    Start(#[contextual] Config),
+    Start(Config, &'static dyn Backend),
     #[doc(hidden)]
-    Started(#[contextual] State),
+    Started(State),
     #[doc(hidden)]
-    Exited(#[contextual] Config),
+    Exited(Config),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -92,18 +91,15 @@ enum Mode {
     Unsat,
 }
 
-#[derive(Contextual)]
 struct State {
     mode: Mode,
-    #[contextual]
     config: Config,
-    #[contextual]
     solver: smt::Solver,
 }
 
 impl Default for Interpreter {
     fn default() -> Self {
-        Interpreter::Start(Config::default().with_emitter(SMTLibEmitter::new()))
+        Interpreter::Start(Config::default(), &smt::backends::Default)
     }
 }
 
@@ -122,7 +118,11 @@ enum RequiredMode {
 impl Interpreter {
     /// Create a new interpreter with the given starting configuration.
     pub fn new(config: Config) -> Interpreter {
-        Interpreter::Start(config)
+        Interpreter::Start(config, &smt::backends::Default)
+    }
+
+    pub fn with_backend(config: Config, backend: &'static dyn Backend) -> Interpreter {
+        Interpreter::Start(config, backend)
     }
 
     /// Execute a command.
@@ -131,7 +131,7 @@ impl Interpreter {
         use ast::Command::*;
 
         match self {
-            Start(config) => match command {
+            Start(config, _) => match command {
                 Echo(msg) => Self::echo(config, msg),
                 Exit(_) => Self::exit(self),
                 GetInfo(_) => Self::unsupported(config),
@@ -140,7 +140,7 @@ impl Interpreter {
                 ResetAssertions(_) => Self::unsupported(config),
                 SetInfo(_) => Self::unsupported(config),
                 SetLogic(sl) => Self::set_logic(self, sl),
-                SetOption(_) => Self::unsupported(config),
+                SetOption(so) => Self::set_option_start(config, so),
                 command => Self::fail(config, RequiredMode::Started, command),
             },
             Started(state) => match command {
@@ -168,7 +168,7 @@ impl Interpreter {
                 Reset(_) => Self::unsupported(&state.config),
                 ResetAssertions(_) => Self::unsupported(&state.config),
                 SetInfo(_) => Self::unsupported(&state.config),
-                SetOption(_) => Self::unsupported(&state.config),
+                SetOption(so) => Self::set_option_started(state, so),
                 _ => match (command, state.mode) {
                     (GetAssignments(_), Mode::Sat) => Self::unsupported(&state.config),
                     (GetModel(_), Mode::Sat) => Self::unsupported(&state.config),
@@ -191,7 +191,7 @@ impl Interpreter {
 
     /// Tell if a `(set-logic)` (but no `(exit)`) command has been executed.
     pub fn has_started(&self) -> bool {
-        !matches!(self, Interpreter::Start(_))
+        !matches!(self, Interpreter::Start(_, _))
     }
 
     /// Tell if an `(exit)` command has been executed.
@@ -201,7 +201,6 @@ impl Interpreter {
 
     fn exited(&self, command: ast::Command) -> Result<()> {
         error!(
-            &self.context(),
             command.span(),
             "command `{}` is not available because the solver has exited",
             command.name()
@@ -209,9 +208,8 @@ impl Interpreter {
         Err(DiagnosticEmitted)
     }
 
-    fn fail(config: &Config, mode: RequiredMode, command: ast::Command) -> Result<()> {
+    fn fail(_config: &Config, mode: RequiredMode, command: ast::Command) -> Result<()> {
         error!(
-            &config.context,
             command.span(),
             "the `{}` command is only available {}",
             command.name(),
@@ -225,11 +223,11 @@ impl Interpreter {
     }
 
     // TODO: supporting setting the output stream through the `Config`
-    fn response(config: &Config, response: impl Print) -> Result<()> {
+    fn response(_config: &Config, response: impl Print) -> Result<()> {
         match response.println(&mut io::stdout()) {
             Ok(_) => Ok(()),
             Err(err) => {
-                error!(&config.context, None, "input/output error: {err}");
+                error!(None, "input/output error: {err}");
                 Err(DiagnosticEmitted)
             }
         }
@@ -247,7 +245,7 @@ impl Interpreter {
 
     fn exit(&mut self) -> Result<()> {
         let config = match self {
-            Interpreter::Start(config) => config,
+            Interpreter::Start(config, _) => config,
             Interpreter::Started(State { config, .. }) => config,
             Interpreter::Exited(config) => config,
         };
@@ -257,16 +255,16 @@ impl Interpreter {
     }
 
     fn set_logic(&mut self, sl: ast::SetLogic) -> Result<()> {
-        let Interpreter::Start(mut config) = std::mem::take(self) else {
+        let Interpreter::Start(mut config, backend) = std::mem::take(self) else {
             return Ok(());
         };
 
-        config.logic = Some(
-            Identifier::from(sl.logic.inner())
-                .into_owned()
-                .over(sl.logic.span()),
-        );
-        match smt::Solver::new(&config) {
+        config.logic = match sl.logic.inner() {
+            "ALL" => None,
+            logic => Some(Identifier::from(logic).into_owned().over(sl.logic.span())),
+        };
+
+        match smt::Solver::with_backend(&config, backend) {
             Ok(solver) => {
                 *self = Interpreter::Started(State {
                     mode: Mode::Assert,
@@ -274,14 +272,30 @@ impl Interpreter {
                     solver,
                 })
             }
-            Err(_) => *self = Interpreter::Start(config),
+            Err(_) => *self = Interpreter::Start(config, backend),
         }
 
         Ok(())
     }
 
+    fn set_option_start(config: &mut Config, so: ast::SetOption) -> Result<()> {
+        match so.option {
+            ast::AstOption::ProduceModels(pm) => {
+                config.produce_models = pm.value;
+                Ok(())
+            }
+            _ => Self::unsupported(config),
+        }
+    }
+
+    fn set_option_started(state: &mut State, so: ast::SetOption) -> Result<()> {
+        Self::set_option_start(&mut state.config, so)?;
+
+        state.solver.config(&state.config)
+    }
+
     fn assert(state: &mut State, assert: ast::Assert) -> Result<()> {
-        let term = Interpreter::term_to_smt(assert.term);
+        let term = Interpreter::term_to_smt(&state.solver, assert.term)?;
         state.solver.require(term)?;
 
         state.mode = Mode::Assert;
@@ -321,7 +335,7 @@ impl Interpreter {
     }
 
     fn declare_const(state: &mut State, decl: ast::DeclareConst) -> Result<()> {
-        let sort = Interpreter::sort_to_smt(&state.solver, &decl.sort)?;
+        let sort = Interpreter::sort_to_smt_term(&state.solver, &decl.sort);
         let id = Identifier::from(decl.name.inner()).over(decl.name.span());
         state
             .solver
@@ -335,9 +349,9 @@ impl Interpreter {
     fn declare_fun(state: &mut State, decl: ast::DeclareFun) -> Result<()> {
         let mut sorts = Vec::new();
         for sort in decl.domain {
-            sorts.push(Interpreter::sort_to_smt(&state.solver, &sort)?);
+            sorts.push(Interpreter::sort_to_smt_term(&state.solver, &sort));
         }
-        let range = Interpreter::sort_to_smt(&state.solver, &decl.range)?;
+        let range = Interpreter::sort_to_smt_term(&state.solver, &decl.range);
         let id = Identifier::from(decl.name.inner()).over(decl.name.span());
 
         state
@@ -352,8 +366,8 @@ impl Interpreter {
     fn declare_sort(state: &mut State, decl: ast::DeclareSort) -> Result<()> {
         if decl.arity.value > 0 {
             error!(
-                &state.solver,
-                decl.arity.span, "parametric uninterpreted sorts are not supported yet"
+                decl.arity.span,
+                "parametric uninterpreted sorts are not supported yet"
             );
             return Err(DiagnosticEmitted);
         }
@@ -370,8 +384,8 @@ impl Interpreter {
 
     fn define_const(state: &mut State, def: ast::DefineConst) -> Result<()> {
         let id = Identifier::from(def.name.inner()).over(def.name.span());
-        let value = Interpreter::term_to_smt(def.body);
-        let sort = Interpreter::sort_to_smt(&state.solver, &def.sort)?;
+        let value = Interpreter::term_to_smt(&state.solver, def.body)?;
+        let sort = Interpreter::sort_to_smt_term(&state.solver, &def.sort);
 
         state
             .solver
@@ -385,16 +399,18 @@ impl Interpreter {
     fn define_fun(state: &mut State, def: ast::FunctionDef) -> Result<()> {
         let mut domain = Vec::new();
         for arg in def.domain {
-            domain.push(smt::Parameter::new(
-                Identifier::from(arg.name.inner()).over(arg.name.span()),
-                Interpreter::sort_to_smt(&state.solver, &arg.sort)?,
-                arg.span.clone(),
-            ));
+            domain.push(
+                smt::Variable::new(
+                    Identifier::from(arg.name.inner()).over(arg.name.span()),
+                    Interpreter::sort_to_smt_term(&state.solver, &arg.sort),
+                )
+                .over(arg.span.clone()),
+            );
         }
 
         let id = Identifier::from(def.name.inner()).over(def.name.span());
-        let body = Interpreter::term_to_smt(def.body);
-        let range = Interpreter::sort_to_smt(&state.solver, &def.range)?;
+        let body = Interpreter::term_to_smt(&state.solver, def.body)?;
+        let range = Interpreter::sort_to_smt_term(&state.solver, &def.range);
 
         state
             .solver
@@ -424,6 +440,14 @@ impl Interpreter {
     }
 
     fn get_value(state: &mut State, cmd: ast::GetValue) -> Result<()> {
+        if !state.config.produce_models {
+            error!(
+                cmd.span,
+                "no model value can be produced if the `:produce-models` option is not set to true"
+            );
+            return Err(DiagnosticEmitted);
+        }
+
         match state.solver.model()? {
             Some(model) => {
                 let mut values = Vec::new();
@@ -432,27 +456,19 @@ impl Interpreter {
                         ast::Term::Identifier(ast::QualifiedIdentifier { id, .. }) => match id {
                             ast::Identifier::Symbol(symbol) => {
                                 let symbol = Identifier::from(symbol.inner()).over(symbol.span());
-                                let functions = state.solver.functions();
+                                let functions = state.solver.env().functions.clone();
                                 let function = functions.lookup(symbol.clone()).one()?;
-                                let value = match function {
-                                    smt::Function::Parameter(_) => todo!(),
-                                    smt::Function::Primitive(_) => todo!(),
-                                    smt::Function::User(smt::UserFunction::Declared(decl)) => {
-                                        model.value(decl)
-                                    }
-                                    smt::Function::User(_) => todo!(),
-                                };
+                                let value = model.value(function)?;
+
                                 if let Some(value) = value {
                                     values.push((
                                         ast::Term::from(ast::Symbol::new(function.name()).unwrap()),
-                                        Interpreter::term_to_ast(&value.into()),
+                                        ast::Term::from(value.into_term_in(state.solver.pool())),
                                     ))
                                 } else {
                                     error!(
-                                        &state.config.context,
                                         symbol.span(),
-                                        "no value for symbol `{}` in the model",
-                                        symbol
+                                        "no value for symbol `{}` in the model", symbol
                                     );
                                     return Err(DiagnosticEmitted);
                                 }
@@ -470,7 +486,7 @@ impl Interpreter {
                 Ok(())
             }
             None => {
-                error!(&state.config.context, cmd.span, "model not available");
+                error!(cmd.span, "model not available");
                 Err(DiagnosticEmitted)
             }
         }

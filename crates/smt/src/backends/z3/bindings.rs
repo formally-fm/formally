@@ -25,21 +25,35 @@
 use z3_sys::*;
 
 use itertools::Itertools;
+use std::fmt::Formatter;
+use std::mem::MaybeUninit;
 use std::{
     ffi::*,
+    fmt::Debug,
     hash::{Hash, Hasher},
     rc::{Rc, Weak},
 };
-
+pub use z3_sys::AstKind;
+pub use z3_sys::DeclKind;
+pub use z3_sys::ErrorCode;
+pub use z3_sys::SortKind;
 pub use z3_sys::Z3_L_FALSE;
 pub use z3_sys::Z3_L_TRUE;
 
-pub use z3_sys::AstKind;
+pub struct LBool(Z3_lbool);
 
-#[repr(transparent)]
-pub struct Config {
-    pub config: Z3_config,
+impl From<LBool> for Option<bool> {
+    fn from(value: LBool) -> Self {
+        match value.0 {
+            Z3_L_TRUE => Some(true),
+            Z3_L_FALSE => Some(false),
+            _ => None,
+        }
+    }
 }
+
+#[derive(Default, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct ID(usize);
 
 pub struct Context {
     pub this: Weak<Context>,
@@ -49,12 +63,16 @@ pub struct Context {
 pub struct Solver {
     pub ctx: Rc<Context>,
     pub slv: Z3_solver,
-    pub model: Option<Z3_model>,
 }
 
 pub struct Ast {
     pub ctx: Rc<Context>,
     pub ast: Z3_ast,
+}
+
+pub struct App {
+    pub ctx: Rc<Context>,
+    pub app: Z3_app,
 }
 
 pub struct FuncDecl {
@@ -72,36 +90,29 @@ pub struct Model {
     pub model: Z3_model,
 }
 
-impl Config {
-    pub fn new() -> Config {
-        Config {
-            config: unsafe { Z3_mk_config().unwrap() },
-        }
-    }
-
-    pub fn set_param_value(&self, param: &CStr, value: &CStr) {
-        unsafe { Z3_set_param_value(self.config, param.as_ptr(), value.as_ptr()) }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config::new()
-    }
-}
-
-impl Drop for Config {
-    fn drop(&mut self) {
-        unsafe { Z3_del_config(self.config) }
-    }
+pub struct Params {
+    pub ctx: Rc<Context>,
+    pub params: Z3_params,
 }
 
 impl Context {
-    pub fn new(config: &Config) -> Rc<Context> {
+    pub fn new() -> Rc<Context> {
+        let config = unsafe { Z3_mk_config().unwrap() };
         Rc::new_cyclic(|weak| Context {
             this: weak.clone(),
-            ctx: unsafe { Z3_mk_context_rc(config.config).unwrap() },
+            ctx: unsafe { Z3_mk_context_rc(config).unwrap() },
         })
+    }
+
+    pub fn _get_error_code(&self) -> ErrorCode {
+        unsafe { Z3_get_error_code(self.ctx) }
+    }
+
+    pub fn _get_error_msg(&self, code: ErrorCode) -> String {
+        unsafe {
+            let string = Z3_get_error_msg(self.ctx, code);
+            CString::from(CStr::from_ptr(string)).into_string().unwrap()
+        }
     }
 
     pub fn mk_uninterpreted_sort(&self, name: &str) -> Sort {
@@ -127,11 +138,24 @@ impl Context {
         Sort::new(self, unsafe { Z3_mk_real_sort(self.ctx).unwrap() })
     }
 
-    pub fn mk_array_sort(&self, sorts: &[Sort], range: &Sort) -> Sort {
+    pub fn mk_array_sort(&self, sorts: &[Sort], range: Sort) -> Sort {
         let sorts = sorts.iter().map(|s| s.sort).collect_vec();
 
         Sort::new(self, unsafe {
             Z3_mk_array_sort_n(self.ctx, sorts.len() as c_uint, sorts.as_ptr(), range.sort).unwrap()
+        })
+    }
+
+    pub fn mk_const(&self, name: &str, sort: Sort) -> Ast {
+        let name = CString::new(name.as_bytes()).unwrap();
+
+        Ast::new(self, unsafe {
+            Z3_mk_const(
+                self.ctx,
+                Z3_mk_string_symbol(self.ctx, name.as_ptr()).unwrap(),
+                sort.sort,
+            )
+            .unwrap()
         })
     }
 
@@ -141,10 +165,6 @@ impl Context {
 
     pub fn mk_false(&self) -> Ast {
         Ast::new(self, unsafe { Z3_mk_true(self.ctx).unwrap() })
-    }
-
-    pub fn get_bool_value(&self, ast: &Ast) -> Z3_lbool {
-        unsafe { Z3_get_bool_value(self.ctx, ast.ast) }
     }
 
     pub fn mk_int(&self, value: c_int) -> Ast {
@@ -165,7 +185,7 @@ impl Context {
         })
     }
 
-    pub fn mk_func_decl(&self, name: &str, sorts: &[Sort], range: &Sort) -> FuncDecl {
+    pub fn mk_func_decl(&self, name: &str, sorts: &[Sort], range: Sort) -> FuncDecl {
         let name = CString::new(name.as_bytes()).unwrap();
         let sorts = sorts.iter().map(|s| s.sort).collect_vec();
         FuncDecl::new(self, unsafe {
@@ -187,14 +207,14 @@ impl Context {
         })
     }
 
-    pub fn mk_select_n(&self, array: &Ast, args: &[Ast]) -> Ast {
+    pub fn mk_select_n(&self, array: Ast, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_select_n(self.ctx, array.ast, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_store_n(&self, array: &Ast, args: &[Ast], value: &Ast) -> Ast {
+    pub fn mk_store_n(&self, array: Ast, args: Vec<Ast>, value: Ast) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_store_n(
@@ -208,116 +228,203 @@ impl Context {
         })
     }
 
-    pub fn mk_not(&self, arg: &Ast) -> Ast {
+    pub fn mk_not(&self, arg: Ast) -> Ast {
         Ast::new(self, unsafe { Z3_mk_not(self.ctx, arg.ast).unwrap() })
     }
 
-    pub fn mk_implies(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_implies(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_implies(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_and(&self, args: &[Ast]) -> Ast {
+    pub fn mk_and(&self, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_and(self.ctx, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_or(&self, args: &[Ast]) -> Ast {
+    pub fn mk_or(&self, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_or(self.ctx, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_xor(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_xor(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_xor(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_eq(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_eq(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_eq(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_distinct(&self, args: &[Ast]) -> Ast {
+    pub fn mk_distinct(&self, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_distinct(self.ctx, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_ite(&self, cond: &Ast, then: &Ast, otherwise: &Ast) -> Ast {
+    pub fn mk_ite(&self, cond: Ast, then: Ast, otherwise: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_ite(self.ctx, cond.ast, then.ast, otherwise.ast).unwrap()
         })
     }
 
-    pub fn mk_unary_minus(&self, arg: &Ast) -> Ast {
+    pub fn mk_unary_minus(&self, arg: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_unary_minus(self.ctx, arg.ast).unwrap()
         })
     }
 
-    pub fn mk_sub(&self, args: &[Ast]) -> Ast {
+    pub fn mk_sub(&self, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_sub(self.ctx, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_add(&self, args: &[Ast]) -> Ast {
+    pub fn mk_add(&self, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_add(self.ctx, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_mul(&self, args: &[Ast]) -> Ast {
+    pub fn mk_mul(&self, args: Vec<Ast>) -> Ast {
         let args = args.iter().map(|ast| ast.ast).collect_vec();
         Ast::new(self, unsafe {
             Z3_mk_mul(self.ctx, args.len() as c_uint, args.as_ptr()).unwrap()
         })
     }
 
-    pub fn mk_div(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_div(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_div(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_mod(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_mod(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_mod(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_le(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_le(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_le(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_lt(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_lt(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_lt(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_ge(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_ge(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_ge(self.ctx, left.ast, right.ast).unwrap()
         })
     }
 
-    pub fn mk_gt(&self, left: &Ast, right: &Ast) -> Ast {
+    pub fn mk_gt(&self, left: Ast, right: Ast) -> Ast {
         Ast::new(self, unsafe {
             Z3_mk_gt(self.ctx, left.ast, right.ast).unwrap()
         })
+    }
+
+    pub fn mk_int2real(&self, arg: Ast) -> Ast {
+        Ast::new(self, unsafe { Z3_mk_int2real(self.ctx, arg.ast).unwrap() })
+    }
+
+    pub fn mk_real2int(&self, arg: Ast) -> Ast {
+        Ast::new(self, unsafe { Z3_mk_real2int(self.ctx, arg.ast).unwrap() })
+    }
+
+    pub fn mk_is_int(&self, arg: Ast) -> Ast {
+        Ast::new(self, unsafe { Z3_mk_is_int(self.ctx, arg.ast).unwrap() })
+    }
+
+    pub fn _mk_rec_func_decl(&self, name: &str, domain: &[Sort], range: Sort) -> FuncDecl {
+        let name = CString::new(name.as_bytes()).unwrap();
+        let domain = domain.iter().map(|s| s.sort).collect_vec();
+
+        FuncDecl::new(self, unsafe {
+            Z3_mk_rec_func_decl(
+                self.ctx,
+                Z3_mk_string_symbol(self.ctx, name.as_ptr()).unwrap(),
+                domain.len() as c_uint,
+                domain.as_ptr(),
+                range.sort,
+            )
+            .unwrap()
+        })
+    }
+
+    pub fn _add_rec_def(&self, func: &FuncDecl, args: &[Ast], body: Ast) {
+        let mut args = args.iter().map(|arg| arg.ast).collect_vec();
+        unsafe {
+            Z3_add_rec_def(
+                self.ctx,
+                func.decl,
+                args.len() as u32,
+                args.as_mut_ptr(),
+                body.ast,
+            )
+        }
+    }
+
+    pub fn mk_forall_const(&self, variables: &[Ast], body: Ast) -> Ast {
+        let mut apps = Vec::new();
+        for var in variables {
+            assert!(unsafe { Z3_is_app(self.ctx, var.ast) });
+            apps.push(var.ast.cast::<_Z3_app>())
+        }
+
+        Ast::new(self, unsafe {
+            Z3_mk_forall_const(
+                self.ctx,
+                0,
+                apps.len() as u32,
+                apps.as_ptr(),
+                0,
+                std::ptr::null(),
+                body.ast,
+            )
+            .unwrap()
+        })
+    }
+
+    pub fn mk_exists_const(&self, variables: &[Ast], body: Ast) -> Ast {
+        let mut apps = Vec::new();
+        for var in variables {
+            assert!(unsafe { Z3_is_app(self.ctx, var.ast) });
+            apps.push(var.ast.cast::<_Z3_app>())
+        }
+
+        Ast::new(self, unsafe {
+            Z3_mk_exists_const(
+                self.ctx,
+                0,
+                apps.len() as u32,
+                apps.as_ptr(),
+                0,
+                std::ptr::null(),
+                body.ast,
+            )
+            .unwrap()
+        })
+    }
+
+    pub fn simplify(&self, ast: Ast) -> Ast {
+        Ast::new(self, unsafe { Z3_simplify(self.ctx, ast.ast).unwrap() })
     }
 }
 
@@ -336,7 +443,6 @@ impl Solver {
                 slv
             },
             ctx,
-            model: None,
         }
     }
 
@@ -353,7 +459,6 @@ impl Solver {
                 slv
             },
             ctx,
-            model: None,
         }
     }
 
@@ -365,28 +470,35 @@ impl Solver {
         unsafe { Z3_solver_pop(self.ctx.ctx, self.slv, n as c_uint) }
     }
 
-    pub fn assert(&self, ast: &Ast) {
+    pub fn assert(&self, ast: Ast) {
         unsafe { Z3_solver_assert(self.ctx.ctx, self.slv, ast.ast) }
     }
 
-    pub fn check(&mut self) -> Z3_lbool {
-        let answer = unsafe { Z3_solver_check(self.ctx.ctx, self.slv) };
-
-        if answer == Z3_L_TRUE {
-            let model = unsafe { Z3_solver_get_model(self.ctx.ctx, self.slv).unwrap() };
-            unsafe {
-                Z3_model_inc_ref(self.ctx.ctx, model);
-            }
-            self.model = Some(model);
-        } else {
-            self.model = None;
-        }
-
-        answer
+    pub fn check(&self) -> LBool {
+        unsafe { LBool(Z3_solver_check(self.ctx.ctx, self.slv)) }
     }
 
-    pub fn get_model(&self) -> Option<Model> {
-        self.model.map(|m| Model::new(self.ctx.clone(), m))
+    pub fn get_model(&self) -> Model {
+        unsafe {
+            Model::new(
+                self.ctx.clone(),
+                Z3_solver_get_model(self.ctx.ctx, self.slv).unwrap(),
+            )
+        }
+    }
+
+    pub fn set_params(&self, params: Params) {
+        unsafe { Z3_solver_set_params(self.ctx.ctx, self.slv, params.params) }
+    }
+}
+
+impl Clone for Solver {
+    fn clone(&self) -> Self {
+        unsafe { Z3_solver_inc_ref(self.ctx.ctx, self.slv) }
+        Solver {
+            ctx: self.ctx.clone(),
+            slv: self.slv,
+        }
     }
 }
 
@@ -407,10 +519,29 @@ impl Model {
         }
     }
 
-    pub fn get_const_interp(&self, decl: &FuncDecl) -> Option<Ast> {
-        Some(Ast::new(&self.ctx, unsafe {
-            Z3_model_get_const_interp(self.ctx.ctx, self.model, decl.decl)?
-        }))
+    pub fn eval(&self, ast: &Ast) -> Option<Ast> {
+        unsafe {
+            let mut result: MaybeUninit<Z3_ast> = MaybeUninit::uninit();
+            let success =
+                Z3_model_eval(self.ctx.ctx, self.model, ast.ast, true, result.as_mut_ptr());
+            if success {
+                Some(Ast::new(&self.ctx, result.assume_init()))
+            } else {
+                None
+            }
+        }
+    }
+}
+
+impl Clone for Model {
+    fn clone(&self) -> Self {
+        unsafe {
+            Z3_model_inc_ref(self.ctx.ctx, self.model);
+        }
+        Model {
+            ctx: self.ctx.clone(),
+            model: self.model,
+        }
     }
 }
 
@@ -435,6 +566,38 @@ impl Ast {
         unsafe { Z3_get_ast_kind(self.ctx.ctx, self.ast) }
     }
 
+    pub fn sort(&self) -> Sort {
+        Sort::new(&self.ctx, unsafe {
+            Z3_get_sort(self.ctx.ctx, self.ast).unwrap()
+        })
+    }
+
+    pub fn is_numeral(&self) -> bool {
+        unsafe { Z3_is_numeral_ast(self.ctx.ctx, self.ast) }
+    }
+
+    pub fn is_app(&self) -> bool {
+        unsafe { Z3_is_app(self.ctx.ctx, self.ast) }
+    }
+
+    pub fn var_index(&self) -> Option<usize> {
+        if self.kind() == AstKind::Var {
+            Some(unsafe { Z3_get_index_value(self.ctx.ctx, self.ast) as usize })
+        } else {
+            None
+        }
+    }
+
+    pub fn to_app(&self) -> Option<App> {
+        if self.is_app() {
+            Some(App::new(&self.ctx, unsafe {
+                Z3_to_app(self.ctx.ctx, self.ast).unwrap()
+            }))
+        } else {
+            None
+        }
+    }
+
     pub fn get_numeral_string(&self) -> String {
         assert_eq!(self.kind(), AstKind::Numeral);
 
@@ -442,6 +605,87 @@ impl Ast {
             let string = Z3_get_numeral_string(self.ctx.ctx, self.ast);
             CString::from(CStr::from_ptr(string)).into_string().unwrap()
         }
+    }
+
+    pub fn is_quantifier_forall(&self) -> bool {
+        unsafe { Z3_is_quantifier_forall(self.ctx.ctx, self.ast) }
+    }
+
+    pub fn is_quantifier_exists(&self) -> bool {
+        unsafe { Z3_is_quantifier_exists(self.ctx.ctx, self.ast) }
+    }
+
+    pub fn get_quantifier_num_bound(&self) -> u32 {
+        unsafe { Z3_get_quantifier_num_bound(self.ctx.ctx, self.ast) }
+    }
+
+    pub fn get_quantifier_bound_name(&self, index: u32) -> String {
+        unsafe {
+            let symbol = Z3_get_quantifier_bound_name(self.ctx.ctx, self.ast, index).unwrap();
+            match Z3_get_symbol_kind(self.ctx.ctx, symbol) {
+                Z3_symbol_kind::Int => {
+                    let int = Z3_get_symbol_int(self.ctx.ctx, symbol);
+                    format!("x{int}")
+                }
+                Z3_symbol_kind::String => {
+                    let string = Z3_get_symbol_string(self.ctx.ctx, symbol);
+                    CString::from(CStr::from_ptr(string))
+                        .to_str()
+                        .unwrap()
+                        .to_string()
+                }
+            }
+        }
+    }
+
+    pub fn get_quantifier_bound_sort(&self, index: u32) -> Sort {
+        Sort::new(&self.ctx, unsafe {
+            Z3_get_quantifier_bound_sort(self.ctx.ctx, self.ast, index).unwrap()
+        })
+    }
+
+    pub fn get_quantifier_body(&self) -> Ast {
+        Ast::new(&self.ctx, unsafe {
+            Z3_get_quantifier_body(self.ctx.ctx, self.ast).unwrap()
+        })
+    }
+}
+
+impl App {
+    fn new(ctx: &Context, app: Z3_app) -> App {
+        App {
+            ctx: ctx.this.upgrade().unwrap(),
+            app: unsafe {
+                Z3_inc_ref(ctx.ctx, app.cast());
+                app
+            },
+        }
+    }
+
+    pub fn decl(&self) -> FuncDecl {
+        FuncDecl::new(&self.ctx, unsafe {
+            Z3_get_app_decl(self.ctx.ctx, self.app).unwrap()
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        unsafe { Z3_get_app_num_args(self.ctx.ctx, self.app) as usize }
+    }
+
+    pub fn arg(&self, i: usize) -> Ast {
+        Ast::new(&self.ctx, unsafe {
+            Z3_get_app_arg(self.ctx.ctx, self.app, i as c_uint).unwrap()
+        })
+    }
+}
+
+impl Debug for Ast {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let string = unsafe {
+            let string = Z3_ast_to_string(self.ctx.ctx, self.ast);
+            CString::from(CStr::from_ptr(string)).into_string().unwrap()
+        };
+        write!(f, "{string}")
     }
 }
 
@@ -455,9 +699,25 @@ impl Clone for Ast {
     }
 }
 
-impl Hash for Ast {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Hash::hash(&self.ast, state)
+impl Drop for Ast {
+    fn drop(&mut self) {
+        unsafe { Z3_dec_ref(self.ctx.ctx, self.ast) }
+    }
+}
+
+impl Clone for App {
+    fn clone(&self) -> Self {
+        unsafe { Z3_inc_ref(self.ctx.ctx, self.app.cast()) }
+        App {
+            ctx: self.ctx.clone(),
+            app: self.app,
+        }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        unsafe { Z3_dec_ref(self.ctx.ctx, self.app.cast()) }
     }
 }
 
@@ -489,6 +749,14 @@ impl FuncDecl {
             },
         }
     }
+
+    pub fn id(&self) -> ID {
+        ID(unsafe { Z3_get_func_decl_id(self.ctx.ctx, self.decl) as usize })
+    }
+
+    pub fn kind(&self) -> DeclKind {
+        unsafe { Z3_get_decl_kind(self.ctx.ctx, self.decl) }
+    }
 }
 
 impl Clone for FuncDecl {
@@ -509,9 +777,17 @@ impl Drop for FuncDecl {
 
 impl Hash for FuncDecl {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Hash::hash(&self.decl, state)
+        self.id().hash(state)
     }
 }
+
+impl PartialEq for FuncDecl {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for FuncDecl {}
 
 impl Sort {
     pub fn new(ctx: &Context, sort: Z3_sort) -> Sort {
@@ -522,6 +798,26 @@ impl Sort {
                 sort
             },
         }
+    }
+
+    pub fn kind(&self) -> SortKind {
+        unsafe { Z3_get_sort_kind(self.ctx.ctx, self.sort) }
+    }
+
+    pub fn id(&self) -> ID {
+        unsafe { ID(Z3_get_sort_id(self.ctx.ctx, self.sort) as usize) }
+    }
+
+    pub fn get_array_sort_domain(&self) -> Sort {
+        Sort::new(&self.ctx, unsafe {
+            Z3_get_array_sort_domain(self.ctx.ctx, self.sort).unwrap()
+        })
+    }
+
+    pub fn get_array_sort_range(&self) -> Sort {
+        Sort::new(&self.ctx, unsafe {
+            Z3_get_array_sort_range(self.ctx.ctx, self.sort).unwrap()
+        })
     }
 }
 
@@ -535,14 +831,62 @@ impl Clone for Sort {
     }
 }
 
+impl Hash for Sort {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id().hash(state)
+    }
+}
+
+impl PartialEq for Sort {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for Sort {}
+
 impl Drop for Sort {
     fn drop(&mut self) {
         unsafe { Z3_dec_ref(self.ctx.ctx, self.sort.cast::<_Z3_ast>()) }
     }
 }
 
-impl Hash for Sort {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Hash::hash(&self.sort, state)
+impl Params {
+    pub fn new(ctx: Rc<Context>) -> Params {
+        unsafe {
+            let params = Z3_mk_params(ctx.ctx).unwrap();
+            Z3_params_inc_ref(ctx.ctx, params);
+
+            Params { params, ctx }
+        }
+    }
+
+    pub fn set_bool(&self, name: &str, value: bool) {
+        let name = CString::new(name.as_bytes()).unwrap();
+        unsafe {
+            Z3_params_set_bool(
+                self.ctx.ctx,
+                self.params,
+                Z3_mk_string_symbol(self.ctx.ctx, name.as_ptr()).unwrap(),
+                value,
+            )
+        }
+    }
+}
+
+impl Clone for Params {
+    fn clone(&self) -> Self {
+        unsafe { Z3_params_inc_ref(self.ctx.ctx, self.params) }
+
+        Params {
+            ctx: self.ctx.clone(),
+            params: self.params,
+        }
+    }
+}
+
+impl Drop for Params {
+    fn drop(&mut self) {
+        unsafe { Z3_params_dec_ref(self.ctx.ctx, self.params) }
     }
 }

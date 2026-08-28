@@ -67,7 +67,8 @@ pub trait Control<'c, Out: 'c>: Parse<'c, Out> {
                         }
                         Err(_) if !second.has_advanced() => {
                             let Token(token, span) = state.token();
-                            error!(
+                            diagnose!(
+                                Level::Error,
                                 state,
                                 span,
                                 SyntaxIssue::Expected(name.clone(), token.to_string())
@@ -111,8 +112,7 @@ pub trait Control<'c, Out: 'c>: Parse<'c, Out> {
     ///          }).ok()
     /// }
     ///
-    /// let emitter = StdErrEmitter::new();
-    /// let result = float().parse(&emitter, "1234/4321");
+    /// let result = float().parse("1234/4321");
     ///
     /// assert!(matches!(result, Err(ParseError::Reject)));
     /// ```
@@ -177,7 +177,7 @@ pub trait Control<'c, Out: 'c>: Parse<'c, Out> {
                 let span = split.elapsed();
                 split.commit();
 
-                error!(state, span, error.clone());
+                diagnose!(Level::Error, state, span, error.clone());
                 Err(DiagnosticEmitted.into())
             } else {
                 split.commit();
@@ -235,7 +235,8 @@ pub trait Control<'c, Out: 'c>: Parse<'c, Out> {
                 }
                 Err(_) if !split.has_advanced() => {
                     let Token(token, span) = state.token();
-                    error!(
+                    diagnose!(
+                        Level::Error,
                         state,
                         span,
                         SyntaxIssue::Expected(name.clone(), token.to_string())
@@ -245,7 +246,12 @@ pub trait Control<'c, Out: 'c>: Parse<'c, Out> {
                 Err(_) => {
                     let elapsed = split.elapsed();
                     split.commit();
-                    trace!(state, elapsed, SyntaxIssue::Trace(name.clone()));
+                    diagnose!(
+                        NoteKind::Trace,
+                        state,
+                        elapsed,
+                        SyntaxIssue::Trace(name.clone())
+                    );
                     Err(DiagnosticEmitted.into())
                 }
             }
@@ -343,7 +349,7 @@ pub trait Ok<'c, Out: 'c, E: 'c + Display>: Parse<'c, std::result::Result<Out, E
             match value {
                 Ok(value) => Ok(value),
                 Err(err) => {
-                    error!(state, span, "{err}");
+                    diagnose!(Level::Error, state, span, "{err}");
                     Err(DiagnosticEmitted.into())
                 }
             }

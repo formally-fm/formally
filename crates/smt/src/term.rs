@@ -28,9 +28,13 @@ use formally::support::*;
 use derive_more::From;
 use transitive::Transitive;
 
-use std::{ops::Deref, sync::Arc};
-
 pub use rug::{Integer, Rational};
+use std::fmt::Formatter;
+use std::{
+    fmt::Display,
+    hash::{Hash, Hasher},
+    sync::{Arc, Mutex},
+};
 
 /// A constant term.
 ///
@@ -40,148 +44,237 @@ pub use rug::{Integer, Rational};
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 #[non_exhaustive]
 pub enum Constant {
-    Integer { value: Integer, span: Option<Span> },
-    Rational { value: Rational, span: Option<Span> },
+    /// An integer constant.
+    Integer {
+        value: Arc<Integer>,
+        span: Option<Span>,
+    },
+    /// A rational constant.
+    Rational {
+        value: Arc<Rational>,
+        span: Option<Span>,
+    },
 }
 
 impl From<Integer> for Constant {
     fn from(value: Integer) -> Self {
-        Constant::Integer { value, span: None }
+        Constant::Integer {
+            value: Arc::new(value),
+            span: None,
+        }
     }
 }
 
 impl From<Rational> for Constant {
     fn from(value: Rational) -> Self {
-        Constant::Rational { value, span: None }
-    }
-}
-
-/// A [Function] associated with a source [Span].
-///
-/// [Reference] just wraps a [Function] together with a [Span] to keep track of there the mention
-/// of the function appeared in an original source code. After [name resolution], this span
-/// corresponds with the span of the [Identifier] that was replaced with this [Reference].
-#[allow(clippy::duplicated_attributes)]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
-pub struct Reference {
-    pub function: Function,
-    pub span: Option<Span>,
-}
-
-impl<T: Into<Function>> From<T> for Reference {
-    fn from(value: T) -> Self {
-        Reference {
-            function: value.into(),
+        Constant::Rational {
+            value: Arc::new(value),
             span: None,
         }
     }
 }
 
-/// A *bound* atom.
+/// A reference to a [Function] occurring at a given [Span].
 ///
-/// A bound atom represents an expression of the form `(f arg1 arg2 ...)` where `f` is already given
-/// as a specific [Function] object (inside a [Reference] to keep track of its source span).
-///
-/// Bound atoms can be [type checked](Term::type_check) directly (supposing their children can
-/// recursively be type checked) because typing information is available. Note that this should
-/// not usually be a concern because [Solver::declare()], [Solver::define()], and
-/// [Solver::require()] already perform name resolution and type checking appropriately.
-///
-/// Terms can usually better be constructed with the [term] macro, which can build both bound and
-/// [unbound](UnboundAtom) atoms.
+/// This type is used as *head* of *bound atoms*, i.e. fully name-resolved atoms.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
-pub struct BoundAtom {
+pub struct BoundRef {
     /// the function that is being applied.
-    pub head: Reference,
-    /// the atom's argument terms.
-    pub arguments: Vec<Term>,
+    pub function: Function,
     /// the atom's source span.
     pub span: Option<Span>,
 }
 
-impl<T: Into<Reference>> From<T> for BoundAtom {
-    fn from(value: T) -> Self {
-        BoundAtom {
-            head: value.into(),
-            arguments: Vec::new(),
+impl From<Function> for BoundRef {
+    fn from(function: Function) -> Self {
+        BoundRef {
+            function,
             span: None,
         }
     }
 }
 
-/// An *unbound* atom.
-///
-/// An unbound atom represents an expression of the form `(f arg1 arg2 ...)` where `f` is given
-/// only as an [Identifier].
-///
-/// Unbound atoms cannot be [type checked](Term::type_check) directly because the identifier
-/// does not provide any typing information. [Name resolution](Term::resolve) must be peformed
-/// before type checking, for this reason. Note that this should
-/// not usually be a concern because [Solver::declare()], [Solver::define()], and
-/// [Solver::require()] already perform name resolution and type checking appropriately.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
-pub struct UnboundAtom {
-    /// the name of the function that is being applied.
-    pub head: Identifier<'static>,
-    /// the atom's argument terms.
-    pub arguments: Vec<Term>,
-    /// the atom's source span.
-    pub span: Option<Span>,
+impl Display for BoundRef {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.function.name())
+    }
 }
 
-impl<'a, T: Into<Identifier<'a>>> From<T> for UnboundAtom {
-    fn from(value: T) -> Self {
-        UnboundAtom {
-            head: value.into().into_owned(),
-            arguments: Vec::new(),
-            span: None,
+/// A bound or unbound reference to a function.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, From, Located, Locatable, Transitive)]
+#[allow(clippy::duplicated_attributes)]
+#[transitive(from(Function, BoundRef))]
+#[transitive(from(Variable, Function))]
+#[transitive(from(Primitive, Function))]
+#[transitive(from(UserFunction, Function))]
+#[transitive(from(Declared, UserFunction))]
+#[transitive(from(Defined, UserFunction))]
+pub enum FunctionRef {
+    /// A bound reference to a [Function]
+    Bound(BoundRef),
+    /// A reference to an unbound identifier
+    Unbound(Identifier<'static>),
+}
+
+impl Display for FunctionRef {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FunctionRef::Bound(bound) => bound.fmt(f),
+            FunctionRef::Unbound(unbound) => unbound.fmt(f),
+        }
+    }
+}
+
+impl FunctionRef {
+    pub fn name(&self) -> &Identifier<'static> {
+        match self {
+            FunctionRef::Bound(bound) => bound.function.name(),
+            FunctionRef::Unbound(unbound) => unbound,
         }
     }
 }
 
 /// An atom term.
 ///
-/// Atoms can be [bound](BoundAtom) or [unbound](UnboundAtom).
-/// 1. bound atoms refer to a specific [Function] object and therefore can be type checked directly.
-/// 2. unbound atoms contain only an [Identifier] in place of the applied function, so [name
-///    resolution](Term::resolve) has to be performed on an unbound term before it can be type
-///    checked.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, From, Located, Locatable)]
-pub enum Atom {
-    Bound(BoundAtom),
-    Unbound(UnboundAtom),
+/// Atoms are applications of arguments to functions. These are the most common type of
+/// [terms][Term], which include also references to *constants* (functions without arguments) and
+/// *variables*.
+///
+/// Atoms can be *bound* or *unbound*:
+/// 1. bound atoms, with [FunctionRef::Bound] as `head`, refer to a specific [Function] object and
+///    therefore can be type checked directly.
+/// 2. unbound atoms, with [FunctionRef::Unbound] as `head`, contain only an [Identifier] in place
+///    of the applied function, so name resolution has to be performed on an unbound term before it
+///    can be type checked.
+///
+/// Most methods in [Solver] are responsible of performing name resolution (and type checking) on
+/// the terms they receive.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable, Transitive)]
+#[allow(clippy::duplicated_attributes)]
+#[transitive(from(Identifier<'static>, FunctionRef))]
+#[transitive(from(BoundRef, FunctionRef))]
+#[transitive(from(Function, BoundRef))]
+#[transitive(from(Variable, Function))]
+#[transitive(from(Primitive, Function))]
+#[transitive(from(UserFunction, Function))]
+#[transitive(from(Declared, UserFunction))]
+#[transitive(from(Defined, UserFunction))]
+pub struct Atom {
+    /// The head of the atom, i.e., the [Function] being applied.
+    pub head: FunctionRef,
+    /// The arguments of the atom.
+    pub arguments: Arc<[Term]>,
+    /// The source span of this atom.
+    pub span: Option<Span>,
+}
+
+impl From<FunctionRef> for Atom {
+    fn from(head: FunctionRef) -> Self {
+        Atom {
+            head,
+            arguments: Arc::default(),
+            span: None,
+        }
+    }
+}
+
+/// Either the `exists` or `forall` quantifier.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum Quantifier {
+    Forall,
+    Exists,
+}
+
+/// A quantified formula.
+///
+/// [Quantified] represents existentially or universally quantified formulas. The body must be of
+/// sort [Core::Bool()](theories::Core::Bool()) for the term to be considered well-typed.
+///
+/// The [variables](Variable) can be used in the body freely.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
+pub struct Quantified {
+    /// Which quantifier is used.
+    pub quantifier: Quantifier,
+    /// The quantified variables.
+    pub variables: Arc<[Variable]>,
+    /// The body of the quantified formula.
+    pub body: Term,
+    /// The source span of the formula.
+    pub span: Option<Span>,
+}
+
+/// A binding of a variable to a term in a `let` expression.
+///
+/// The type is parameterized by a type `V: ToSort` representing the sorts of the variables and
+/// a type `T: ToTerm` representing the defining term of the binding.
+///
+/// [Binding] is usually constructed using [Binding::new()] and given to [Solver::lookup_binding()]
+/// to apply name resolution and type checking to its constituent parts.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
+pub struct Binding<V: ToSort = Sort, T: ToTerm = Term> {
+    /// The variable
+    pub variable: Variable<V>,
+    pub def: T,
+    pub span: Option<Span>,
+}
+
+impl<T: TypeCheck + ToTerm> Binding<Infer, T> {
+    /// Construct a new [Binding] with a to-be-inferred sort.
+    ///
+    /// The result can be given to [Solver::lookup_binding()] to apply name resolution and type
+    /// checking, to obtain a binding actually usable in a [Let] term.
+    pub fn new(name: Identifier<'_>, def: T) -> Binding<Infer, T> {
+        let namespan = name.span();
+        Binding {
+            variable: Variable::new(name, Infer).over(namespan),
+            def,
+            span: None,
+        }
+    }
+}
+
+/// A `let` expression.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
+pub struct Let {
+    /// The variable bindings of the `let` expression
+    pub bindings: Arc<[Binding]>,
+    /// The body of the `let` expression
+    pub body: Term,
+    /// The source span of the term
+    pub span: Option<Span>,
 }
 
 /// The payload of [Term] objects.
 ///
-/// The [TermKind] enum lists the possible kinds of terms supported by the framework. [Term] derefs
-/// immutably to [TermKind], and a term's kind is also available through the [Term::kind()] method.
-/// Terms can be constructed from [TermKind] using [Term::from()], although constructing terms
-/// with the [term] is recommended.
+/// The [TermKind] enum lists the possible kinds of terms supported by the framework. A term's kind
+/// is also available through the [Term::kind()] method. Terms can be constructed from [TermKind]
+/// using a [TermPool], such as the one provided by [Solver::pool()].
 ///
 /// As mentioned in the [overview](formally::smt), we differ from most SMT APIs in that we do not
 /// offer multiple functions and/or types, one for each possible term node (addition, subtraction,
 /// conjunction, etc.), but rather we have a single notion of [Atom] which is the application of a
 /// [Function] to a list of argument terms. This allows maximum flexibility, while still keeping the
-/// construction of terms easy thanks to the [term] macro.
-///
-/// As a result, *currently* [TermKind] only has two variants, one for [constants](Constant)
-/// (currently only integer and rational numbers), and one for atoms. Variants will be added when
-/// supporting further syntactic elements of SMT-LIBv2 such as *let bindings*, *quantifiers* and
-/// *match expressions*.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, From, Located, Locatable, Transitive)]
+/// construction of terms easy thanks to the [term!] macro. This is why this enum has relatively few
+/// variants.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, From, Located, Locatable)]
 #[allow(clippy::duplicated_attributes)]
-#[transitive(from(Identifier<'_>, Atom))]
-#[transitive(from(Function, Atom))]
-#[transitive(from(Primitive, Function))]
-#[transitive(from(Declared, Atom))]
-#[transitive(from(Defined, Atom))]
 #[non_exhaustive]
 pub enum TermKind {
     /// A constant.
     Constant(Constant),
     /// An atom.
+    #[from(skip)]
     Atom(Atom),
+    /// A quantified formula
+    Quantified(Quantified),
+    /// A `let` expression
+    Let(Let),
+}
+
+impl<T: Into<Atom>> From<T> for TermKind {
+    fn from(atom: T) -> Self {
+        TermKind::Atom(atom.into())
+    }
 }
 
 /// An SMT term.
@@ -189,38 +282,68 @@ pub enum TermKind {
 /// [Term] objects represent SMT terms as used throughout the framework. The objects themselves are
 /// shared references to [TermKind] objects which contain the actual data.
 ///
-/// Terms are preferably created using the [term] macro. The internal structure is useful instead to
-/// destructuring terms by pattern matching for syntactic manipulations.
+/// Terms are uniqued and shared through the use of a [TermPool], usually indirectly by means of
+/// a [Solver]. Constructing a [Term] directly is often not needed, because most methods that
+/// would accept one accept instead generic instances of [ToTerm], which include the result of the
+/// [term!] macro, which is the recommended way of constructing terms.
 ///
-/// Important operations on terms include *type checking* ([Term::type_check()] and equivalently
-/// [Sort::of()]), and *name resolution* ([Term::resolve()]).
-///
-/// Comparison of [Term] objects is *structural*, so equality and hashing account for the syntactic
-/// structure of the term (including the source spans). Keep this in mind when using terms as keys
-/// for hash maps because lookup can become very expensive.
-///
-/// To use terms as hashing keys it is better to compare them *nominally*, i.e. in such a way that
-/// objects with different memory addresses compare different even when structurally equal. To do
-/// that, you can wrap [Term] into a [Nominal] type.
-///
-/// Example:
-/// ```
-/// # mod formally {
-/// #    pub extern crate formally_support as support;
-/// #    pub extern crate formally_smt as smt;
-/// # }
-/// # use formally::smt::*;
-/// # use formally::support::*;
-/// let ponens1 = term!(=> (and (=> p q) p) q);
-/// let ponens2 = term!(=> (and (=> p q) p) q);
-///
-/// assert_eq!(ponens1, ponens2);
-///
-/// assert_ne!(Nominal::new(ponens1), Nominal::new(ponens2));
-/// ```
-#[allow(clippy::duplicated_attributes)]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Located)]
-pub struct Term(Arc<TermKind>);
+/// See the [ToTerm] trait for more informations about how to construct [Term] objects from [ToTerm]
+/// instances.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct Term(pub(crate) Nominal<Arc<TermInner>>);
+
+#[derive(Debug)]
+pub(crate) struct TermInner {
+    pub(crate) kind: TermKind,
+    pub(crate) sort: Mutex<Option<Sort>>,
+    pub(crate) resolved: bool,
+}
+
+impl TermInner {
+    pub(crate) fn new(kind: TermKind) -> TermInner {
+        let resolved = match &kind {
+            TermKind::Constant(_) => true,
+            TermKind::Atom(atom) => {
+                matches!(&atom.head, FunctionRef::Bound(_))
+                    && atom.arguments.iter().all(Term::is_resolved)
+            }
+            TermKind::Quantified(quant) => quant.body.is_resolved(),
+            TermKind::Let(let_) => let_.body.is_resolved(),
+        };
+
+        TermInner {
+            kind,
+            sort: Mutex::default(),
+            resolved,
+        }
+    }
+}
+
+impl Term {
+    pub fn is_resolved(&self) -> bool {
+        self.0.resolved
+    }
+}
+
+impl Hash for TermInner {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.kind.hash(state)
+    }
+}
+
+impl PartialEq for TermInner {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+impl Eq for TermInner {}
+
+impl Located for Term {
+    fn span(&self) -> Option<Span> {
+        self.0.kind.span()
+    }
+}
 
 impl From<bool> for TermKind {
     fn from(value: bool) -> Self {
@@ -232,71 +355,49 @@ impl From<bool> for TermKind {
     }
 }
 
-impl<T: Into<TermKind>> From<T> for Term {
-    fn from(value: T) -> Self {
-        Term(Arc::new(value.into()))
-    }
-}
-
-impl<T: Into<Reference>> From<T> for Atom {
-    fn from(value: T) -> Self {
-        Atom::Bound(BoundAtom {
-            head: value.into(),
-            arguments: Vec::new(),
-            span: None,
-        })
-    }
-}
-
-impl From<Identifier<'_>> for Atom {
-    fn from(id: Identifier) -> Self {
-        Atom::Unbound(UnboundAtom {
-            head: id.into_owned(),
-            arguments: Vec::new(),
-            span: None,
-        })
-    }
-}
-
 impl Term {
     /// Get this term's [TermKind].
     pub fn kind(&self) -> &TermKind {
-        &self.0
+        &self.0.kind
     }
 }
 
-impl Deref for Term {
-    type Target = TermKind;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl PartialEq<bool> for Term {
+    fn eq(&self, other: &bool) -> bool {
+        if let TermKind::Atom(atom) = self.kind()
+            && let Atom { head, .. } = atom
+            && let FunctionRef::Bound(bound) = head
+            && let BoundRef { function, .. } = bound
+            && let Function::Primitive(prim) = function
+        {
+            (*other && *prim == theories::Core::True())
+                || (!*other && *prim == theories::Core::False())
+        } else {
+            false
+        }
     }
 }
 
-// Used by the `term!` macro internally, so this has to be public, but we want to keep it hidden.
-#[doc(hidden)]
-pub trait Call {
-    fn call(self, args: Vec<Term>) -> Atom;
-}
-
-#[doc(hidden)]
-impl<T: Into<Reference>> Call for T {
-    fn call(self, arguments: Vec<Term>) -> Atom {
-        Atom::Bound(BoundAtom {
-            head: self.into(),
-            arguments,
-            span: None,
-        })
+impl PartialEq<Integer> for Term {
+    fn eq(&self, other: &Integer) -> bool {
+        if let TermKind::Constant(cnst) = self.kind()
+            && let Constant::Integer { value, .. } = cnst
+        {
+            **value == *other
+        } else {
+            false
+        }
     }
 }
 
-#[doc(hidden)]
-impl Call for Identifier<'_> {
-    fn call(self, arguments: Vec<Term>) -> Atom {
-        Atom::Unbound(UnboundAtom {
-            head: self.into_owned(),
-            arguments,
-            span: None,
-        })
+impl PartialEq<Rational> for Term {
+    fn eq(&self, other: &Rational) -> bool {
+        if let TermKind::Constant(cnst) = self.kind()
+            && let Constant::Rational { value, .. } = cnst
+        {
+            **value == *other
+        } else {
+            false
+        }
     }
 }

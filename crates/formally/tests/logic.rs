@@ -22,15 +22,61 @@
 // SOFTWARE.
 //
 
-use formally::smt::backends::z3::Z3;
 use formally::{smt::*, support::*};
 
-#[test]
-fn solve() -> Result<()> {
-    let mut solver = Solver::new(&Config::new().backend(Z3))?;
+use std::rc::Rc;
 
-    let p = solver.declare(Declaration::constant("p", theories::Core::Bool()))?;
-    let q = solver.declare(Declaration::constant("q", theories::Core::Bool()))?;
+use rstest::*;
+
+#[test]
+fn doctest() -> Result<()> {
+    let solver = Solver::new(&Config::default().logic("ALIA"))?;
+
+    let array = solver.lookup(term!(Array Int Int), Role::Sort)?;
+    let sort = Sort::of(&array)?;
+
+    let sortsort = Sort::sort();
+
+    assert_eq!(sort, sortsort);
+
+    Ok(())
+}
+
+#[test]
+fn manager() -> Result<()> {
+    let manager = Rc::new(TermManager::new()?);
+    let config = Config::new();
+    let mut slv1 = Solver::with_manager(&config, manager.clone())?;
+    let mut slv2 = Solver::with_manager(&config, manager.clone())?;
+
+    let x1 = slv1.declare(Declaration::constant("x", sort!(Int)))?;
+    let x2 = slv2.declare(Declaration::constant("x", sort!(Int)))?;
+
+    assert_eq!(x1, x2);
+
+    let t1 = slv1.lookup(term!(* x x), Role::Function)?;
+    let t2 = slv2.lookup(term!(* x x), Role::Function)?;
+
+    assert_eq!(t1, t2);
+
+    slv1.require(term!(= x 42))?;
+
+    slv2.require(term!(not (= x 42)))?;
+
+    assert_eq!(slv1.check()?, Answer::Yes);
+
+    assert_eq!(slv2.check()?, Answer::Yes);
+
+    Ok(())
+}
+
+#[rstest]
+fn solve(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
+    let config = Config::new().produce_models(true);
+    let mut solver = Solver::with_backend_name(&config, backend)?;
+
+    let p = solver.declare(Declaration::constant("p", sort!(Bool)))?;
+    let q = solver.declare(Declaration::constant("q", sort!(Bool)))?;
 
     solver.require(term!(=> #p #q))?;
 
@@ -48,11 +94,93 @@ fn solve() -> Result<()> {
 
     match answer {
         Answer::Yes => match solver.model()? {
-            Some(model) => assert_eq!(model.value(&q), Some(ModelValue::from(true))),
+            Some(model) => assert_eq!(model.value(q)?.unwrap(), true),
             None => panic!("there is no model!"),
         },
         _ => panic!("wrong answer: {answer:?}"),
     }
+
+    Ok(())
+}
+
+#[rstest]
+fn quantified(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
+    let config = Config::new();
+    let mut solver = Solver::with_backend_name(&config, backend)?;
+
+    let density = term!(
+        (forall ((x Real) (y Real)) (=> (< x y) (exists ((z Real)) (and (> z x) (< z y)))))
+    );
+    solver.require(term!(not #density))?;
+
+    assert_eq!(solver.check()?, Answer::No);
+
+    Ok(())
+}
+
+#[rstest]
+fn definitions(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
+    let config = Config::new().produce_models(true);
+    let mut solver = Solver::with_backend_name(&config, backend)?;
+
+    solver.declare(Declaration::constant("x", sort!(Int)))?;
+    solver.declare(Declaration::constant("y", sort!(Int)))?;
+    solver.define(Definition::constant("z", sort!(Int), term!(* x 2)))?;
+
+    solver.require(term!(= x 21))?;
+    solver.require(term!(= y z))?;
+
+    let result = solver.check()?;
+
+    assert_eq!(result, Answer::Yes);
+
+    let model = solver.model()?.unwrap();
+
+    assert_eq!(model.value(term!(y))?.unwrap(), Integer::from(42));
+
+    Ok(())
+}
+
+#[rstest]
+fn variables(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
+    let config = Config::new().produce_models(true);
+    let mut solver = Solver::with_backend_name(&config, backend)?;
+
+    solver.define(Definition::function(
+        "f",
+        vars!((x Int) (y Int)),
+        sort!(Int),
+        term!(+ x y),
+    ))?;
+    let x = solver.declare(Declaration::constant("x", sort!(Int)))?;
+
+    solver.require(term!(= x (f 30 12)))?;
+
+    assert_eq!(solver.check()?, Answer::Yes);
+
+    let value = solver.model()?.unwrap().value(x)?.unwrap();
+    assert_eq!(value, Integer::from(42));
+
+    Ok(())
+}
+
+#[rstest]
+fn arrays(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
+    let config = Config::new().produce_models(true);
+    let mut solver = Solver::with_backend_name(&config, backend)?;
+
+    solver.declare(Declaration::constant("a1", sort!(Array Int Int)))?;
+    solver.declare(Declaration::constant("a2", sort!(Array Int Int)))?;
+    let x = solver.declare(Declaration::constant("x", sort!(Int)))?;
+
+    solver.require(term!(= a2 (store a1 0 42)))?;
+    solver.require(term!(= #x (select a2 0)))?;
+
+    assert_eq!(solver.check()?, Answer::Yes);
+
+    let model = solver.model()?.unwrap();
+
+    assert_eq!(model.value(x)?.unwrap(), Integer::from(42));
 
     Ok(())
 }

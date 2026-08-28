@@ -22,146 +22,167 @@
 // SOFTWARE.
 //
 
-use crate::{
-    self as smt, formally,
-    smtlib::{ast, interpreter::Interpreter},
+use crate::formally;
+use formally::{
+    smt::{
+        self, ToTerm,
+        smtlib::{ast, interpreter::Interpreter},
+        term,
+    },
+    support::*,
 };
-use formally::support::*;
+
+use std::sync::Arc;
 
 impl Interpreter {
-    fn sort_to_smt_term(sort: &ast::Sort) -> smt::Term {
+    pub(crate) fn sort_to_smt_term(solver: &smt::Solver, sort: &ast::Sort) -> smt::Term {
         match sort {
-            ast::Sort::Simple(ast::Identifier::Symbol(name)) => {
-                let head = Identifier::from(name.inner()).over(name.span());
-                smt::Term::from(smt::Atom::Unbound(smt::UnboundAtom {
-                    head: head.into_owned(),
-                    arguments: Vec::new(),
-                    span: name.span(),
-                }))
-            }
+            ast::Sort::Simple(ast::Identifier::Symbol(name)) => Identifier::from(name.inner())
+                .over(name.span())
+                .into_term_in(solver.pool()),
             ast::Sort::Application(ast::SortApplication {
                 head: ast::Identifier::Symbol(head),
                 args,
                 span,
             }) => {
-                let head = Identifier::from(head.inner()).over(head.span());
-                smt::Term::from(smt::Atom::Unbound(smt::UnboundAtom {
-                    head: head.into_owned(),
-                    arguments: args.iter().map(Interpreter::sort_to_smt_term).collect(),
-                    span: span.clone(),
-                }))
+                let head = Identifier::from(head.inner())
+                    .into_owned()
+                    .over(head.span());
+                let args: Vec<_> = args
+                    .iter()
+                    .map(|s| Interpreter::sort_to_smt_term(solver, s))
+                    .collect();
+
+                term!(#head #(#args)*)
+                    .over(span.clone())
+                    .into_term_in(solver.pool())
             }
             _ => todo!(),
         }
     }
 
-    pub(crate) fn sort_to_smt(solver: &smt::Solver, sort: &ast::Sort) -> Result<smt::Sort> {
-        let term = Interpreter::sort_to_smt_term(sort);
-        let term = term.resolve(&solver.env(), smt::Role::Sort)?;
-
-        smt::Sort::evaluate(&term, solver.context())
-    }
-
-    fn constant_to_smt(cnst: ast::Constant) -> smt::Term {
+    fn constant_to_smt(solver: &smt::Solver, cnst: ast::Constant) -> smt::Term {
         let span = cnst.span();
-        let v = match cnst {
+        let cnst = match cnst {
             ast::Constant::Numeral(n) => smt::Constant::from(n.value),
-            ast::Constant::Decimal(_) => todo!(),
+            ast::Constant::Decimal(d) => smt::Constant::from(d.value),
             ast::Constant::Hexadecimal(n) => smt::Constant::from(n.value),
             ast::Constant::Binary(n) => smt::Constant::from(n.value),
             ast::Constant::String(_) => todo!(),
-        };
+        }
+        .over(span);
 
-        v.over(span).into()
+        term!(#cnst).into_term_in(solver.pool())
     }
 
     fn app_to_smt(
+        solver: &smt::Solver,
         id: ast::QualifiedIdentifier,
         arguments: &[ast::Term],
         span: Option<Span>,
-    ) -> smt::Term {
+    ) -> Result<smt::Term> {
         let ast::QualifiedIdentifier {
             id, span: idspan, ..
         } = id;
         match id {
             ast::Identifier::Symbol(symbol) => {
-                let arguments = arguments
-                    .iter()
-                    .map(|arg| Interpreter::term_to_smt(arg.clone()))
-                    .collect();
+                let mut smtargs = Vec::new();
+                for arg in arguments {
+                    smtargs.push(Interpreter::term_to_smt(solver, arg.clone())?)
+                }
 
                 let syspan = symbol.span();
                 let head = Identifier::from(symbol.into_inner()).over(syspan);
-                smt::TermKind::Atom(smt::Atom::Unbound(smt::UnboundAtom {
-                    head,
-                    arguments,
+                let term = smt::TermKind::Atom(smt::Atom {
+                    head: smt::FunctionRef::Unbound(head),
+                    arguments: Arc::from(smtargs.into_boxed_slice()),
                     span: idspan,
-                }))
+                })
                 .over(span)
-                .into()
+                .into_term_in(solver.pool());
+
+                Ok(term)
             }
             _ => todo!(),
         }
     }
 
-    pub(crate) fn term_to_smt(term: ast::Term) -> smt::Term {
+    pub(crate) fn term_to_smt(solver: &smt::Solver, term: ast::Term) -> Result<smt::Term> {
         match term {
-            ast::Term::Constant(cnst) => Interpreter::constant_to_smt(cnst),
+            ast::Term::Constant(cnst) => Ok(Interpreter::constant_to_smt(solver, cnst)),
             ast::Term::Identifier(id) => {
                 let span = id.span.clone();
-                Interpreter::app_to_smt(id, &[], span)
+                Interpreter::app_to_smt(solver, id, &[], span)
             }
             ast::Term::Application(ast::Application { head, args, span }) => {
-                Interpreter::app_to_smt(head, &args, span)
+                Interpreter::app_to_smt(solver, head, &args, span)
             }
-            ast::Term::Let(_) => todo!(),
+            ast::Term::Let(let_) => {
+                let mut bindings = Vec::new();
+                for bind in let_.bindings {
+                    bindings.push(
+                        solver.lookup_binding(
+                            smt::Binding::new(
+                                Identifier::new(bind.name.inner()),
+                                Interpreter::term_to_smt(solver, bind.body)?,
+                            )
+                            .over(bind.span.clone()),
+                        )?,
+                    )
+                }
+                let body = Interpreter::term_to_smt(solver, *let_.body)?;
+                let term = smt::Let {
+                    bindings: Arc::from(bindings.into_boxed_slice()),
+                    body,
+                    span: let_.span.clone(),
+                }
+                .into_term_in(solver.pool());
+
+                Ok(term)
+            }
             ast::Term::Lambda(_) => todo!(),
-            ast::Term::Exists(_) => todo!(),
-            ast::Term::Forall(_) => todo!(),
+            ast::Term::Exists(exists) => {
+                let mut variables = Vec::new();
+                for var in exists.bindings {
+                    variables.push(Interpreter::sorted_var_to_variable(solver, var)?)
+                }
+                let body = Interpreter::term_to_smt(solver, *exists.body)?;
+                let term = smt::Quantified {
+                    quantifier: smt::Quantifier::Exists,
+                    variables: Arc::from(variables.into_boxed_slice()),
+                    body,
+                    span: exists.span.clone(),
+                }
+                .into_term_in(solver.pool());
+
+                Ok(term)
+            }
+            ast::Term::Forall(forall) => {
+                let mut variables = Vec::new();
+                for var in forall.bindings {
+                    variables.push(Interpreter::sorted_var_to_variable(solver, var)?)
+                }
+                let body = Interpreter::term_to_smt(solver, *forall.body)?;
+                let term = smt::TermKind::Quantified(smt::Quantified {
+                    quantifier: smt::Quantifier::Forall,
+                    variables: Arc::from(variables.into_boxed_slice()),
+                    body,
+                    span: forall.span.clone(),
+                })
+                .into_term_in(solver.pool());
+
+                Ok(term)
+            }
             ast::Term::Match(_) => todo!(),
             ast::Term::Attributed(_) => todo!(),
         }
     }
 
-    pub(crate) fn term_to_ast(term: &smt::Term) -> ast::Term {
-        match term.kind() {
-            smt::TermKind::Constant(cnst) => Interpreter::constant_to_ast(cnst),
-            smt::TermKind::Atom(atom) => Interpreter::atom_to_ast(atom),
-        }
-    }
-
-    fn constant_to_ast(cnst: &smt::Constant) -> ast::Term {
-        match cnst {
-            smt::Constant::Integer { value, .. } => ast::Numeral {
-                value: value.clone(),
-                span: None,
-            }
-            .into(),
-            smt::Constant::Rational { value, .. } => ast::Decimal {
-                value: value.clone(),
-                span: None,
-            }
-            .into(),
-        }
-    }
-
-    fn atom_to_ast(atom: &smt::Atom) -> ast::Term {
-        let (name, args) = match atom {
-            smt::Atom::Bound(smt::BoundAtom {
-                head, arguments, ..
-            }) => (head.function.name(), arguments),
-            smt::Atom::Unbound(smt::UnboundAtom {
-                head, arguments, ..
-            }) => (head, arguments),
-        };
-
-        let args = args.iter().map(Interpreter::term_to_ast).collect();
-
-        ast::Application {
-            head: ast::Symbol::new(name).unwrap().into(),
-            args,
-            span: None,
-        }
-        .into()
+    fn sorted_var_to_variable(solver: &smt::Solver, var: ast::SortedVar) -> Result<smt::Variable> {
+        let sort = smt::Sort::try_from(Interpreter::sort_to_smt_term(solver, &var.sort))?;
+        Ok(
+            smt::Variable::new(Identifier::from(var.name.inner().to_string()), sort)
+                .over(var.span.clone()),
+        )
     }
 }

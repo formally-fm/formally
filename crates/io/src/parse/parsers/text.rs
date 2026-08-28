@@ -46,7 +46,7 @@ pub fn any() -> Parser<'static, char> {
                     begin: saved.location,
                     end: saved.location,
                 };
-                error!(state, span, SyntaxIssue::UnexpectedEOF);
+                diagnose!(Level::Error, state, span, SyntaxIssue::UnexpectedEOF);
                 Err(DiagnosticEmitted.into())
             }
         }
@@ -61,7 +61,8 @@ pub fn eof() -> Parser<'static, ()> {
             None => Ok(()),
             Some(_) => {
                 let Token(token, span) = state.token();
-                error!(
+                diagnose!(
+                    Level::Error,
                     state,
                     span,
                     SyntaxIssue::Expected(

@@ -16,7 +16,7 @@ __subcratedoc = []
 
 [dependencies]
 formally-support = { path = "../support", version = "0.2025.12" }
-itertools = "0.14.0"
+itertools = "0.15.0"
 pretty = "0.12.4"
 termsize = "0.1.9"
-thiserror = "2.0.12"
+thiserror = "2"

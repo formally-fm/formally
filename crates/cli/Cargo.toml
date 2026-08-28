@@ -13,7 +13,12 @@ keywords = [ "formal-methods", "smt" ]
 [[bin]]
 name = "formally"
 
+[features]
+default = ["z3", "cvc5"]
+z3 = ["formally/z3"]
+cvc5 = ["formally/cvc5"]
 
 [dependencies]
-clap = { version = "4.5.53", features = ["derive"] }
-formally = { path = "../formally", version = "0.2025.12", features = ["io", "smt"] }
+clap = { version = "4", features = ["derive"] }
+formally = { path = "../formally", version = "0.2025.12", default-features = false, features = ["io", "smt"] }
+itertools = "0.15.0"

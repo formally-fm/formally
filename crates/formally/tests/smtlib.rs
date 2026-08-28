@@ -22,10 +22,7 @@
 // SOFTWARE.
 //
 
-use formally::{
-    io::{parse::*, print::Print},
-    support::*,
-};
+use formally::io::{parse::*, print::Print};
 
 use formally::smt::smtlib;
 use rstest::*;
@@ -72,9 +69,8 @@ pub fn successes<T: Debug + Print>(
     let mut cursor = Cursor::new(&mut output);
 
     eprintln!("parsing: {input}...");
-    let emitter = StdErrEmitter::new();
 
-    let result = parser.parse(&emitter, input);
+    let result = parser.parse(input);
     match result {
         Ok(out) => {
             eprintln!(" - parsed!");

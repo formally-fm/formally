@@ -1,7 +1,7 @@
 //
 // ::formally - the open-source formal methods toolchain
 //
-// Copyright (c) 2025 Nicola Gigante
+// Copyright (c) 2026 Nicola Gigante
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -35,57 +35,60 @@
 )]
 #![doc = ""]
 
+mod backend;
+mod logic;
 mod term;
+mod theories;
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::parse_macro_input;
+use syn::{DeriveInput, parse_macro_input};
 
-use term::*;
-
-/// Construct a term from a subset of the SMT-LIBv2 syntax for terms.
-///
-/// This macro provides a convenient way of constructing terms by implementing a subset of the
-/// SMT-LIBv2 syntax.
-///
-/// Example:
-/// ```
-/// # mod formally {
-/// #     pub extern crate formally_support as support;
-/// #     pub extern crate formally_smt as smt;
-/// # }
-/// # use formally::{smt::*, support::*};
-/// # fn main() -> Result<()> {
-/// let mut solver = Solver::new(&Config::default())?;
-///
-/// solver.declare(Declaration::boolean("p"))?;
-/// solver.declare(Declaration::boolean("q"))?;
-///
-/// let ponens = term!(=> (and (=> p q) p) q);
-/// solver.require(term!(not #ponens))?;
-///
-/// assert_eq!(solver.check()?, Answer::No);
-/// # Ok(())
-/// # }
-/// ```
-///
-/// In the above example we can note two features of the `term` macro combined with `Solver`.
-/// 1. names of the symbols can be used directly, in which case the resulting term will contain
-///    *unbound atoms* that the solver will resolve when needed (in this case, in the call to
-///    `require()`. This is the case of the `"and"`, `"p"`, `"q"`, and `"not"` symbols in the
-///    example above.
-/// 2. entities declared in the surrounding Rust code, including other terms, can be expanded by
-///    using the `#identifier` syntax, inspired by the `quote` macro of the `syn` crate. This is the
-///    case of the `#ponens` expansion in the example above.
-///
-/// When an entity is expanded it is used in the resulting term appropriately. In particular, one
-/// can expand `Declared` or `Defined` objects to obtain *bound atoms* that do not need
-/// further name resolution.
-///
-/// Expansion of repetitions from iterators, as in the `quote` macro, is not supported *yet*.
 #[proc_macro]
 pub fn term(input: TokenStream) -> TokenStream {
-    let term = parse_macro_input!(input as Root);
+    let term = parse_macro_input!(input as term::Term);
 
     quote!(#term).into()
+}
+
+#[proc_macro]
+pub fn sort(input: TokenStream) -> TokenStream {
+    let sort = parse_macro_input!(input as term::Sort);
+
+    quote!(#sort).into()
+}
+
+#[proc_macro]
+pub fn theories(input: TokenStream) -> TokenStream {
+    let root = parse_macro_input!(input as theories::Root);
+
+    quote!(#root).into()
+}
+
+#[proc_macro]
+pub fn logic(input: TokenStream) -> TokenStream {
+    let root = parse_macro_input!(input as logic::Root);
+
+    quote!(#root).into()
+}
+
+/// Register a SMT backend.
+///
+/// This attribute registers automatically a backend type to `formally::smt::Register` and all the
+/// other facilities in the framework looking up backends by name.
+///
+/// The type is expected to be a unit struct, such as the following:
+/// ```text
+/// use formally::smt;
+/// #[smt::backend]
+/// pub struct MyBackend;
+/// ```
+///
+/// This is the norm since the `Backend` trait only provides factory functions for the `Manager`
+/// and `Solver` types that do the actual work.
+#[proc_macro_attribute]
+pub fn backend(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as DeriveInput);
+
+    backend::backend(item).into()
 }

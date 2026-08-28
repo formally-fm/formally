@@ -27,8 +27,8 @@
 //! This module contains what is needed to declare and use *logics* as in the terminology of
 //! SMT-LIBv2.
 //!
-//! An SMT-LIBv2 logic combines a set of [theories] with a set of syntactic requirements
-//! (such as the linerity of terms) and restrictions on the allowed signatures (such as
+//! An SMT-LIBv2 logic combines a set of [theories](mod@theories) with a set of syntactic
+//! requirements (such as the linerity of terms) and restrictions on the allowed signatures (such as
 //! the absence of uninterpreted functions).
 //!
 //! In `::formally`, logics are types implementing the [Logic] trait. Most of the types in this
@@ -42,14 +42,14 @@
 
 #![allow(non_camel_case_types)]
 
-mod macros;
 mod standard;
 
 pub mod requirements;
 
 pub use standard::*;
 
-use crate::*;
+use crate::formally;
+use formally::smt::*;
 use formally::support::*;
 
 use linkme::distributed_slice;
@@ -66,10 +66,15 @@ pub trait Logic {
     fn theory(&self) -> &dyn theories::Theory;
 
     /// Check the syntactic requirements of this logic on terms.
-    fn check_term(&self, context: &Context, term: &Term) -> Result<()>;
+    fn check_term(&self, term: &Term) -> Result<()>;
 
     /// Check the requirements of this logic on the functions added to the current signature.
-    fn check_function(&self, context: &Context, func: &UserFunction) -> Result<()>;
+    fn check_function(&self, func: &UserFunction) -> Result<()>;
+}
+
+pub trait LogicEx {
+    type Atom<'t>: Into<Atom> + TryFrom<&'t Atom, Error = &'t Atom>;
+    type Sort<'t>: Into<Sort> + TryFrom<&'t Sort, Error = &'t Sort>;
 }
 
 #[distributed_slice]
@@ -93,9 +98,6 @@ pub fn standard_logics() -> impl Iterator<Item = &'static dyn Logic> {
 ///
 /// The function returns `None` if the logic of the given name is not found, and returns
 /// the second argument `all` if `logic` is equal to `"ALL"`.
-pub fn standard_logic<'b>(logic: &str, all: &'b dyn Logic) -> Option<&'b dyn Logic> {
-    match logic {
-        "ALL" => Some(all),
-        _ => STANDARD_LOGICS_MAP.get(logic).map(|v| *v as &dyn Logic),
-    }
+pub fn standard_logic(logic: &str) -> Option<&'static dyn Logic> {
+    STANDARD_LOGICS_MAP.get(logic).map(|v| *v as &dyn Logic)
 }

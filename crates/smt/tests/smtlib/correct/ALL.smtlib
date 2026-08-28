@@ -1,4 +1,6 @@
 (set-logic ALL)
+(set-option :produce-models true)
+
 (declare-const a Int)
 (define-fun f ((x Int) (y Int)) Bool (> x y))
 (define-fun f ((x Int)) Int x)
@@ -6,5 +8,6 @@
 (assert (f a 0))
 
 (check-sat)
+
 (get-value (a))
 

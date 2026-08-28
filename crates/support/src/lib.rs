@@ -39,7 +39,6 @@
 //! and frequently used by any client code.
 //!
 //! These include:
-//! 1. The main [Context] object and related utilities
 //! 2. The *diagnostics* system, including the [error] macro, the [Emitter] trait and different
 //!    types of *emitters*.
 //! 3. The [Scope] type to help implementing statically scoped languages.
@@ -47,7 +46,8 @@
 //!    [Span] types.
 //! 5. Procedural macros to derive the `Located` and `Locatable` traits.
 //! 6. The [Nominal] smart pointer.
-//! 7. The [Stack] trait and the [Stacked] utility class to help implementing it.
+//! 7. The [Stack] trait and the [Stacked] utility type to help implementing it.
+//! 8. The [SArc] wrapper over either an [Arc](std::sync::Arc) or a static reference to an object.
 
 mod formally {
     pub extern crate self as support;
@@ -56,16 +56,16 @@ mod formally {
 #[doc(inline)]
 pub use formally_support_macros::*;
 
-mod context;
 mod diagnostics;
 mod location;
 mod nominal;
+mod sarc;
 mod scope;
 mod stack;
 
-pub use context::*;
 pub use diagnostics::*;
 pub use location::*;
 pub use nominal::*;
+pub use sarc::*;
 pub use scope::*;
 pub use stack::*;

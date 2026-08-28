@@ -35,7 +35,7 @@ trap killgroup SIGINT
 shift
 
 browser-sync start --ss target/doc -s target/doc --reload-delay 5000 --directory --no-open &
-cargo watch -s "cargo doc $*" &
+cd crates/formally && cargo watch -s "cargo doc $*" &
 wait
 
 echo "exiting..."
