@@ -53,7 +53,7 @@ use proc_macro::TokenStream;
 /// used.
 ///
 /// Example:
-/// ```ignore
+/// ```text
 /// # mod formally {
 /// #     pub use formally_support as support;
 /// # }
@@ -81,7 +81,7 @@ pub fn derive_located(item: TokenStream) -> TokenStream {
 /// is used.
 ///
 /// Example:
-/// ```ignore
+/// ```text
 /// # mod formally {
 /// #     pub use formally_support as support;
 /// # }

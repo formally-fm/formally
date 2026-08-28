@@ -37,3 +37,6 @@ linkme = "0.3.37"
 thiserror = "2.0.17"
 dashmap = "6.2.1"
 rpds = "1"
+
+[dev-dependencies]
+rstest = "0.26.0"

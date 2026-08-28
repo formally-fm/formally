@@ -28,9 +28,6 @@ z3 = ["formally-smt/z3"]
 ## Enable the cvc5 backend for the [formally::smt] module.
 cvc5 = ["formally-smt/cvc5"]
 
-[dev-dependencies]
-rstest = "0.26.0"
-
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

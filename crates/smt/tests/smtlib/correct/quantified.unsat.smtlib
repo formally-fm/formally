@@ -1,4 +1,4 @@
-(set-logic LIA)
+(set-logic LRA)
 
 (assert (not (forall ((x Real) (y Real)) (=> (< x y) (exists ((z Real)) (and (> z x) (< z y)))))))
 

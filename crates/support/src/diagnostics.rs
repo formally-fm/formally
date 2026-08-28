@@ -190,6 +190,13 @@ pub trait Diagnosable: Display + Located {
     }
 }
 
+impl Emit for std::io::Error {
+    fn emit(&self) -> DiagnosticEmitted {
+        error!(None, "I/O error: {self}");
+        DiagnosticEmitted
+    }
+}
+
 impl<T: Diagnosable> Emit for T {
     fn emit(&self) -> DiagnosticEmitted {
         Diagnostic::emitter().emit(self.level(), Diagnostic::new(self.span(), self));

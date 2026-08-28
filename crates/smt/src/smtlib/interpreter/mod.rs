@@ -34,12 +34,15 @@
 use crate::formally;
 
 use formally::{
-    io::print::Print,
+    io::{
+        parse::Parsable as _,
+        print::{Print, RenderTarget},
+    },
     smt::{self, Config, ToTerm, backends::Backend, smtlib::ast},
     support::*,
 };
 
-use std::{fmt::Debug, io};
+use std::{fmt::Debug, io, path::Path};
 
 use thiserror::Error;
 
@@ -47,6 +50,7 @@ mod translate;
 
 mod emitter;
 pub use emitter::*;
+use formally_io::parse::Parse;
 
 /// An SMT-LIBv2 interpreter.
 ///
@@ -77,11 +81,11 @@ pub use emitter::*;
 #[allow(private_interfaces)]
 pub enum Interpreter {
     #[doc(hidden)]
-    Start(Config, &'static dyn Backend),
+    Start(Settings),
     #[doc(hidden)]
     Started(State),
     #[doc(hidden)]
-    Exited(Config),
+    Exited(Config, Mode),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -91,15 +95,70 @@ enum Mode {
     Unsat,
 }
 
+impl From<Mode> for smt::Answer {
+    fn from(mode: Mode) -> smt::Answer {
+        match mode {
+            Mode::Assert => smt::Answer::Unknown,
+            Mode::Sat => smt::Answer::Yes,
+            Mode::Unsat => smt::Answer::No,
+        }
+    }
+}
+
+/// Type specifying the operating settings for the interpreter.
+pub struct Settings {
+    /// The [Config] for the underlying [Solver].
+    pub config: Config,
+    /// The SMT backend to use.
+    pub backend: &'static dyn Backend,
+    /// The output write stream to use for the output messages (not the diagnostics, which are
+    /// handled by the global emitter).
+    pub output: Box<dyn RenderTarget>,
+}
+
+impl Settings {
+    pub fn config(self, config: Config) -> Settings {
+        Settings { config, ..self }
+    }
+
+    pub fn backend(self, backend: &'static impl Backend) -> Settings {
+        Settings { backend, ..self }
+    }
+
+    pub fn output(self, output: impl 'static + RenderTarget) -> Settings {
+        Settings { output: Box::new(output), ..self }
+    }
+}
+
+impl From<Config> for Settings {
+    fn from(config: Config) -> Self {
+        Settings {
+            config,
+            ..Settings::default()
+        }
+    }
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            config: Config::default(),
+            backend: &smt::backends::Default,
+            output: Box::new(io::stdout()),
+        }
+    }
+}
+
 struct State {
     mode: Mode,
     config: Config,
     solver: smt::Solver,
+    output: Box<dyn RenderTarget>,
 }
 
 impl Default for Interpreter {
     fn default() -> Self {
-        Interpreter::Start(Config::default(), &smt::backends::Default)
+        Interpreter::Start(Settings::default())
     }
 }
 
@@ -117,12 +176,18 @@ enum RequiredMode {
 
 impl Interpreter {
     /// Create a new interpreter with the given starting configuration.
-    pub fn new(config: Config) -> Interpreter {
-        Interpreter::Start(config, &smt::backends::Default)
+    pub fn new(settings: impl Into<Settings>) -> Interpreter {
+        Interpreter::Start(settings.into())
     }
 
-    pub fn with_backend(config: Config, backend: &'static dyn Backend) -> Interpreter {
-        Interpreter::Start(config, backend)
+    pub fn with_backend(
+        settings: impl Into<Settings>,
+        backend: &'static dyn Backend,
+    ) -> Interpreter {
+        Interpreter::Start(Settings {
+            backend,
+            ..settings.into()
+        })
     }
 
     /// Execute a command.
@@ -131,51 +196,51 @@ impl Interpreter {
         use ast::Command::*;
 
         match self {
-            Start(config, _) => match command {
-                Echo(msg) => Self::echo(config, msg),
+            Start(Settings { config, output, .. }) => match command {
+                Echo(msg) => Self::echo(&mut **output, msg),
                 Exit(_) => Self::exit(self),
-                GetInfo(_) => Self::unsupported(config),
-                GetOption(_) => Self::unsupported(config),
-                Reset(_) => Self::unsupported(config),
-                ResetAssertions(_) => Self::unsupported(config),
-                SetInfo(_) => Self::unsupported(config),
+                GetInfo(_) => Self::unsupported(&mut **output),
+                GetOption(_) => Self::unsupported(&mut **output),
+                Reset(_) => Self::unsupported(&mut **output),
+                ResetAssertions(_) => Self::unsupported(&mut **output),
+                SetInfo(_) => Self::unsupported(&mut **output),
                 SetLogic(sl) => Self::set_logic(self, sl),
-                SetOption(so) => Self::set_option_start(config, so),
+                SetOption(so) => Self::set_option_start(config, &mut **output, so),
                 command => Self::fail(config, RequiredMode::Started, command),
             },
             Started(state) => match command {
                 Assert(assert) => Self::assert(state, assert),
                 CheckSat(_) => Self::check_sat(state),
-                CheckSatAssuming(_) => Self::unsupported(&state.config),
+                CheckSatAssuming(_) => Self::unsupported(&mut *state.output),
                 DeclareConst(decl) => Self::declare_const(state, decl),
-                DeclareDatatype(_) => Self::unsupported(&state.config),
-                DeclareDatatypes(_) => Self::unsupported(&state.config),
+                DeclareDatatype(_) => Self::unsupported(&mut *state.output),
+                DeclareDatatypes(_) => Self::unsupported(&mut *state.output),
                 DeclareFun(decl) => Self::declare_fun(state, decl),
                 DeclareSort(decl) => Self::declare_sort(state, decl),
-                DeclareSortParameter(_) => Self::unsupported(&state.config),
+                DeclareSortParameter(_) => Self::unsupported(&mut *state.output),
                 DefineConst(def) => Self::define_const(state, def),
                 DefineFun(def) => Self::define_fun(state, def),
-                DefineFunRec(_) => Self::unsupported(&state.config),
-                DefineFunsRec(_) => Self::unsupported(&state.config),
-                DefineSort(_) => Self::unsupported(&state.config),
-                Echo(msg) => Self::echo(&state.config, msg),
+                DefineFunRec(_) => Self::unsupported(&mut *state.output),
+                DefineFunsRec(_) => Self::unsupported(&mut *state.output),
+                DefineSort(_) => Self::unsupported(&mut *state.output),
+                Echo(msg) => Self::echo(&mut *state.output, msg),
                 Exit(_) => Self::exit(self),
-                GetAssertions(_) => Self::unsupported(&state.config),
-                GetInfo(_) => Self::unsupported(&state.config),
-                GetOption(_) => Self::unsupported(&state.config),
+                GetAssertions(_) => Self::unsupported(&mut *state.output),
+                GetInfo(_) => Self::unsupported(&mut *state.output),
+                GetOption(_) => Self::unsupported(&mut *state.output),
                 Pop(pop) => Self::pop(state, pop),
                 Push(push) => Self::push(state, push),
-                Reset(_) => Self::unsupported(&state.config),
-                ResetAssertions(_) => Self::unsupported(&state.config),
-                SetInfo(_) => Self::unsupported(&state.config),
+                Reset(_) => Self::unsupported(&mut *state.output),
+                ResetAssertions(_) => Self::unsupported(&mut *state.output),
+                SetInfo(_) => Self::unsupported(&mut *state.output),
                 SetOption(so) => Self::set_option_started(state, so),
                 _ => match (command, state.mode) {
-                    (GetAssignments(_), Mode::Sat) => Self::unsupported(&state.config),
-                    (GetModel(_), Mode::Sat) => Self::unsupported(&state.config),
+                    (GetAssignments(_), Mode::Sat) => Self::unsupported(&mut *state.output),
+                    (GetModel(_), Mode::Sat) => Self::unsupported(&mut *state.output),
                     (GetValue(cmd), Mode::Sat) => Self::get_value(state, cmd),
-                    (GetProof(_), Mode::Unsat) => Self::unsupported(&state.config),
-                    (GetUnsatAssumptions(_), Mode::Unsat) => Self::unsupported(&state.config),
-                    (GetUnsatCore(_), Mode::Unsat) => Self::unsupported(&state.config),
+                    (GetProof(_), Mode::Unsat) => Self::unsupported(&mut *state.output),
+                    (GetUnsatAssumptions(_), Mode::Unsat) => Self::unsupported(&mut *state.output),
+                    (GetUnsatCore(_), Mode::Unsat) => Self::unsupported(&mut *state.output),
                     (command @ (GetModel(_) | GetValue(_) | GetAssignments(_)), _) => {
                         Self::fail(&state.config, RequiredMode::Sat, command)
                     }
@@ -185,18 +250,43 @@ impl Interpreter {
                     (command, _) => Self::fail(&state.config, RequiredMode::Start, command),
                 },
             },
-            Exited(_) => self.exited(command),
+            Exited(_, _) => self.exited(command),
+        }
+    }
+
+    /// Execute a script directly from a text file.
+    ///
+    /// The function returns an [Answer](smt::Answer) corresponding to the last executed
+    /// `(check-sat)` instruction, if any, not followed by further `(assert)` commands.
+    pub fn run(&mut self, path: &Path) -> Result<smt::Answer> {
+        let ast::Script { commands, .. } = match ast::Script::parser().parse(path) {
+            Ok(script) => script,
+            Err(_) => return Err(DiagnosticEmitted),
+        };
+
+        for cmd in commands {
+            self.command(cmd).ok();
+
+            if let Interpreter::Exited(_, mode) = self {
+                return Ok((*mode).into());
+            }
+        }
+
+        match self {
+            Interpreter::Start(_) => Ok(smt::Answer::Unknown),
+            Interpreter::Started(state) => Ok(state.mode.into()),
+            Interpreter::Exited(_, mode) => Ok((*mode).into()),
         }
     }
 
     /// Tell if a `(set-logic)` (but no `(exit)`) command has been executed.
     pub fn has_started(&self) -> bool {
-        !matches!(self, Interpreter::Start(_, _))
+        !matches!(self, Interpreter::Start(_))
     }
 
     /// Tell if an `(exit)` command has been executed.
     pub fn has_exited(&self) -> bool {
-        matches!(self, Interpreter::Exited(_))
+        matches!(self, Interpreter::Exited(_, _))
     }
 
     fn exited(&self, command: ast::Command) -> Result<()> {
@@ -218,13 +308,13 @@ impl Interpreter {
         Err(DiagnosticEmitted)
     }
 
-    fn unsupported(config: &Config) -> Result<()> {
-        Interpreter::response(config, ast::Response::Unsupported)
+    fn unsupported(output: &mut dyn RenderTarget) -> Result<()> {
+        Interpreter::response(output, ast::Response::Unsupported)
     }
 
     // TODO: supporting setting the output stream through the `Config`
-    fn response(_config: &Config, response: impl Print) -> Result<()> {
-        match response.println(&mut io::stdout()) {
+    fn response(output: &mut dyn RenderTarget, response: impl Print) -> Result<()> {
+        match response.println(output) {
             Ok(_) => Ok(()),
             Err(err) => {
                 error!(None, "input/output error: {err}");
@@ -233,9 +323,9 @@ impl Interpreter {
         }
     }
 
-    fn echo(config: &Config, msg: ast::StringLiteral) -> Result<()> {
+    fn echo(output: &mut dyn RenderTarget, msg: ast::StringLiteral) -> Result<()> {
         Interpreter::response(
-            config,
+            output,
             ast::Response::Echo(ast::EchoResponse {
                 msg: msg.clone(),
                 span: None,
@@ -244,52 +334,57 @@ impl Interpreter {
     }
 
     fn exit(&mut self) -> Result<()> {
-        let config = match self {
-            Interpreter::Start(config, _) => config,
-            Interpreter::Started(State { config, .. }) => config,
-            Interpreter::Exited(config) => config,
+        let (config, mode) = match self {
+            Interpreter::Start(Settings { config, .. }) => (config, Mode::Assert),
+            Interpreter::Started(State { config, mode, .. }) => (config, *mode),
+            Interpreter::Exited(config, mode) => (config, *mode),
         };
-        *self = Interpreter::Exited(std::mem::take(config));
+        *self = Interpreter::Exited(std::mem::take(config), mode);
 
         Ok(())
     }
 
     fn set_logic(&mut self, sl: ast::SetLogic) -> Result<()> {
-        let Interpreter::Start(mut config, backend) = std::mem::take(self) else {
+        let Interpreter::Start(mut settings) = std::mem::take(self) else {
             return Ok(());
         };
 
-        config.logic = match sl.logic.inner() {
+        settings.config.logic = match sl.logic.inner() {
             "ALL" => None,
             logic => Some(Identifier::from(logic).into_owned().over(sl.logic.span())),
         };
 
-        match smt::Solver::with_backend(&config, backend) {
+        match smt::Solver::with_backend(&settings.config, settings.backend) {
             Ok(solver) => {
                 *self = Interpreter::Started(State {
                     mode: Mode::Assert,
-                    config,
+                    config: settings.config,
                     solver,
+                    output: settings.output,
                 })
             }
-            Err(_) => *self = Interpreter::Start(config, backend),
+            Err(_) => *self = Interpreter::Start(settings),
         }
 
         Ok(())
     }
 
-    fn set_option_start(config: &mut Config, so: ast::SetOption) -> Result<()> {
+    fn set_option_start(
+        config: &mut Config,
+        output: &mut dyn RenderTarget,
+        so: ast::SetOption,
+    ) -> Result<()> {
         match so.option {
             ast::AstOption::ProduceModels(pm) => {
                 config.produce_models = pm.value;
                 Ok(())
             }
-            _ => Self::unsupported(config),
+            _ => Self::unsupported(output),
         }
     }
 
     fn set_option_started(state: &mut State, so: ast::SetOption) -> Result<()> {
-        Self::set_option_start(&mut state.config, so)?;
+        Self::set_option_start(&mut state.config, &mut *state.output, so)?;
 
         state.solver.config(&state.config)
     }
@@ -328,7 +423,7 @@ impl Interpreter {
             ),
         };
 
-        Interpreter::response(&state.config, response)?;
+        Interpreter::response(&mut *state.output, response)?;
         state.mode = mode;
 
         Ok(())
@@ -479,7 +574,7 @@ impl Interpreter {
                     }
                 }
                 Interpreter::response(
-                    &state.config,
+                    &mut *state.output,
                     ast::Response::GetValue(ast::GetValueResponse { values, span: None }),
                 )?;
 
