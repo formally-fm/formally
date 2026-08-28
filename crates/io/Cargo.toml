@@ -3,7 +3,7 @@ name = "formally-io"
 description = "the open-source formal methods toolchain - input/output and parsing utilities"
 homepage = "https://formally.fm"
 repository = "https://github.com/formally-fm/formally"
-version = "0.2025.12"
+version = "0.2.0"
 edition = "2024"
 license-file = "LICENSE.txt"
 readme = "README.md"
@@ -15,7 +15,7 @@ default = []
 __subcratedoc = []
 
 [dependencies]
-formally-support = { path = "../support", version = "0.2025.12" }
+formally-support = { path = "../support", version = "0.2.0" }
 itertools = "0.15.0"
 pretty = "0.12.4"
 termsize = "0.1.9"

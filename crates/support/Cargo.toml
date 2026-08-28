@@ -3,7 +3,7 @@ name = "formally-support"
 description = "the open-source formal methods toolchain - basic support functionality"
 homepage = "https://formally.fm"
 repository = "https://github.com/formally-fm/formally"
-version = "0.2025.121"
+version = "0.2.0"
 edition = "2024"
 license-file = "LICENSE.txt"
 readme = "README.md"
@@ -15,7 +15,7 @@ default = []
 __subcratedoc = []
 
 [dependencies]
-formally-support-macros = { path = "../support-macros", version = "0.2025.121", features = ["__subcratedoc"] }
+formally-support-macros = { path = "../support-macros", version = "0.2.0", features = ["__subcratedoc"] }
 
 dashmap = "6.2.1"
 perfect-derive = "0.1.5"

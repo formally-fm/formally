@@ -3,7 +3,7 @@ name = "formally-cli"
 description = "the open-source formal methods toolchain - command-line interface"
 homepage = "https://formally.fm"
 repository = "https://github.com/formally-fm/formally"
-version = "0.2025.12"
+version = "0.2.0"
 edition = "2024"
 license-file = "LICENSE.txt"
 readme = "README.md"
@@ -20,5 +20,5 @@ cvc5 = ["formally/cvc5"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-formally = { path = "../formally", version = "0.2025.12", default-features = false, features = ["io", "smt"] }
+formally = { path = "../formally", version = "0.2.0", default-features = false, features = ["io", "smt"] }
 itertools = "0.15.0"
