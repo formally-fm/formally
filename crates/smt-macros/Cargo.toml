@@ -3,7 +3,7 @@ name = "formally-smt-macros"
 description = "the open-source formal methods toolchain - SMT abstraction layer - proc macros"
 homepage = "https://formally.fm"
 repository = "https://github.com/formally-fm/formally"
-version = "0.2025.121"
+version = "0.2.0"
 edition = "2024"
 license-file = "LICENSE.txt"
 readme = "README.md"
@@ -23,5 +23,5 @@ quote = "1.0.41"
 syn = { version = "3", features = ["parsing"] }
 
 [dev-dependencies]
-formally-smt = { path = "../smt", version = "0.2025.12" }
-formally-support = { path = "../support", version = "0.2025.12" }
+formally-smt = { path = "../smt", version = "0.2.0" }
+formally-support = { path = "../support", version = "0.2.0" }

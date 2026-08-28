@@ -8,7 +8,7 @@ This package contains the `formally::io` subcrate. This is not meant to be used 
 [formally] crate and enable its `"io"` feature.
 
 ```
-formally = { version = "0.2025.12", features = ["io"] }
+formally = { version = "0.2.0", features = ["io"] }
 ```
 
 We refer to the documentation of the main [formally] package for details.

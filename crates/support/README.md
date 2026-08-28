@@ -8,7 +8,7 @@ This package contains the `formally::support` subcrate. This is not meant to be 
 Instead, use the main [formally] crate.
 
 ```
-formally = { version = "0.2025.12" }
+formally = { version = "0.2.0" }
 ```
 
 We refer to the documentation of the main [formally] package for details.

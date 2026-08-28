@@ -8,7 +8,7 @@ This package contains the procedural macros exported by the `formally::smt` subc
 directly. Instead, use the main [formally] crate and enable its `"smt"` feature.
 
 ```
-formally = { version = "0.2025.12", features = ["smt"] }
+formally = { version = "0.2.0", features = ["smt"] }
 ```
 
 We refer to the documentation of the main [formally] package for details.
