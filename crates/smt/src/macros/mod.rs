@@ -38,7 +38,12 @@ pub mod support;
 /// Let us look at the concrete example of the declaration of the [QF_LIA](crate::logics::QF_LIA)
 /// logic.
 ///
-/// ```text
+/// ```
+/// # mod formally {
+/// #   pub extern crate formally_support as support;
+/// #   pub extern crate formally_smt as smt;
+/// # }
+/// use formally::smt::{logic, theories::*,logics::requirements::*};
 /// logic! {
 ///     /// Quantifier-Free Linear Integer Arithmetic.
 ///     name: pub QF_LIA,
@@ -87,7 +92,7 @@ macro_rules! logic {
 /// Let us start, as an example, with the declaration of the [Core](crate::theories::Core)
 /// theory.
 ///
-/// ```ignore
+/// ```
 /// # mod formally {
 /// #   pub extern crate formally_support as support;
 /// #   pub extern crate formally_smt as smt;
@@ -273,7 +278,7 @@ macro_rules! logic {
 /// adding a clause after the name of the theory in the declaration.
 ///
 /// As an example, [RealsInts](crate::theories::RealsInts) is declared as follows:
-/// ```ignore
+/// ```no_run
 /// # mod formally {
 /// #   pub extern crate formally_support as support;
 /// #   pub extern crate formally_smt as smt;

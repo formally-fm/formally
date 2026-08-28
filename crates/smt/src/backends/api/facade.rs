@@ -114,7 +114,7 @@ impl<S: Solver> backends::Solver for SolverFacade<S> {
     fn model(&self) -> Result<Option<Box<dyn '_ + smt::ModelProvider>>> {
         if !self.config.borrow().produce_models {
             return Err(backends::Error::new(
-                self.backend().name(),
+                self.backend().name()?,
                 backends::ErrorKind::ViolatedPrecondition(
                     "no model can be produced if the `:produce-models` option is not set to true"
                         .into(),
@@ -156,7 +156,7 @@ impl<S: Solver> SolverFacade<S> {
             match Rc::downcast::<ManagerFacade<<S as Solver>::Manager>>(manager as Rc<dyn Any>) {
                 Ok(manager) => manager,
                 Err(_) => return Err(backends::Error::new(
-                    backend.name(),
+                    backend.name()?,
                     backends::ErrorKind::Internal(
                         "`SolverFacade` method called with a `dyn Manager` which is not `ManagerFacade`"
                             .into(),
@@ -171,7 +171,7 @@ impl<S: Solver> SolverFacade<S> {
                     kind: Box::new(backends::ErrorKind::UnsupportedLogic(
                         name.clone().into_owned(),
                     )),
-                    backend: backend.name().to_string(),
+                    backend: backend.name()?.to_string(),
                 }),
             },
             None => Ok(None),
@@ -220,8 +220,8 @@ impl<M: Manager> ManagerFacade<M> {
     /// The resulting object can be returned directly from [backends::Backend::manager()].
     ///
     /// ```text
-    /// fn manager(&self) -> Box<dyn backends::Manager> {
-    ///     Box::new(api::ManagerFacade::new(MyManager::default()))
+    /// fn manager(&self) -> Result<Box<dyn backends::Manager>> {
+    ///     Ok(Box::new(api::ManagerFacade::new(MyManager::default())))
     /// }
     /// ```
     pub fn new(manager: M) -> Self {
@@ -245,7 +245,7 @@ impl<M: Manager> ManagerFacade<M> {
                 smt::Function::User(user) => self.user_sort(sort, user),
             },
             smt::SortHead::Unbound(name) => Err(backends::Error::new(
-                self.manager.backend().name(),
+                self.manager.backend().name()?,
                 backends::ErrorKind::ViolatedPrecondition(format!(
                     "an unresolved symbol reached the backend: `{name}`"
                 )),
@@ -323,7 +323,7 @@ impl<M: Manager> ManagerFacade<M> {
         match arg {
             smt::SortArgument::Sort(sort) => self.sort(sort),
             smt::SortArgument::Value(_) => Err(backends::Error::new(
-                self.manager.backend().name(),
+                self.manager.backend().name()?,
                 backends::ErrorKind::ViolatedPrecondition("expected sort, found a value".into()),
             )),
         }
@@ -333,7 +333,7 @@ impl<M: Manager> ManagerFacade<M> {
         match arg {
             smt::SortArgument::Value(value) => Ok(value),
             smt::SortArgument::Sort(_) => Err(backends::Error::new(
-                self.manager.backend().name(),
+                self.manager.backend().name()?,
                 backends::ErrorKind::ViolatedPrecondition("expected value, found a sort".into()),
             )),
         }
@@ -347,7 +347,7 @@ impl<M: Manager> ManagerFacade<M> {
                 |arg| self.sort_argument_to_value(arg),
             ),
             Err(_) => Err(backends::Error::new(
-                self.manager.backend().name(),
+                self.manager.backend().name()?,
                 backends::ErrorKind::ViolatedPrecondition(format!(
                     "unknown primitive sort or mismatching arguments: `{}`",
                     sort.head.name()
@@ -361,7 +361,7 @@ impl<M: Manager> ManagerFacade<M> {
             smt::UserFunction::Declared(decl) => match self.sorts.borrow().get(decl) {
                 Some(sort) => Ok(sort.clone()),
                 None => Err(backends::Error::new(
-                    self.manager.backend().name(),
+                    self.manager.backend().name()?,
                     backends::ErrorKind::ViolatedPrecondition(format!(
                         "unknown sort or mismatching arguments: `{}`",
                         sort.head.name()
@@ -386,7 +386,7 @@ impl<M: Manager> ManagerFacade<M> {
                 smt::Function::User(user) => self.user_func(user, &atom.arguments, bindmap),
             },
             smt::FunctionRef::Unbound(unbound) => Err(backends::Error::new(
-                self.manager.backend().name(),
+                self.manager.backend().name()?,
                 backends::ErrorKind::ViolatedPrecondition(format!(
                     "an unresolved symbol reached the backend: `{unbound}`"
                 )),
@@ -417,7 +417,7 @@ impl<M: Manager> ManagerFacade<M> {
                     .atom(atom, |t| self.term(t, bindmap), |t| self.terms(t, bindmap))
             }
             Err(_) => Err(backends::Error::new(
-                self.manager.backend().name(),
+                self.manager.backend().name()?,
                 backends::ErrorKind::ViolatedPrecondition(format!(
                     "unknown primitive symbol or mismatching arguments: `{}`",
                     atom.head
@@ -451,7 +451,7 @@ impl<M: Manager> ManagerFacade<M> {
         }
 
         Err(backends::Error::new(
-            self.manager.backend().name(),
+            self.manager.backend().name()?,
             backends::ErrorKind::ViolatedPrecondition(format!(
                 "use of unknown function declaration: `{}`",
                 decl.name
@@ -471,7 +471,7 @@ impl<M: Manager> ManagerFacade<M> {
                 self.manager.application(func, &arguments)
             } else {
                 Err(backends::Error::new(
-                    self.manager.backend().name(),
+                    self.manager.backend().name()?,
                     backends::ErrorKind::ViolatedPrecondition(format!(
                         "use of unknown function declaration: `{}`",
                         def.name
@@ -481,7 +481,7 @@ impl<M: Manager> ManagerFacade<M> {
         } else {
             if def.domain.len() != arguments.len() {
                 return Err(backends::Error::new(
-                    self.manager.backend().name(),
+                    self.manager.backend().name()?,
                     backends::ErrorKind::ViolatedPrecondition(format!(
                         "defined function `{}` applied to {} arguments, expected {}",
                         def.name,
@@ -570,7 +570,7 @@ impl<M: Manager> ManagerFacade<M> {
         match self.manager.export(term, pool, to_func, to_sort) {
             Some(t) => Ok(t),
             None => Err(backends::Error::new(
-                self.manager.backend().name(),
+                self.manager.backend().name()?,
                 backends::ErrorKind::Unsupported {
                     msg: "unsupported Z3_ast in conversion to Term".into(),
                     span: None,

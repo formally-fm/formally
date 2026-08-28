@@ -42,7 +42,7 @@
 //! use formally::smt::{*, backends::z3::Z3};
 //! # fn main() -> Result<()> {
 //! let config = Config::default();
-//! let manager = TermManager::with_backend(Z3);
+//! let manager = TermManager::with_backend(Z3)?;
 //! let solver = Solver::with_manager(&config, manager)?;
 //!
 //! // ...
@@ -186,6 +186,13 @@ impl Error {
     }
 }
 
+impl From<BackendNotFound<'_>> for Error {
+    fn from(err: BackendNotFound<'_>) -> Self {
+        let err = BackendNotFound(err.0.into_owned());
+        Error::new(&err.0.name().to_string(), ErrorKind::BackendNotFound(err))
+    }
+}
+
 /// An enumeration of possible errors for [Error](struct@Error).
 #[derive(Debug, Display)]
 pub enum ErrorKind {
@@ -209,6 +216,9 @@ pub enum ErrorKind {
     /// An internal error occurred.
     #[display("{_0}")]
     Internal(Box<dyn std::error::Error>),
+
+    #[display("{_0}")]
+    BackendNotFound(BackendNotFound<'static>),
 
     /// An error of any kind occurred.
     #[display("{_0}")]
@@ -242,26 +252,26 @@ impl Diagnosable for Error {
 /// Types implementing this trait represent backends. See the top-level documentation
 /// for details about [how to write a new backend](smt::backends).
 ///
-/// The trait requires [Send] and [Sync] but that is trivial to satisfy because the backend types
-/// themselves are usually just unit structs doing nothing. The returned [Manager] and [Solver]
-/// types do *not* need to (and usually cannot) implement [Send] nor [Sync].
-pub trait Backend: Send + Sync {
+/// The trait requires`'static'`, [Send] and [Sync] but that is trivial to satisfy because the
+/// backend types themselves are usually just unit structs doing nothing. The returned [Manager] and
+/// [Solver] types do *not* need to (and usually cannot) implement [Send] nor [Sync].
+pub trait Backend: 'static + Send + Sync {
     /// Return the name of the backend.
-    fn name(&self) -> &str;
+    fn name(&self) -> Result<&str, Error>;
 
     /// Create an instance of the backend term manager.
-    fn manager(&self) -> Box<dyn Manager>;
+    fn manager(&self) -> Result<Box<dyn Manager>, Error>;
 
     /// Create an instance of the backend solver based on the given [Config] and [Manager]
     fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error>;
 }
 
-impl Backend for &dyn Backend {
-    fn name(&self) -> &str {
+impl Backend for &'static (dyn 'static + Backend) {
+    fn name(&self) -> Result<&str, Error> {
         (*self).name()
     }
 
-    fn manager(&self) -> Box<dyn Manager> {
+    fn manager(&self) -> Result<Box<dyn Manager>, Error> {
         (*self).manager()
     }
 
@@ -272,7 +282,10 @@ impl Backend for &dyn Backend {
 
 impl Debug for dyn Backend {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name())
+        match self.name() {
+            Ok(name) => write!(f, "{name}"),
+            Err(err) => write!(f, "error:{err}"),
+        }
     }
 }
 

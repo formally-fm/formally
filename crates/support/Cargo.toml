@@ -19,10 +19,10 @@ formally-support-macros = { path = "../support-macros", version = "0.2025.121", 
 
 dashmap = "6.2.1"
 perfect-derive = "0.1.5"
-derive_more = { version = "2.0.1", features = ["from", "as_ref", "display"] }
+derive_more = { version = "2", features = ["from", "as_ref", "display"] }
 rpds = "1"
-thiserror = "2.0.17"
-itertools = "0.14.0"
+thiserror = "2"
+itertools = "0.15.0"
 
 [dev-dependencies]
 formally-smt = { path = "../smt" }

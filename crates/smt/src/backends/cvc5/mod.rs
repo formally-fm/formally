@@ -67,12 +67,12 @@ logic! {
 }
 
 impl Backend for Cvc5 {
-    fn name(&self) -> &str {
-        "cvc5"
+    fn name(&self) -> Result<&str> {
+        Ok("cvc5")
     }
 
-    fn manager(&self) -> Box<dyn backends::Manager> {
-        Box::new(api::ManagerFacade::new(Manager::default()))
+    fn manager(&self) -> Result<Box<dyn backends::Manager>> {
+        Ok(Box::new(api::ManagerFacade::new(Manager::default())))
     }
 
     fn solver(

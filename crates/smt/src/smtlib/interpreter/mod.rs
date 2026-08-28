@@ -35,7 +35,7 @@ use crate::formally;
 
 use formally::{
     io::print::Print,
-    smt::{self, Config, ToTerm, smtlib::ast},
+    smt::{self, Config, ToTerm, backends::Backend, smtlib::ast},
     support::*,
 };
 
@@ -77,7 +77,7 @@ pub use emitter::*;
 #[allow(private_interfaces)]
 pub enum Interpreter {
     #[doc(hidden)]
-    Start(Config),
+    Start(Config, &'static dyn Backend),
     #[doc(hidden)]
     Started(State),
     #[doc(hidden)]
@@ -99,7 +99,7 @@ struct State {
 
 impl Default for Interpreter {
     fn default() -> Self {
-        Interpreter::Start(Config::default())
+        Interpreter::Start(Config::default(), &smt::backends::Default)
     }
 }
 
@@ -118,7 +118,11 @@ enum RequiredMode {
 impl Interpreter {
     /// Create a new interpreter with the given starting configuration.
     pub fn new(config: Config) -> Interpreter {
-        Interpreter::Start(config)
+        Interpreter::Start(config, &smt::backends::Default)
+    }
+
+    pub fn with_backend(config: Config, backend: &'static dyn Backend) -> Interpreter {
+        Interpreter::Start(config, backend)
     }
 
     /// Execute a command.
@@ -127,7 +131,7 @@ impl Interpreter {
         use ast::Command::*;
 
         match self {
-            Start(config) => match command {
+            Start(config, _) => match command {
                 Echo(msg) => Self::echo(config, msg),
                 Exit(_) => Self::exit(self),
                 GetInfo(_) => Self::unsupported(config),
@@ -187,7 +191,7 @@ impl Interpreter {
 
     /// Tell if a `(set-logic)` (but no `(exit)`) command has been executed.
     pub fn has_started(&self) -> bool {
-        !matches!(self, Interpreter::Start(_))
+        !matches!(self, Interpreter::Start(_, _))
     }
 
     /// Tell if an `(exit)` command has been executed.
@@ -241,7 +245,7 @@ impl Interpreter {
 
     fn exit(&mut self) -> Result<()> {
         let config = match self {
-            Interpreter::Start(config) => config,
+            Interpreter::Start(config, _) => config,
             Interpreter::Started(State { config, .. }) => config,
             Interpreter::Exited(config) => config,
         };
@@ -251,7 +255,7 @@ impl Interpreter {
     }
 
     fn set_logic(&mut self, sl: ast::SetLogic) -> Result<()> {
-        let Interpreter::Start(mut config) = std::mem::take(self) else {
+        let Interpreter::Start(mut config, backend) = std::mem::take(self) else {
             return Ok(());
         };
 
@@ -259,7 +263,8 @@ impl Interpreter {
             "ALL" => None,
             logic => Some(Identifier::from(logic).into_owned().over(sl.logic.span())),
         };
-        match smt::Solver::new(&config) {
+
+        match smt::Solver::with_backend(&config, backend) {
             Ok(solver) => {
                 *self = Interpreter::Started(State {
                     mode: Mode::Assert,
@@ -267,7 +272,7 @@ impl Interpreter {
                     solver,
                 })
             }
-            Err(_) => *self = Interpreter::Start(config),
+            Err(_) => *self = Interpreter::Start(config, backend),
         }
 
         Ok(())

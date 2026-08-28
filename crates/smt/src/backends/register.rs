@@ -46,16 +46,39 @@ pub struct Register;
 /// the `?` operator and it emits itself as diagnostics automatically when this happens.
 #[derive(Debug, Error, Located)]
 #[error("SMT backend `{0}` not found")]
-pub struct BackendNotFound<'s>(Identifier<'s>);
+pub struct BackendNotFound<'s>(pub Identifier<'s>);
 
 impl Diagnosable for BackendNotFound<'_> {
     fn notes(&self) -> DiagnosticEmitted {
+        let mut backends = Vec::new();
+        for backend in Register::backends() {
+            if let Ok(backend) = backend.name() {
+                backends.push(backend)
+            }
+        }
+
         note!(
             self.0.span(),
             "available backends: {}",
-            Register::backends().iter().map(|b| b.name()).join(", ")
+            backends.into_iter().join(", ")
         );
         DiagnosticEmitted
+    }
+}
+
+pub struct Default;
+
+impl Backend for Default {
+    fn name(&self) -> Result<&str, Error> {
+        Register::default_backend()?.name()
+    }
+
+    fn manager(&self) -> Result<Box<dyn Manager>, Error> {
+        Register::default_backend()?.manager()
+    }
+
+    fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error> {
+        Register::default_backend()?.solver(config, manager)
     }
 }
 
@@ -77,7 +100,7 @@ impl Register {
     ) -> Result<&'static dyn Backend, BackendNotFound<'a>> {
         let name = name.into();
         for b in BACKENDS {
-            if b.name() == name.name() {
+            if let Ok(bname) = b.name() && bname == name.name() {
                 return Ok(*b);
             }
         }

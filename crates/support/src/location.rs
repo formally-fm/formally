@@ -275,8 +275,8 @@ impl Located for Option<Span> {
 /// the result.
 ///
 /// Example:
-/// ```rust,ignore
-/// let term = smt::Term::new(...).over(span);
+/// ```text
+/// let term = term!(* x y).over(span);
 /// ```
 ///
 /// [Locatable] can be automatically derived (see the corresponding proc-macro for details).

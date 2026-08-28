@@ -179,7 +179,7 @@ impl Env {
 /// # use std::rc::Rc;
 /// #
 /// # fn main() -> Result<()> {
-///  let manager = Rc::new(TermManager::with_backend(Z3));
+///  let manager = Rc::new(TermManager::with_backend(Z3)?);
 ///  let config = Config::new();
 ///  let mut slv1 = Solver::with_manager(&config, manager.clone())?;
 ///  let mut slv2 = Solver::with_manager(&config, manager)?;
@@ -238,47 +238,41 @@ impl TermManager {
 
 impl Debug for TermManager {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "TermManager {{ backend: {} }}",
-            self.backend_manager.backend().name()
-        )
+        write!(f, "TermManager {{ }}")
     }
 }
 
 impl TermManager {
     /// Construct a [TermManager] with the default backend (if any is available).
     pub fn new() -> Result<TermManager> {
-        Ok(TermManager::with_backend(
-            backends::Register::default_backend()?,
-        ))
+        TermManager::with_backend(backends::Register::default_backend()?)
     }
 
     /// Construct a [TermManager] over a given [Backend] looked up by name, if it exists.
     pub fn with_backend_name<'a>(backend: impl Into<Identifier<'a>>) -> Result<TermManager> {
         let backend = backends::Register::backend(backend)?;
 
-        Ok(TermManager::with_backend(backend))
+        TermManager::with_backend(backend)
     }
 
     /// Construct a [TermManager] over a given [Backend].
-    pub fn with_backend(backend: impl Backend) -> TermManager {
-        TermManager {
-            backend_manager: Rc::from(backend.manager()),
+    pub fn with_backend(backend: impl Backend) -> Result<TermManager> {
+        Ok(TermManager {
+            backend_manager: Rc::from(backend.manager()?),
             pool: Rc::new(HashPool::new()),
             decls: RefCell::default(),
             defs: RefCell::default(),
-        }
+        })
     }
 
     /// Construct a [TermManager] over a given [Backend] and [TermPool].
-    pub fn with_pool(backend: impl Backend, pool: Rc<dyn TermPool>) -> TermManager {
-        TermManager {
-            backend_manager: Rc::from(backend.manager()),
+    pub fn with_pool(backend: impl Backend, pool: Rc<dyn TermPool>) -> Result<TermManager> {
+        Ok(TermManager {
+            backend_manager: Rc::from(backend.manager()?),
             pool,
             decls: RefCell::default(),
             defs: RefCell::default(),
-        }
+        })
     }
 
     /// Return a reference to the underlying [TermPool].
@@ -330,7 +324,7 @@ impl Solver {
     ///
     /// Backends provided by this crate are defined in [formally::smt::backend](backends).
     pub fn with_backend(config: &Config, backend: impl Backend) -> Result<Solver> {
-        Solver::with_manager(config, TermManager::with_backend(backend))
+        Solver::with_manager(config, TermManager::with_backend(backend)?)
     }
 
     /// Create a [Solver] over the given [Backend] specified by name, if it exists.

@@ -72,12 +72,12 @@ logic! {
 }
 
 impl Backend for Z3 {
-    fn name(&self) -> &str {
-        "z3"
+    fn name(&self) -> Result<&str> {
+        Ok("z3")
     }
 
-    fn manager(&self) -> Box<dyn backends::Manager> {
-        Box::new(api::ManagerFacade::new(Manager::default()))
+    fn manager(&self) -> Result<Box<dyn backends::Manager>> {
+        Ok(Box::new(api::ManagerFacade::new(Manager::default())))
     }
 
     fn solver(

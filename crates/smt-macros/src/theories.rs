@@ -532,7 +532,7 @@ impl ToTokens for Attributed<Theory> {
                 pub fn #ident(#(#params: &(impl Clone + Into<formally::smt::SortArgument>)),*) -> formally::smt::Sort {
                     formally::smt::Sort {
                         head: #module::#ident.clone().into(),
-                        arguments: formally::support::SArc::from(Box::new([#(#params.clone().into()),*]) as Box<[SortArgument]>)
+                        arguments: formally::support::SArc::from(Box::new([#(#params.clone().into()),*]) as Box<[formally::smt::SortArgument]>)
                     }
                 }
             })
@@ -601,7 +601,7 @@ impl ToTokens for Attributed<Theory> {
             });
 
             atom_try_from.push(quote! {
-                else if let FunctionRef::Bound(BoundRef { function, .. }) = &atom.head
+                else if let formally::smt::FunctionRef::Bound(formally::smt::BoundRef { function, .. }) = &atom.head
                     && *function == #module::#ident.clone().into()
                 {
                     Ok(#atomenum::#cap)
@@ -623,7 +623,7 @@ impl ToTokens for Attributed<Theory> {
                 });
 
                 atom_try_from.push(quote! {
-                    else if let FunctionRef::Bound(BoundRef { function, .. }) = &atom.head
+                    else if let formally::smt::FunctionRef::Bound(formally::smt::BoundRef { function, .. }) = &atom.head
                         && *function == #module::#ident.clone().into()
                     {
                         Ok(#atomenum::#cap(&*atom.arguments))
@@ -649,7 +649,7 @@ impl ToTokens for Attributed<Theory> {
                 });
 
                 atom_try_from.push(quote! {
-                    else if let FunctionRef::Bound(BoundRef { function, .. }) = &atom.head
+                    else if let formally::smt::FunctionRef::Bound(formally::smt::BoundRef { function, .. }) = &atom.head
                         && *function == #module::#ident.clone().into()
                     {
                         if atom.arguments.len() == #argslen {
@@ -706,7 +706,7 @@ impl ToTokens for Attributed<Theory> {
                 sort_into.push(quote! {
                     #sortenum::#ident(#(#paramnames),*) => formally::smt::Sort {
                         head: #module::#ident.clone().into(),
-                        arguments: formally::support::SArc::from(Box::new([#(#paramnames.clone()),*]) as Box<[SortArgument]>)
+                        arguments: formally::support::SArc::from(Box::new([#(#paramnames.clone()),*]) as Box<[formally::smt::SortArgument]>)
                     }
                 });
                 sort_try_from.push(quote! {

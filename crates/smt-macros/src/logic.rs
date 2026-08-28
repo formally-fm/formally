@@ -184,6 +184,7 @@ impl ToTokens for Root {
             #[doc=concat!("    requirements: [ ", concat!(stringify!(#(#reqs),*), " ],"))]
             /// }
             /// ```
+            #[allow(nonstandard_style)]
             #vis struct #name;
 
             impl formally::smt::logics::Logic for #name {
