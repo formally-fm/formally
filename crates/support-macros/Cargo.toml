@@ -21,6 +21,3 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = "3"
-
-[dev-dependencies]
-formally-support = { path = "../support", version = "0.2.0" }
