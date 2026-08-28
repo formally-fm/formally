@@ -48,12 +48,12 @@ use proc_macro::TokenStream;
 /// `Option<Span>`.
 ///
 /// For `enum`s, only variants with no fields or with a single field are supported at the moment.
-/// In the first case, the derived `Located` implementation returns [None], while in the second case
-/// the type contained in the variant must in turn be [Located], so that its `span()` method is
+/// In the first case, the derived `Located` implementation returns `None`, while in the second case
+/// the type contained in the variant must in turn be `Located`, so that its `span()` method is
 /// used.
 ///
 /// Example:
-/// ```
+/// ```text
 /// # mod formally {
 /// #     pub use formally_support as support;
 /// # }
@@ -77,11 +77,11 @@ pub fn derive_located(item: TokenStream) -> TokenStream {
 ///
 /// For `enum`s, only variants with no fields or with a single field are supported at the moment.
 /// In the first case, the derived `Locatable` returns the same variant as is, while in the second
-/// case the type contained in the variant must in turn be [Locatable], so that its `over()` method
+/// case the type contained in the variant must in turn be `Locatable`, so that its `over()` method
 /// is used.
 ///
 /// Example:
-/// ```
+/// ```text
 /// # mod formally {
 /// #     pub use formally_support as support;
 /// # }

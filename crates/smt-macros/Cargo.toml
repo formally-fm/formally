@@ -21,7 +21,3 @@ proc-macro = true
 proc-macro2 = "1.0.103"
 quote = "1.0.41"
 syn = { version = "3", features = ["parsing"] }
-
-[dev-dependencies]
-formally-smt = { path = "../smt", version = "0.2.0" }
-formally-support = { path = "../support", version = "0.2.0" }

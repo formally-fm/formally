@@ -37,9 +37,16 @@ use std::{fmt, io};
 /// A trait for write streams that know if they are terminals.
 ///
 /// This trait is automatically implemented for any type implementing both [io::Write] and
-/// [io::IsTerminal].
-pub trait RenderTarget: io::Write + io::IsTerminal {}
-impl<T: io::Write + io::IsTerminal> RenderTarget for T {}
+/// [io::IsTerminal]. It does not have `io::IsTerminal` as supertrait because the latter is sealed.
+pub trait RenderTarget: io::Write {
+    fn is_terminal(&self) -> bool;
+}
+
+impl<T: io::Write + io::IsTerminal> RenderTarget for T {
+    fn is_terminal(&self) -> bool {
+        io::IsTerminal::is_terminal(self)
+    }
+}
 
 /// Types that can print themselves accounting for the number of available columns.
 pub trait Print {

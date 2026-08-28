@@ -1,7 +1,7 @@
 //
 // ::formally - the open-source formal methods toolchain
 //
-// Copyright (c) 2025 Nicola Gigante
+// Copyright (c) 2026 Nicola Gigante
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,6 +21,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
+
+mod formally {
+    pub extern crate formally_smt as smt;
+    pub extern crate formally_support as support;
+}
 
 use formally::{smt::*, support::*};
 

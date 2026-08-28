@@ -23,12 +23,8 @@
 //
 
 use formally::{
-    io::parse::{Parsable, Parse},
-    smt::{
-        Config,
-        backends::Register,
-        smtlib::{ast, interpreter::*},
-    },
+    smt,
+    smt::{Config, backends::Register, smtlib::interpreter::*},
     support::{Diagnostic, DiagnosticEmitted},
 };
 
@@ -86,25 +82,14 @@ fn main() -> ExitCode {
 
 fn solve(args: Solve) -> Result<(), DiagnosticEmitted> {
     Diagnostic::with(SMTLibEmitter::new(), || {
-        let ast::Script { commands, .. } = match ast::Script::parser().parse(args.filename) {
-            Ok(script) => script,
-            Err(_) => return Err(DiagnosticEmitted),
+        let backend = match args.backend {
+            Some(backend) => Register::backend(backend)?,
+            None => &smt::backends::Default,
         };
 
-        let mut interpreter = match args.backend {
-            Some(backend) => {
-                Interpreter::with_backend(Config::default(), Register::backend(backend)?)
-            }
-            None => Interpreter::new(Config::default()),
-        };
+        let mut interpreter = Interpreter::with_backend(Config::default(), backend);
 
-        for cmd in commands {
-            interpreter.command(cmd).ok();
-
-            if interpreter.has_exited() {
-                break;
-            }
-        }
+        interpreter.run(&args.filename)?;
 
         Ok(())
     })
