@@ -25,7 +25,6 @@
 use crate::*;
 use formally::support::*;
 
-use std::panic::AssertUnwindSafe;
 use std::{collections::HashMap, iter::zip, sync::Arc};
 
 /// Trait for types that can perform name resolution on themselves.
@@ -148,10 +147,9 @@ impl Term {
             function: f.clone(),
             span: head.span(),
         };
-        let atom = Diagnostic::with(
-            NullEmitter,
-            AssertUnwindSafe(|| Self::resolve_bound(&bound, env, arguments, pool)),
-        )
+        let atom = Diagnostic::with(&NullEmitter, || {
+            Self::resolve_bound(&bound, env, arguments, pool)
+        })
         .ok()?;
 
         #[allow(clippy::mutable_key_type)]

@@ -32,6 +32,7 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
+use scoped_tls_hkt::scoped_thread_local;
 use thiserror::Error;
 
 /// Severity level of a diagnostic.
@@ -293,20 +294,26 @@ impl Emitter for DefaultGlobalEmitter {
 
 impl Emitter for GlobalEmitter {
     fn emit(&self, level: Level, diag: Diagnostic) {
-        GLOBAL_EMITTER.with_borrow(|e| e.emit(level, diag))
+        if GLOBAL_EMITTER.is_set() {
+            GLOBAL_EMITTER.with(|e| e.emit(level, diag))
+        } else {
+            DefaultGlobalEmitter.emit(level, diag)
+        }
     }
 
     fn note(&self, kind: NoteKind, note: Diagnostic) {
-        GLOBAL_EMITTER.with_borrow(|e| e.note(kind, note))
+        if GLOBAL_EMITTER.is_set() {
+            GLOBAL_EMITTER.with(|e| e.note(kind, note))
+        } else {
+            DefaultGlobalEmitter.note(kind, note)
+        }
     }
 }
 
 static DEFAULT_GLOBAL_EMITTER: LazyLock<Mutex<Arc<dyn Send + Sync + Emitter>>> =
     LazyLock::new(|| Mutex::new(Arc::new(StdErrEmitter::new())));
 
-thread_local! {
-    static GLOBAL_EMITTER: RefCell<Arc<dyn Emitter>> = RefCell::new(Arc::new(DefaultGlobalEmitter));
-}
+scoped_thread_local!(static GLOBAL_EMITTER: for<'a> &'a (dyn 'a + Emitter));
 
 /// Information attached to a diagnostic.
 ///
@@ -327,7 +334,7 @@ impl Diagnostic {
     pub fn new(span: Option<Span>, msg: impl Display) -> Diagnostic {
         Diagnostic {
             span,
-            msg: format!("{msg}"),
+            msg: msg.to_string(),
         }
     }
 
@@ -357,22 +364,11 @@ impl Diagnostic {
     /// Changes the global emitter for the current thread, executes the given function, and then
     /// restores the old global emitter. If the function panics, the old emitter is restored and the
     /// panic propagated.
-    pub fn with<E, F, R>(emitter: E, f: F) -> R
+    pub fn with<F, R>(emitter: &(dyn '_ + Emitter), f: F) -> R
     where
-        E: 'static + Emitter,
-        F: std::panic::UnwindSafe + FnOnce() -> R,
+        F: FnOnce() -> R,
     {
-        let old = GLOBAL_EMITTER.with_borrow(|e| e.clone());
-        GLOBAL_EMITTER.set(Arc::new(emitter));
-
-        let result = std::panic::catch_unwind(f);
-
-        GLOBAL_EMITTER.set(old);
-
-        match result {
-            Ok(v) => v,
-            Err(e) => std::panic::resume_unwind(e),
-        }
+        GLOBAL_EMITTER.set(emitter, f)
     }
 }
 
@@ -400,10 +396,12 @@ impl Emitter for NullEmitter {
 /// [BatchEmitter::commit], the pending dianostics are discarded.
 pub struct BatchEmitter<'e> {
     emitter: &'e dyn Emitter,
-    batched: RefCell<Vec<Batched>>,
+    batched: RefCell<Vec<Emitted>>,
 }
 
-enum Batched {
+/// An emitted diagnostic together with its level or an emitted note together with its kind,
+/// collected by [BatchEmitter].
+pub enum Emitted {
     Diagnostic(Level, Diagnostic),
     Note(NoteKind, Diagnostic),
 }
@@ -421,10 +419,14 @@ impl<'e> BatchEmitter<'e> {
     pub fn commit(self) {
         for batched in self.batched.into_inner() {
             match batched {
-                Batched::Diagnostic(level, diag) => self.emitter.emit(level, diag),
-                Batched::Note(kind, diag) => self.emitter.note(kind, diag),
+                Emitted::Diagnostic(level, diag) => self.emitter.emit(level, diag),
+                Emitted::Note(kind, diag) => self.emitter.note(kind, diag),
             }
         }
+    }
+
+    pub fn into_emitted(self) -> Vec<Emitted> {
+        self.batched.into_inner()
     }
 }
 
@@ -436,7 +438,7 @@ impl Emitter for BatchEmitter<'_> {
     fn emit(&self, level: Level, diag: Diagnostic) {
         self.batched
             .borrow_mut()
-            .push(Batched::Diagnostic(level, diag));
+            .push(Emitted::Diagnostic(level, diag));
     }
 
     /// Emit a note.
@@ -444,7 +446,7 @@ impl Emitter for BatchEmitter<'_> {
     /// Note that diagnostics and notes are relayed to the underlying [Emitter] only after a call to
     /// [BatchEmitter::commit].
     fn note(&self, kind: NoteKind, note: Diagnostic) {
-        self.batched.borrow_mut().push(Batched::Note(kind, note));
+        self.batched.borrow_mut().push(Emitted::Note(kind, note));
     }
 }
 

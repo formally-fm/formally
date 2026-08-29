@@ -23,6 +23,7 @@ derive_more = { version = "2", features = ["from", "as_ref", "display"] }
 rpds = "1"
 thiserror = "2"
 itertools = "0.15.0"
+scoped-tls-hkt = "0.1.5"
 
 [dev-dependencies]
 formally-smt = { path = "../smt" }

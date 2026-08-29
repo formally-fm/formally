@@ -38,9 +38,7 @@ use formally_smt::smtlib::interpreter::Settings;
 use std::{
     ffi::OsStr,
     fs, io,
-    panic::AssertUnwindSafe,
     path::{Path, PathBuf},
-    sync::Mutex,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,32 +85,32 @@ fn enumerate() -> io::Result<Vec<(Category, PathBuf)>> {
     Ok(paths)
 }
 
-struct TestEmitter {
-    emitter: Box<dyn Emitter>,
-    error: &'static Mutex<bool>,
-}
-
-impl TestEmitter {
-    pub fn new(emitter: impl 'static + Emitter, error: &'static Mutex<bool>) -> TestEmitter {
-        TestEmitter {
-            emitter: Box::new(emitter),
-            error,
-        }
-    }
-}
-
-impl Emitter for TestEmitter {
-    fn emit(&self, level: Level, diag: Diagnostic) {
-        *self.error.lock().unwrap() = true;
-        self.emitter.emit(level, diag)
-    }
-
-    fn note(&self, kind: NoteKind, note: Diagnostic) {
-        self.emitter.note(kind, note)
-    }
-}
-
-static DID_ERROR: Mutex<bool> = Mutex::new(false);
+// struct TestEmitter {
+//     emitter: Box<dyn Emitter>,
+//     error: &'static Mutex<bool>,
+// }
+//
+// impl TestEmitter {
+//     pub fn new(emitter: impl 'static + Emitter, error: &'static Mutex<bool>) -> TestEmitter {
+//         TestEmitter {
+//             emitter: Box::new(emitter),
+//             error,
+//         }
+//     }
+// }
+//
+// impl Emitter for TestEmitter {
+//     fn emit(&self, level: Level, diag: Diagnostic) {
+//         *self.error.lock().unwrap() = true;
+//         self.emitter.emit(level, diag)
+//     }
+//
+//     fn note(&self, kind: NoteKind, note: Diagnostic) {
+//         self.emitter.note(kind, note)
+//     }
+// }
+//
+// static DID_ERROR: Mutex<bool> = Mutex::new(false);
 
 #[derive(Clone, Copy)]
 struct Sink;
@@ -139,13 +137,13 @@ pub fn smtlib() -> Result<()> {
         let mut interpreter =
             Interpreter::with_backend(Settings::default().output(Sink), Register::backend("z3")?);
 
-        let emitter = TestEmitter::new(NullEmitter, &DID_ERROR);
-        let result = Diagnostic::with(emitter, AssertUnwindSafe(|| interpreter.run(&test)));
+        let emitter = BatchEmitter::new(&NullEmitter);
+        let result = Diagnostic::with(&emitter, || interpreter.run(&test));
 
-        let did_error = *DID_ERROR.lock().unwrap();
-        assert_eq!(did_error, category == Category::Error);
+        let errors = emitter.into_emitted();
+        assert_eq!(!errors.is_empty(), category == Category::Error);
 
-        if !did_error {
+        if errors.is_empty() {
             match result {
                 Ok(Answer::Yes) => assert_eq!(category, Category::Sat),
                 Ok(Answer::No) => assert_eq!(category, Category::Unsat),

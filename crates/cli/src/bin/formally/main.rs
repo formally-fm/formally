@@ -81,7 +81,7 @@ fn main() -> ExitCode {
 }
 
 fn solve(args: Solve) -> Result<(), DiagnosticEmitted> {
-    Diagnostic::with(SMTLibEmitter::new(), || {
+    Diagnostic::with(&SMTLibEmitter::new(), || {
         let backend = match args.backend {
             Some(backend) => Register::backend(backend)?,
             None => &smt::backends::Default,
