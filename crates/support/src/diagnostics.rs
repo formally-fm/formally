@@ -466,7 +466,22 @@ impl<'e> BatchEmitter<'e> {
 
     /// Flushes the pending diagnostics to the underlying [Emitter]
     pub fn commit(self) -> Result<(), DiagnosticEmitted> {
-        Ok(self.ok()?)
+        let emitted = self.emitted.into_inner();
+        if emitted.is_empty() {
+            return Ok(())
+        }
+        
+        for emitted in emitted {
+            match emitted {
+                Emitted::Diagnostic(level, diag) => {
+                    self.emitter.emit(level, diag);
+                }
+                Emitted::Note(kind, note) => {
+                    self.emitter.note(kind, note);
+                }
+            }
+        }
+        Err(DiagnosticEmitted)
     }
 
     pub fn ok(self) -> Result<(), Vec<Emitted>> {

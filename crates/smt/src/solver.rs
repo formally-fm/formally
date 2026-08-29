@@ -245,12 +245,12 @@ impl Debug for TermManager {
 impl TermManager {
     /// Construct a [TermManager] with the default backend (if any is available).
     pub fn new() -> Result<TermManager> {
-        TermManager::with_backend(backends::Register::default_backend()?)
+        TermManager::with_backend(backends::default()?)
     }
 
     /// Construct a [TermManager] over a given [Backend] looked up by name, if it exists.
     pub fn with_backend_name<'a>(backend: impl Into<Identifier<'a>>) -> Result<TermManager> {
-        let backend = backends::Register::backend(backend)?;
+        let backend = backends::get(backend)?;
 
         TermManager::with_backend(backend)
     }

@@ -22,6 +22,8 @@
 // SOFTWARE.
 //
 
+use rstest::*;
+
 mod formally {
     pub extern crate formally_io as io;
     pub extern crate formally_smt as smt;
@@ -30,7 +32,7 @@ mod formally {
 
 use formally::{
     io::print::RenderTarget,
-    smt::{backends::Register, smtlib::interpreter::Interpreter, *},
+    smt::{backends, smtlib::interpreter::Interpreter, *},
     support::*,
 };
 
@@ -85,33 +87,6 @@ fn enumerate() -> io::Result<Vec<(Category, PathBuf)>> {
     Ok(paths)
 }
 
-// struct TestEmitter {
-//     emitter: Box<dyn Emitter>,
-//     error: &'static Mutex<bool>,
-// }
-//
-// impl TestEmitter {
-//     pub fn new(emitter: impl 'static + Emitter, error: &'static Mutex<bool>) -> TestEmitter {
-//         TestEmitter {
-//             emitter: Box::new(emitter),
-//             error,
-//         }
-//     }
-// }
-//
-// impl Emitter for TestEmitter {
-//     fn emit(&self, level: Level, diag: Diagnostic) {
-//         *self.error.lock().unwrap() = true;
-//         self.emitter.emit(level, diag)
-//     }
-//
-//     fn note(&self, kind: NoteKind, note: Diagnostic) {
-//         self.emitter.note(kind, note)
-//     }
-// }
-//
-// static DID_ERROR: Mutex<bool> = Mutex::new(false);
-
 #[derive(Clone, Copy)]
 struct Sink;
 
@@ -131,11 +106,11 @@ impl RenderTarget for Sink {
     }
 }
 
-#[test]
-pub fn smtlib() -> Result<()> {
+#[rstest]
+pub fn smtlib(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
     for (category, test) in enumerate()? {
         let mut interpreter =
-            Interpreter::with_backend(Settings::default().output(Sink), Register::backend("z3")?);
+            Interpreter::with_backend(Settings::default().output(Sink), backends::get(backend)?);
 
         let emitter = BatchEmitter::new(&NullEmitter);
         let result = Diagnostic::with(&emitter, || interpreter.run(&test));

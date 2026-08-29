@@ -143,6 +143,7 @@
 //!    preconditions, and can have arbitrary (but *not* undefined) behavior in those cases.
 
 mod register;
+pub use register::*;
 
 pub mod api;
 
@@ -151,8 +152,6 @@ pub mod cvc5;
 
 #[cfg(feature = "z3")]
 pub mod z3;
-
-pub use register::*;
 
 use crate::formally;
 use formally::{

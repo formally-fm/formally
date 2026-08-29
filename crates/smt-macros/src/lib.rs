@@ -74,8 +74,9 @@ pub fn logic(input: TokenStream) -> TokenStream {
 
 /// Register a SMT backend.
 ///
-/// This attribute registers automatically a backend type to `formally::smt::Register` and all the
-/// other facilities in the framework looking up backends by name.
+/// This attribute registers automatically a backend type to be found by
+/// `formally::smt::backends::get()` and all the other facilities in the framework looking up
+/// backends by name.
 ///
 /// The type is expected to be a unit struct, such as the following:
 /// ```text
