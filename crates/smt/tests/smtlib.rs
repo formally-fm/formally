@@ -140,16 +140,14 @@ pub fn smtlib() -> Result<()> {
         let emitter = BatchEmitter::new(&NullEmitter);
         let result = Diagnostic::with(&emitter, || interpreter.run(&test));
 
-        let errors = emitter.into_emitted();
-        assert_eq!(!errors.is_empty(), category == Category::Error);
-
-        if errors.is_empty() {
-            match result {
+        match emitter.ok() {
+            Ok(_) => match result {
                 Ok(Answer::Yes) => assert_eq!(category, Category::Sat),
                 Ok(Answer::No) => assert_eq!(category, Category::Unsat),
                 Ok(Answer::Unknown) => assert_eq!(category, Category::Unknown),
                 Err(_) => assert_eq!(category, Category::Error),
-            }
+            },
+            Err(_) => assert_eq!(category, Category::Error),
         }
     }
 

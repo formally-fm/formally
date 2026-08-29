@@ -61,7 +61,7 @@ impl Default for SMTLibEmitter {
 }
 
 impl Emitter for SMTLibEmitter {
-    fn emit(&self, level: Level, diag: Diagnostic) {
+    fn emit(&self, level: Level, diag: Diagnostic) -> DiagnosticEmitted {
         let mut msg = "error:".to_string();
         if level != Level::Error {
             msg.push_str(&format!("{level}:"));
@@ -77,9 +77,11 @@ impl Emitter for SMTLibEmitter {
         });
         error.print(&mut **self.write.write().unwrap()).unwrap();
         writeln!(&mut *self.write.write().unwrap()).unwrap();
+
+        DiagnosticEmitted
     }
 
-    fn note(&self, _kind: NoteKind, note: Diagnostic) {
+    fn note(&self, _kind: NoteKind, note: Diagnostic) -> DiagnosticEmitted {
         let mut msg = "note:".to_string();
         if let Some(span) = note.span {
             msg.push_str(&format!("{span}:"));
@@ -92,5 +94,7 @@ impl Emitter for SMTLibEmitter {
         });
         error.print(&mut **self.write.write().unwrap()).unwrap();
         writeln!(&mut *self.write.write().unwrap()).unwrap();
+
+        DiagnosticEmitted
     }
 }

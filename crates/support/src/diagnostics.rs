@@ -29,6 +29,7 @@ use std::{
     convert::Infallible,
     fmt::{self, Debug, Display},
     ops::Deref,
+    rc::Rc,
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -104,18 +105,18 @@ impl Display for DiagnosticEmitted {
 /// of [Diagnosable].
 pub trait Emit {
     /// Emit the object as a diagnostic.
-    fn emit(&self) -> DiagnosticEmitted;
+    fn emit(self) -> DiagnosticEmitted;
 }
 
 impl Emit for Infallible {
-    fn emit(&self) -> DiagnosticEmitted {
+    fn emit(self) -> DiagnosticEmitted {
         DiagnosticEmitted
     }
 }
 
 impl Emit for Diagnostic {
-    fn emit(&self) -> DiagnosticEmitted {
-        Diagnostic::emitter().emit(Level::Error, self.clone());
+    fn emit(self) -> DiagnosticEmitted {
+        GlobalEmitter.emit(Level::Error, self);
         DiagnosticEmitted
     }
 }
@@ -192,15 +193,39 @@ pub trait Diagnosable: Display + Located {
 }
 
 impl Emit for std::io::Error {
-    fn emit(&self) -> DiagnosticEmitted {
-        error!(None, "I/O error: {self}");
+    fn emit(self) -> DiagnosticEmitted {
+        error!(None, "input/output error: {self}");
         DiagnosticEmitted
     }
 }
 
+impl Emit for &dyn std::error::Error {
+    fn emit(self) -> DiagnosticEmitted {
+        error!(None, "error: {self}")
+    }
+}
+
+impl Emit for Box<dyn std::error::Error> {
+    fn emit(self) -> DiagnosticEmitted {
+        error!(None, "error: {self}")
+    }
+}
+
+impl Emit for Arc<dyn std::error::Error> {
+    fn emit(self) -> DiagnosticEmitted {
+        error!(None, "error: {self}")
+    }
+}
+
+impl Emit for Rc<dyn std::error::Error> {
+    fn emit(self) -> DiagnosticEmitted {
+        error!(None, "error: {self}")
+    }
+}
+
 impl<T: Diagnosable> Emit for T {
-    fn emit(&self) -> DiagnosticEmitted {
-        Diagnostic::emitter().emit(self.level(), Diagnostic::new(self.span(), self));
+    fn emit(self) -> DiagnosticEmitted {
+        GlobalEmitter.emit(self.level(), Diagnostic::new(self.span(), &self));
         self.notes()
     }
 }
@@ -234,21 +259,20 @@ pub type Result<T, E = DiagnosticEmitted> = std::result::Result<T, E>;
 /// additional information associated with different source spans.
 ///
 /// For consistency of the user experience, it is important that everybody uses the same [Emitter].
-/// For this reason, a global [Emitter] is always available from [Diagnostic::emitter()], which
-/// returns a global emitter object whose default value can be changed with
-/// [Diagnostic::set_default_global_emitter()]. The global emitter can be temporarily changed in a
-/// thread-local and scoped way with [Diagnostic::with()].
+/// For this reason, a global [Emitter] is always available as the [GlobalEmitter] type.
+/// The behavior of [GlobalEmitter] can be changed with [Diagnostic::with()] or by setting a
+/// different behavior for [DefaultGlobalEmitter] with [DefaultGlobalEmitter::set()].
 ///
 /// Different implementations of [Emitter] are provided and more will be added.
 /// Currently, we have:
 /// - [StdErrEmitter], to direct formatted messages to the standard error stream. This is currently
 ///   the default global emitter.
-/// - [BatchEmitter], to group diagnostics and emitting them all at once when requested
+/// - [BatchEmitter], to group diagnostics and emitting them all at once if and when requested
 /// - [NullEmitter], to suppress any diagnostic.
 ///
-/// [Diagnostic] objects are usually not constructed and emitted directly but using the [debug],
-/// [warning] and [error] macros. Similarly, notes are usually emitted with the [note] and [trace]
-/// macros. These macros use the global [Emitter].
+/// [Diagnostic] objects are usually not constructed and emitted directly but using the [debug!],
+/// [warning!], [error!] and similar macros. Similarly, notes are usually emitted with the [note!]
+/// and [trace!] macros. These macros use the global [Emitter].
 ///
 /// Example:
 /// ```
@@ -263,37 +287,63 @@ pub type Result<T, E = DiagnosticEmitted> = std::result::Result<T, E>;
 /// ```
 pub trait Emitter {
     /// Emit a diagnostic.
-    fn emit(&self, level: Level, diag: Diagnostic);
+    fn emit(&self, level: Level, diag: Diagnostic) -> DiagnosticEmitted;
 
     /// Emit a note.
-    fn note(&self, kind: NoteKind, note: Diagnostic);
+    fn note(&self, kind: NoteKind, note: Diagnostic) -> DiagnosticEmitted;
 }
 
 impl<E: Deref<Target: Emitter>> Emitter for Mutex<E> {
-    fn emit(&self, level: Level, diag: Diagnostic) {
+    fn emit(&self, level: Level, diag: Diagnostic) -> DiagnosticEmitted {
         self.lock().unwrap().emit(level, diag)
     }
 
-    fn note(&self, kind: NoteKind, note: Diagnostic) {
+    fn note(&self, kind: NoteKind, note: Diagnostic) -> DiagnosticEmitted {
         self.lock().unwrap().note(kind, note)
     }
 }
 
-struct DefaultGlobalEmitter;
-struct GlobalEmitter;
+/// The default global [Emitter].
+///
+/// This is the emitter used as the global emitter ([GlobalEmitter]) unless a call
+/// of [Diagnostic::with()] is ongoing in the current thread.
+///
+/// This is a unit struct, so a reference to it (`&DefaultGlobalEmitter`) can be directly passed
+/// to anyone expecting a `&dyn Emitter`.
+pub struct DefaultGlobalEmitter;
+
+impl DefaultGlobalEmitter {
+    /// Set the default global [Emitter].
+    pub fn set(emitter: impl 'static + Send + Sync + Emitter) {
+        *DEFAULT_GLOBAL_EMITTER.lock().unwrap() = Arc::new(emitter);
+    }
+}
+
+/// The global [Emitter].
+///
+/// This is the [Emitter] everyone should use, in general, to ensure a consistent rendering of
+/// diagnostics in an application based on [formally]. It is used by all the diagnostic macros
+/// ([error!], [warning!], [note!], etc.).
+///
+/// The behavior of [GlobalEmitter] can be changed locally with [Diagnostic::with()], or by changing
+/// the *default* global emitter with [DefaultGlobalEmitter::set()].
+///
+/// This is a unit struct, so a reference to it (`&GlobalEmitter`) can be directly passed to anyone
+/// expecting a `&dyn Emitter`.
+pub struct GlobalEmitter;
 
 impl Emitter for DefaultGlobalEmitter {
-    fn emit(&self, level: Level, diag: Diagnostic) {
+    fn emit(&self, level: Level, diag: Diagnostic) -> DiagnosticEmitted {
         DEFAULT_GLOBAL_EMITTER.emit(level, diag)
     }
 
-    fn note(&self, kind: NoteKind, note: Diagnostic) {
+    fn note(&self, kind: NoteKind, note: Diagnostic) -> DiagnosticEmitted {
         DEFAULT_GLOBAL_EMITTER.note(kind, note)
     }
 }
 
 impl Emitter for GlobalEmitter {
-    fn emit(&self, level: Level, diag: Diagnostic) {
+    fn emit(&self, level: Level, diag: Diagnostic) -> DiagnosticEmitted {
         if GLOBAL_EMITTER.is_set() {
             GLOBAL_EMITTER.with(|e| e.emit(level, diag))
         } else {
@@ -301,7 +351,7 @@ impl Emitter for GlobalEmitter {
         }
     }
 
-    fn note(&self, kind: NoteKind, note: Diagnostic) {
+    fn note(&self, kind: NoteKind, note: Diagnostic) -> DiagnosticEmitted {
         if GLOBAL_EMITTER.is_set() {
             GLOBAL_EMITTER.with(|e| e.note(kind, note))
         } else {
@@ -318,8 +368,6 @@ scoped_thread_local!(static GLOBAL_EMITTER: for<'a> &'a (dyn 'a + Emitter));
 /// Information attached to a diagnostic.
 ///
 /// See the [Emitter] trait for general information on the error reporting strategy of `formally`.
-///
-/// See the [emitter()](Diagnostic::emitter) function for how to reach the global [Emitter] object.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     /// The source span associated with this diagnostic.
@@ -336,27 +384,6 @@ impl Diagnostic {
             span,
             msg: msg.to_string(),
         }
-    }
-
-    /// Return a reference to the current default global [Emitter].
-    ///
-    /// This is the emitter used as the global emitter (returned by [Diagnostic::emitter()]) unless
-    /// a call of [Diagnostic::with()] is ongoing in the current thread.
-    pub fn default_global_emitter() -> &'static dyn Emitter {
-        &DefaultGlobalEmitter
-    }
-
-    /// Set the default global [Emitter].
-    ///
-    /// This is the emitter used as the global emitter (returned by [Diagnostic::emitter()]) unless
-    /// a call of [Diagnostic::with()] is ongoing in the current thread.
-    pub fn set_default_global_emitter(emitter: impl 'static + Send + Sync + Emitter) {
-        *DEFAULT_GLOBAL_EMITTER.lock().unwrap() = Arc::new(emitter);
-    }
-
-    /// Return the current global [Emitter].
-    pub fn emitter() -> &'static dyn Emitter {
-        &GlobalEmitter
     }
 
     /// Temporarily changes the global [Emitter].
@@ -381,9 +408,13 @@ impl Diagnostic {
 pub struct NullEmitter;
 
 impl Emitter for NullEmitter {
-    fn emit(&self, _level: Level, _diag: Diagnostic) {}
+    fn emit(&self, _level: Level, _diag: Diagnostic) -> DiagnosticEmitted {
+        DiagnosticEmitted
+    }
 
-    fn note(&self, _kind: NoteKind, _note: Diagnostic) {}
+    fn note(&self, _kind: NoteKind, _note: Diagnostic) -> DiagnosticEmitted {
+        DiagnosticEmitted
+    }
 }
 
 /// [Emitter] that delays the emission of diagnostics until an explicit commit.
@@ -396,7 +427,7 @@ impl Emitter for NullEmitter {
 /// [BatchEmitter::commit], the pending dianostics are discarded.
 pub struct BatchEmitter<'e> {
     emitter: &'e dyn Emitter,
-    batched: RefCell<Vec<Emitted>>,
+    emitted: RefCell<Vec<Emitted>>,
 }
 
 /// An emitted diagnostic together with its level or an emitted note together with its kind,
@@ -406,27 +437,45 @@ pub enum Emitted {
     Note(NoteKind, Diagnostic),
 }
 
+impl Emit for Emitted {
+    fn emit(self) -> DiagnosticEmitted {
+        match self {
+            Emitted::Diagnostic(level, diag) => GlobalEmitter.emit(level, diag),
+            Emitted::Note(kind, note) => GlobalEmitter.note(kind, note),
+        }
+    }
+}
+
+impl Emit for Vec<Emitted> {
+    fn emit(self) -> DiagnosticEmitted {
+        for emitted in self {
+            emitted.emit();
+        }
+        DiagnosticEmitted
+    }
+}
+
 impl<'e> BatchEmitter<'e> {
     /// Constructs a new [BatchEmitter] relaying to the provided [Emitter] instance.
     pub fn new(emitter: &'e dyn Emitter) -> BatchEmitter<'e> {
         BatchEmitter {
             emitter,
-            batched: RefCell::default(),
+            emitted: RefCell::default(),
         }
     }
 
     /// Flushes the pending diagnostics to the underlying [Emitter]
-    pub fn commit(self) {
-        for batched in self.batched.into_inner() {
-            match batched {
-                Emitted::Diagnostic(level, diag) => self.emitter.emit(level, diag),
-                Emitted::Note(kind, diag) => self.emitter.note(kind, diag),
-            }
-        }
+    pub fn commit(self) -> Result<(), DiagnosticEmitted> {
+        Ok(self.ok()?)
     }
 
-    pub fn into_emitted(self) -> Vec<Emitted> {
-        self.batched.into_inner()
+    pub fn ok(self) -> Result<(), Vec<Emitted>> {
+        let emitted = self.emitted.into_inner();
+        if emitted.is_empty() {
+            Ok(())
+        } else {
+            Err(emitted)
+        }
     }
 }
 
@@ -435,18 +484,20 @@ impl Emitter for BatchEmitter<'_> {
     ///
     /// Note that diagnostics and notes are relayed to the underlying [Emitter] only after a call to
     /// [BatchEmitter::commit].
-    fn emit(&self, level: Level, diag: Diagnostic) {
-        self.batched
+    fn emit(&self, level: Level, diag: Diagnostic) -> DiagnosticEmitted {
+        self.emitted
             .borrow_mut()
             .push(Emitted::Diagnostic(level, diag));
+        DiagnosticEmitted
     }
 
     /// Emit a note.
     ///
     /// Note that diagnostics and notes are relayed to the underlying [Emitter] only after a call to
     /// [BatchEmitter::commit].
-    fn note(&self, kind: NoteKind, note: Diagnostic) {
-        self.batched.borrow_mut().push(Emitted::Note(kind, note));
+    fn note(&self, kind: NoteKind, note: Diagnostic) -> DiagnosticEmitted {
+        self.emitted.borrow_mut().push(Emitted::Note(kind, note));
+        DiagnosticEmitted
     }
 }
 
@@ -487,7 +538,7 @@ impl Default for StdErrEmitter {
 }
 
 impl Emitter for StdErrEmitter {
-    fn emit(&self, level: Level, diag: Diagnostic) {
+    fn emit(&self, level: Level, diag: Diagnostic) -> DiagnosticEmitted {
         let mut note_emitted = self.note_emitted.lock().unwrap();
         let mut trace_emitted = self.trace_emitted.lock().unwrap();
 
@@ -497,19 +548,23 @@ impl Emitter for StdErrEmitter {
         self.print(level, diag.span, diag.msg);
         *trace_emitted = false;
         *note_emitted = false;
+
+        DiagnosticEmitted
     }
 
-    fn note(&self, kind: NoteKind, note: Diagnostic) {
+    fn note(&self, kind: NoteKind, note: Diagnostic) -> DiagnosticEmitted {
         if kind == NoteKind::Trace {
             let mut trace_emitted = self.trace_emitted.lock().unwrap();
             if *trace_emitted {
-                return;
+                return DiagnosticEmitted;
             } else {
                 *trace_emitted = true;
             }
         }
         *self.note_emitted.lock().unwrap() = true;
         self.print("note", note.span, note.msg);
+
+        DiagnosticEmitted
     }
 }
 
@@ -578,7 +633,7 @@ macro_rules! diagnose {
 #[macro_export]
 macro_rules! note {
     ($($args:tt)+) => {
-        $crate::diagnose!(NoteKind::Note, $crate::Diagnostic::emitter(), $($args)*)
+        $crate::diagnose!(NoteKind::Note, &$crate::GlobalEmitter, $($args)*)
     };
 }
 
@@ -607,7 +662,7 @@ macro_rules! note {
 #[macro_export]
 macro_rules! trace {
     ($($args:tt)+) => {
-        $crate::diagnose!(NoteKind::Trace, $crate::Diagnostic::emitter(), $($args)*)
+        $crate::diagnose!(NoteKind::Trace, &$crate::GlobalEmitter, $($args)*)
     };
 }
 
@@ -622,7 +677,7 @@ macro_rules! trace {
 #[macro_export]
 macro_rules! internal {
     ($($args:tt)+) => {
-        $crate::diagnose!(Level::Internal, $crate::Diagnostic::emitter(), $($args)*)
+        $crate::diagnose!(Level::Internal, &$crate::GlobalEmitter, $($args)*)
     };
 }
 
@@ -638,7 +693,7 @@ macro_rules! internal {
 #[macro_export]
 macro_rules! error {
     ($($args:tt)+) => {
-        $crate::diagnose!(Level::Error, $crate::Diagnostic::emitter(), $($args)*)
+        $crate::diagnose!(Level::Error, &$crate::GlobalEmitter, $($args)*)
     };
 }
 
@@ -657,7 +712,7 @@ macro_rules! error {
 #[macro_export]
 macro_rules! warning {
     ($($args:tt)+) => {
-        $crate::diagnose!(Level::Warning, $crate::Diagnostic::emitter(), $($args)*)
+        $crate::diagnose!(Level::Warning, &$crate::GlobalEmitter, $($args)*)
     };
 }
 
@@ -677,6 +732,6 @@ macro_rules! warning {
 #[macro_export]
 macro_rules! debug {
     ($($args:tt)+) => {
-        $crate::diagnose!(Level::Debug, $crate::Diagnostic::emitter(), $($args)*)
+        $crate::diagnose!(Level::Debug, &$crate::GlobalEmitter, $($args)*)
     };
 }

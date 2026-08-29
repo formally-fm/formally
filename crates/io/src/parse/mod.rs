@@ -497,7 +497,7 @@ impl<'b, 'o, 'e, 'p> State<'b, 'o, 'e, 'p> {
         State {
             origin,
             view: View::new(buffer),
-            emitter: BatchEmitter::new(Diagnostic::emitter()),
+            emitter: BatchEmitter::new(&GlobalEmitter),
             skip: ascii_whitespace().ignore(),
             parent: None,
         }
@@ -588,7 +588,7 @@ impl<'b, 'o, 'e, 'p> State<'b, 'o, 'e, 'p> {
         if let Some(parent) = self.parent {
             *parent = self.view;
         }
-        self.emitter.commit()
+        self.emitter.commit().ok();
     }
 }
 
@@ -596,11 +596,11 @@ impl<'b, 'o, 'e, 'p> State<'b, 'o, 'e, 'p> {
 pub struct Token<'s>(&'s str, pub Span);
 
 impl Emitter for State<'_, '_, '_, '_> {
-    fn emit(&self, level: Level, diag: Diagnostic) {
+    fn emit(&self, level: Level, diag: Diagnostic) -> DiagnosticEmitted {
         self.emitter.emit(level, diag)
     }
 
-    fn note(&self, kind: NoteKind, note: Diagnostic) {
+    fn note(&self, kind: NoteKind, note: Diagnostic) -> DiagnosticEmitted {
         self.emitter.note(kind, note)
     }
 }
