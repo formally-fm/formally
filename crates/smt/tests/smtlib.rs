@@ -31,7 +31,6 @@ mod formally {
 }
 
 use formally::{
-    io::print::RenderTarget,
     smt::{backends, smtlib::interpreter::Interpreter, *},
     support::*,
 };
@@ -87,30 +86,13 @@ fn enumerate() -> io::Result<Vec<(Category, PathBuf)>> {
     Ok(paths)
 }
 
-#[derive(Clone, Copy)]
-struct Sink;
-
-impl io::Write for Sink {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        io::Write::write(&mut io::sink(), buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        io::Write::flush(&mut io::sink())
-    }
-}
-
-impl RenderTarget for Sink {
-    fn is_terminal(&self) -> bool {
-        false
-    }
-}
-
 #[rstest]
 pub fn smtlib(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
     for (category, test) in enumerate()? {
-        let mut interpreter =
-            Interpreter::with_backend(Settings::default().output(Sink), backends::get(backend)?);
+        let mut interpreter = Interpreter::with_backend(
+            Settings::default().output(io::sink()),
+            backends::get(backend)?,
+        );
 
         let emitter = BatchEmitter::new(&NullEmitter);
         let result = Diagnostic::with(&emitter, || interpreter.run(&test));
