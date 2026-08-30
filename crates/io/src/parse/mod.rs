@@ -497,7 +497,7 @@ impl<'b, 'o, 'e, 'p> State<'b, 'o, 'e, 'p> {
         State {
             origin,
             view: View::new(buffer),
-            emitter: BatchEmitter::new(&GlobalEmitter),
+            emitter: BatchEmitter::with_emitter(&GlobalEmitter),
             skip: ascii_whitespace().ignore(),
             parent: None,
         }
@@ -574,7 +574,7 @@ impl<'b, 'o, 'e, 'p> State<'b, 'o, 'e, 'p> {
             origin: self.origin,
             view: self.view.clone(),
             parent: Some(&mut self.view),
-            emitter: BatchEmitter::new(&self.emitter),
+            emitter: BatchEmitter::with_emitter(&self.emitter),
             skip: self.skip.clone(),
         }
     }

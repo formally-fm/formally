@@ -72,7 +72,7 @@ impl Backend for Cvc5 {
     }
 
     fn manager(&self) -> Result<Box<dyn backends::Manager>> {
-        Ok(Box::new(api::ManagerFacade::new(Manager::default())))
+        Ok(Box::new(api::ApiManager::new(Manager::default())))
     }
 
     fn solver(
@@ -80,7 +80,7 @@ impl Backend for Cvc5 {
         config: &smt::Config,
         manager: Rc<dyn backends::Manager>,
     ) -> Result<Box<dyn backends::Solver>> {
-        Ok(Box::new(api::SolverFacade::<Solver>::new(
+        Ok(Box::new(api::ApiSolver::<Solver>::new(
             self, config, manager,
         )?))
     }

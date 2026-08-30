@@ -37,9 +37,9 @@ type Result<T, E = backends::Error> = std::result::Result<T, E>;
 
 /// A type that helps to implement instances of the [backends::Manager] trait.
 ///
-/// Given a type `M: api::Manager`, `ManagerFacade<M>` implements [backends::Manager].
+/// Given a type `M: api::Manager`, `ApiManager<M>` implements [backends::Manager].
 /// See the documentation of [api::Manager](Manager) for how to implement it properly.
-pub struct ManagerFacade<M: Manager> {
+pub struct ApiManager<M: Manager> {
     manager: Rc<M>,
     decls: RefCell<HashMap<smt::Declared, M::FuncDecl>>,
     defs: RefCell<HashMap<smt::Defined, M::FuncDecl>>,
@@ -52,21 +52,21 @@ pub struct ManagerFacade<M: Manager> {
 
 /// A type that helps to implement instances of the [backends::Solver] trait.
 ///
-/// Given a type `M: api::Solver`, `SolverFacade<M>` implements [backends::Solver].
+/// Given a type `M: api::Solver`, `ApiSolver<M>` implements [backends::Solver].
 /// See the documentation of [api::Solver](Solver) for how to implement it properly.
-pub struct SolverFacade<S: Solver> {
-    manager: Rc<ManagerFacade<<S as Solver>::Manager>>,
+pub struct ApiSolver<S: Solver> {
+    manager: Rc<ApiManager<<S as Solver>::Manager>>,
     solver: S,
     result: Option<bool>,
     config: RefCell<smt::Config>,
 }
 
-struct ModelFacade<'s, S: 's + Solver> {
-    solver: &'s SolverFacade<S>,
+struct ApiModel<'s, S: 's + Solver> {
+    solver: &'s ApiSolver<S>,
     model: S::Model<'s>,
 }
 
-impl<S: Solver> backends::Solver for SolverFacade<S> {
+impl<S: Solver> backends::Solver for ApiSolver<S> {
     fn manager(&self) -> &dyn backends::Manager {
         &*self.manager
     }
@@ -126,15 +126,15 @@ impl<S: Solver> backends::Solver for SolverFacade<S> {
             return Ok(None);
         }
 
-        Ok(Some(Box::new(ModelFacade {
+        Ok(Some(Box::new(ApiModel {
             solver: self,
             model: self.solver.model()?,
         })))
     }
 }
 
-impl<S: Solver> SolverFacade<S> {
-    /// Construct a new [SolverFacade].
+impl<S: Solver> ApiSolver<S> {
+    /// Construct a new [ApiSolver].
     ///
     /// The method expects a reference to the backend, a [Config](smt::Config) and a
     /// [backends::Manager]. The latter two can come directly from the arguments of
@@ -144,7 +144,7 @@ impl<S: Solver> SolverFacade<S> {
     ///
     /// ```text
     /// fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error> {
-    ///     Ok(Box::new(api::SolverFacade::<MySolver>::new(self, config, manager)?))
+    ///     Ok(Box::new(api::ApiSolver::<MySolver>::new(self, config, manager)?))
     /// }
     /// ```
     pub fn new(
@@ -153,12 +153,12 @@ impl<S: Solver> SolverFacade<S> {
         manager: Rc<dyn backends::Manager>,
     ) -> Result<Self> {
         let manager =
-            match Rc::downcast::<ManagerFacade<<S as Solver>::Manager>>(manager as Rc<dyn Any>) {
+            match Rc::downcast::<ApiManager<<S as Solver>::Manager>>(manager as Rc<dyn Any>) {
                 Ok(manager) => manager,
                 Err(_) => return Err(backends::Error::new(
                     backend.name()?,
                     backends::ErrorKind::Internal(
-                        "`SolverFacade` method called with a `dyn Manager` which is not `ManagerFacade`"
+                        "`ApiSolver` method called with a `dyn Manager` which is not `ApiManager`"
                             .into(),
                     ),
                 )),
@@ -177,7 +177,7 @@ impl<S: Solver> SolverFacade<S> {
             None => Ok(None),
         };
 
-        Ok(SolverFacade {
+        Ok(ApiSolver {
             manager: manager.clone(),
             solver: <S as Solver>::new(config, logic, manager.manager.clone())?,
             result: None,
@@ -186,7 +186,7 @@ impl<S: Solver> SolverFacade<S> {
     }
 }
 
-impl<'s, S: 's + Solver> backends::ModelProvider for ModelFacade<'s, S> {
+impl<'s, S: 's + Solver> backends::ModelProvider for ApiModel<'s, S> {
     fn value(&self, term: &smt::Term, pool: &dyn smt::TermPool) -> Option<smt::Term> {
         if let smt::TermKind::Atom(atom) = term.kind()
             && let smt::FunctionRef::Bound(bound) = &atom.head
@@ -205,7 +205,7 @@ impl<'s, S: 's + Solver> backends::ModelProvider for ModelFacade<'s, S> {
     }
 }
 
-impl<M: 'static + Manager> backends::Manager for ManagerFacade<M> {
+impl<M: 'static + Manager> backends::Manager for ApiManager<M> {
     fn backend(&self) -> &dyn Backend {
         self.manager.backend()
     }
@@ -213,19 +213,19 @@ impl<M: 'static + Manager> backends::Manager for ManagerFacade<M> {
 
 type BindMap<Term> = rpds::HashTrieMap<smt::Variable, Term>;
 
-impl<M: Manager> ManagerFacade<M> {
-    /// Create a new [ManagerFacade].
+impl<M: Manager> ApiManager<M> {
+    /// Create a new [ApiManager].
     ///
     /// This method accepts any instance of the underlying [api::Manager](Manager) type `M`.
     /// The resulting object can be returned directly from [backends::Backend::manager()].
     ///
     /// ```text
     /// fn manager(&self) -> Result<Box<dyn backends::Manager>> {
-    ///     Ok(Box::new(api::ManagerFacade::new(MyManager::default())))
+    ///     Ok(Box::new(api::ApiManager::new(MyManager::default())))
     /// }
     /// ```
     pub fn new(manager: M) -> Self {
-        ManagerFacade {
+        ApiManager {
             manager: Rc::new(manager),
             decls: RefCell::default(),
             defs: RefCell::default(),

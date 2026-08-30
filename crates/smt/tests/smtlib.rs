@@ -31,11 +31,14 @@ mod formally {
 }
 
 use formally::{
-    smt::{backends, smtlib::interpreter::Interpreter, *},
+    smt::{
+        backends,
+        smtlib::interpreter::{Interpreter, Settings},
+        *,
+    },
     support::*,
 };
 
-use formally_smt::smtlib::interpreter::Settings;
 use std::{
     ffi::OsStr,
     fs, io,
@@ -94,7 +97,7 @@ pub fn smtlib(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
             backends::get(backend)?,
         );
 
-        let emitter = BatchEmitter::new(&NullEmitter);
+        let emitter = BatchEmitter::new();
         let result = Diagnostic::with(&emitter, || interpreter.run(&test));
 
         match emitter.ok() {

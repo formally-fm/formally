@@ -32,7 +32,7 @@
 //! Using these facilities when applicable is recommended against implementing the backend from
 //! scratch, because they hide a non-trivial amount of complexity.
 //!
-//! The module provides two types, [ManagerFacade] and [SolverFacade], which respectively implement
+//! The module provides two types, [ApiManager] and [ApiSolver], which respectively implement
 //! [backends::Manager](smt::backends::Manager) and [backends::Solver](smt::backends::Solver) on top
 //! of types provided by the backend's implementor.
 //!
@@ -40,15 +40,15 @@
 //! have a seemingly larger surface than the similarly named ones from the parent module, but are
 //! largerly easier to implement on top of common SMT APIs.
 //!
-//! Then, your [Backend] instance can simply provide instances of [ManagerFacade] and [SolverFacade]
+//! Then, your [Backend] instance can simply provide instances of [ApiManager] and [ApiSolver]
 //! in its [Backend::manager()] and [Backend::solver()] methods.
 //!
 //! Finally, remember to register your backend using the [backend](smt::backend) attribute for
 //! it to be available when looking up backends by name.
 
 mod facade;
-pub use facade::ManagerFacade;
-pub use facade::SolverFacade;
+pub use facade::ApiManager;
+pub use facade::ApiSolver;
 
 use crate::formally;
 use formally::smt::{
@@ -61,7 +61,7 @@ use std::{hash::Hash, rc::Rc};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-/// Trait to allow [api::ManagerFacade](ManagerFacade) to implement the
+/// Trait to allow [api::ApiManager](ApiManager) to implement the
 /// [backends::Manager](smt::backends::Manager) trait.
 ///
 /// This trait asks you to implement the bare minimum to convert [Term](smt::Term) and
@@ -216,7 +216,7 @@ pub trait Manager: Default + Sized {
     }
 }
 
-/// Trait to allow [api::SolverFacade](SolverFacade) to implement the
+/// Trait to allow [api::ApiSolver](ApiSolver) to implement the
 /// [backends::Solver](smt::backends::Solver) trait.
 ///
 /// Similarly to [api::Manager](Manager), this trait asks the implementor to provide the bare
@@ -241,7 +241,7 @@ pub trait Solver: Sized {
     ///
     /// There are some details to clarify of this signature:
     /// 1. in contrast to [Backend::solver()], the `manager` argument is a concrete type
-    ///    corresponding to the peer [api::Manager](Manager) type used with [ManagerFacade].
+    ///    corresponding to the peer [api::Manager](Manager) type used with [ApiManager].
     /// 2. the `logic` argument provides a `Logic` object looked up by the
     ///    [standard_logic()](smt::logics::standard_logic()) function. However, the logic is wrapped
     ///    in a `Result` because, when the logic is not found among the standard ones, it is up to

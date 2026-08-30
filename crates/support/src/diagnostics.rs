@@ -456,34 +456,32 @@ impl Emit for Vec<Emitted> {
 }
 
 impl<'e> BatchEmitter<'e> {
-    /// Constructs a new [BatchEmitter] relaying to the provided [Emitter] instance.
-    pub fn new(emitter: &'e dyn Emitter) -> BatchEmitter<'e> {
+    /// Construct a new [BatchEmitter] relaying to the global [Emitter].
+    pub fn new() -> BatchEmitter<'static> {
+        BatchEmitter::with_emitter(&GlobalEmitter)
+    }
+
+    /// Construct a new [BatchEmitter] relaying to the provided [Emitter] instance.
+    pub fn with_emitter(emitter: &'e dyn Emitter) -> BatchEmitter<'e> {
         BatchEmitter {
             emitter,
             emitted: RefCell::default(),
         }
     }
 
-    /// Flushes the pending diagnostics to the underlying [Emitter]
+    /// Flushes the pending diagnostics to the underlying [Emitter].
+    ///
+    /// The method returns `Ok(())` if no diagnostics were collected, or `Err(DiagnosticEmitted)`
+    /// otherwise.
     pub fn commit(self) -> Result<(), DiagnosticEmitted> {
-        let emitted = self.emitted.into_inner();
-        if emitted.is_empty() {
-            return Ok(())
-        }
-        
-        for emitted in emitted {
-            match emitted {
-                Emitted::Diagnostic(level, diag) => {
-                    self.emitter.emit(level, diag);
-                }
-                Emitted::Note(kind, note) => {
-                    self.emitter.note(kind, note);
-                }
-            }
-        }
-        Err(DiagnosticEmitted)
+        Diagnostic::with(self.emitter, || Ok(self.ok()?))
     }
 
+    /// Return the collected emitted diagnostics as an `Err(Vec<Emitted>)` if any, or `Ok(())` if no
+    /// diagnostics were emitted.
+    ///
+    /// Note that `Vec<Emitted>` is `Emit` so can be used with the `?` operator in a function
+    /// returning `Result<_, DiagnosticEmitted>` to emit the diagnostics on early return.
     pub fn ok(self) -> Result<(), Vec<Emitted>> {
         let emitted = self.emitted.into_inner();
         if emitted.is_empty() {
