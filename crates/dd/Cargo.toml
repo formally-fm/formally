@@ -1,0 +1,14 @@
+[package]
+name = "formally-dd"
+description = "the open-source formal methods toolchain - decision diagrams"
+homepage = "https://formally.fm"
+repository = "https://github.com/formally-fm/formally"
+version = "0.2.0"
+edition = "2024"
+license-file = "LICENSE.txt"
+readme = "README.md"
+categories = [ "mathematics" ]
+keywords = [ "formal-methods", "decision-diagrams" ]
+
+[dependencies]
+formally-support = { path = "../support", version = "0.2.0" }

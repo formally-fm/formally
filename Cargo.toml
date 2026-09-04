@@ -5,6 +5,6 @@ members = [
     "crates/io",
     "crates/smt",
     "crates/formally",
-    "crates/cli", "crates/smt-macros",
+    "crates/cli", "crates/smt-macros", "crates/dd",
 ]
 resolver = "3"
