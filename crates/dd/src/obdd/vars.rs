@@ -22,10 +22,20 @@
 // SOFTWARE.
 //
 
-use std::{num::NonZero, ops::Not};
+use std::{
+    fmt::{Debug, Formatter},
+    num::NonZero,
+    ops::Not,
+};
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Var(pub(super) NonZero<u32>);
+
+impl Debug for Var {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Var({})", self.0)
+    }
+}
 
 impl Not for Var {
     type Output = Lit;
@@ -63,7 +73,7 @@ impl Lit {
 }
 
 #[derive(Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Position(u32);
+pub struct Position(u64);
 
 #[derive(Clone)]
 pub struct Order {
@@ -76,7 +86,7 @@ impl Default for Order {
     fn default() -> Self {
         Order {
             positions: vec![Position(0)],
-            subsequents: vec![Position(u32::MAX)],
+            subsequents: vec![Position(u64::MAX)],
             max: None,
         }
     }
@@ -112,6 +122,10 @@ impl Order {
         }
 
         var
+    }
+
+    pub fn max(&self) -> Option<Var> {
+        self.max
     }
 
     pub fn var(&mut self) -> Var {
