@@ -75,6 +75,13 @@ impl Tree {
             Tree::Node(_) => None,
         }
     }
+
+    pub fn var(&self) -> Option<Var> {
+        match *self {
+            Tree::Boolean(_) => None,
+            Tree::Node(node) => Some(node.var),
+        }
+    }
 }
 
 impl From<Var> for Tree {
@@ -102,13 +109,13 @@ pub enum BinOp {
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct BinOpEntry(BinOp, TreeID, TreeID);
+struct IteEntry(TreeID, TreeID, TreeID);
 
 #[derive(Clone)]
 pub struct Forest {
     trees: RefCell<Vec<Tree>>,
     tree_to_id: RefCell<HashMap<Tree, TreeID>>,
-    binop_cache: RefCell<HashMap<BinOpEntry, TreeID>>,
+    ite_cache: RefCell<HashMap<IteEntry, TreeID>>,
     order: Order,
 }
 
@@ -128,7 +135,7 @@ impl Forest {
         Forest {
             trees: RefCell::new(trees),
             tree_to_id: RefCell::new(tree_to_id),
-            binop_cache: RefCell::default(),
+            ite_cache: RefCell::default(),
             order: Order::default(),
         }
     }
@@ -139,7 +146,7 @@ impl Forest {
     }
 
     pub fn var_after(&mut self, previous: Var) -> TreeID {
-        let var = self.order.var_after(Some(previous));
+        let var = self.order.var_after(previous);
         self.id(Tree::from(var))
     }
 
@@ -173,86 +180,102 @@ impl Forest {
     }
 
     pub fn not(&self, arg: TreeID) -> TreeID {
-        self.apply(BinOp::Xor, arg, TreeID::top())
+        self.ite(arg, TreeID::bottom(), TreeID::top())
     }
 
     pub fn and(&self, args: impl IntoIterator<Item = TreeID>) -> TreeID {
         args.into_iter()
-            .fold(TreeID::top(), |acc, t| self.apply(BinOp::And, acc, t))
+            .fold(TreeID::top(), |acc, t| self.ite(acc, t, TreeID::bottom()))
     }
 
     pub fn or(&self, args: impl IntoIterator<Item = TreeID>) -> TreeID {
         args.into_iter()
-            .fold(TreeID::top(), |acc, t| self.apply(BinOp::Or, acc, t))
+            .fold(TreeID::top(), |acc, t| self.ite(acc, TreeID::top(), t))
     }
 
     pub fn xor(&self, args: impl IntoIterator<Item = TreeID>) -> TreeID {
         args.into_iter()
-            .fold(TreeID::top(), |acc, t| self.apply(BinOp::Xor, acc, t))
+            .fold(TreeID::top(), |acc, t| self.ite(acc, self.not(t), t))
     }
 
     pub fn implies(&self, left: TreeID, right: TreeID) -> TreeID {
-        self.apply(BinOp::Implies, left, right)
+        self.ite(left, right, TreeID::top())
     }
 
-    pub fn apply(&self, binop: BinOp, left: TreeID, right: TreeID) -> TreeID {
-        if let Some(id) = self
-            .binop_cache
-            .borrow()
-            .get(&BinOpEntry(binop, left, right))
-        {
-            return *id;
+    pub fn ite(&self, guard: TreeID, then: TreeID, else_: TreeID) -> TreeID {
+        if then == else_ {
+            return then;
         }
 
-        let l = self.tree(left);
-        let r = self.tree(right);
+        let g = self.tree(guard);
+        let t = self.tree(then);
+        let e = self.tree(else_);
 
-        let order = self.order();
-        let result = match (l, r) {
-            (Tree::Node(l), Tree::Node(r)) => {
-                if l.var == r.var {
-                    self.id(Tree::Node(Node {
-                        var: l.var,
-                        top: self.apply(binop, l.top, r.top),
-                        bottom: self.apply(binop, l.bottom, r.bottom),
-                    }))
-                } else if order.position(l.var) < order.position(r.var) {
-                    self.id(Tree::Node(Node {
-                        var: l.var,
-                        top: self.apply(binop, l.top, right),
-                        bottom: self.apply(binop, l.bottom, right),
-                    }))
+        match g {
+            Tree::Boolean(true) => then,
+            Tree::Boolean(false) => else_,
+            Tree::Node(node) => {
+                if let Some(t) = self.ite_cache.borrow().get(&IteEntry(guard, then, else_)) {
+                    return *t;
+                }
+
+                let var = [Some(node.var), t.var(), e.var()]
+                    .into_iter()
+                    .min_by_key(|var| self.order().position(*var))
+                    .unwrap()
+                    .unwrap();
+                
+                fn cofactors(tree: Tree, id: TreeID, var: Var) -> (TreeID, TreeID) {
+                    match tree {
+                        Tree::Node(node) if node.var == var => (node.bottom, node.top),
+                        _ => (id, id),
+                    }
+                }
+
+                let (g0, g1) = cofactors(g, guard, var);
+                let (t0, t1) = cofactors(t, then, var);
+                let (e0, e1) = cofactors(e, else_, var);
+
+                let top = self.ite(g1, t1, e1);
+                let bottom = self.ite(g0, t0, e0);
+
+                let result = self.id(Tree::Node(Node { var, top, bottom }));
+
+                self.ite_cache
+                    .borrow_mut()
+                    .insert(IteEntry(guard, then, else_), result);
+
+                result
+            }
+        }
+    }
+
+    pub fn restrict(&self, lit: Lit, tree: TreeID) -> TreeID {
+        match self.tree(tree) {
+            Tree::Boolean(_) => tree,
+            Tree::Node(node) => {
+                if node.var == lit.var() {
+                    if lit.value() { node.top } else { node.bottom }
                 } else {
                     self.id(Tree::Node(Node {
-                        var: r.var,
-                        top: self.apply(binop, left, r.top),
-                        bottom: self.apply(binop, left, r.bottom),
+                        var: node.var,
+                        top: self.restrict(lit, node.top),
+                        bottom: self.restrict(lit, node.bottom),
                     }))
                 }
             }
-            (Tree::Node(l), Tree::Boolean(r)) => self.id(Tree::Node(Node {
-                var: l.var,
-                top: self.apply(binop, l.top, TreeID::boolean(r)),
-                bottom: self.apply(binop, l.bottom, TreeID::boolean(r)),
-            })),
-            (Tree::Boolean(l), Tree::Node(r)) => self.id(Tree::Node(Node {
-                var: r.var,
-                top: self.apply(binop, TreeID::boolean(l), r.top),
-                bottom: self.apply(binop, TreeID::boolean(l), r.bottom),
-            })),
-            (Tree::Boolean(l), Tree::Boolean(r)) => match binop {
-                BinOp::And => TreeID::boolean(l && r),
-                BinOp::Or => TreeID::boolean(l || r),
-                BinOp::Xor => TreeID::boolean(l ^ r),
-                BinOp::Implies => TreeID::boolean(!l || r),
-            },
-        };
+        }
+    }
 
-        self.binop_cache
-            .borrow_mut()
-            .insert(BinOpEntry(binop, left, right), result);
+    pub fn exists(&self, var: Var, tree: TreeID) -> TreeID {
+        self.or([
+            self.restrict(Lit::from(var), tree),
+            self.restrict(!Lit::from(var), tree),
+        ])
+    }
 
-        result
+    pub fn forall(&self, var: Var, tree: TreeID) -> TreeID {
+        self.not(self.exists(var, self.not(tree)))
     }
 
     pub fn model(&self) -> Option<HashMap<Var, bool>> {
@@ -261,7 +284,7 @@ impl Forest {
 }
 
 #[test]
-pub fn apply() {
+pub fn ite() {
     let mut forest = Forest::new();
     let p = forest.var();
     let q = forest.var();
