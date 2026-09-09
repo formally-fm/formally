@@ -73,21 +73,24 @@ impl Lit {
 }
 
 #[derive(Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Position(u64);
+pub struct Position(u32);
+
+impl Position {
+    pub const MIN: Position = Position(0);
+    pub const MAX: Position = Position(u32::MAX);
+}
 
 #[derive(Clone)]
 pub struct Order {
     positions: Vec<Position>,
-    subsequents: Vec<Position>,
-    max: Option<Var>,
+    next: Position,
 }
 
 impl Default for Order {
     fn default() -> Self {
         Order {
-            positions: vec![Position(0)],
-            subsequents: vec![Position(u64::MAX)],
-            max: None,
+            positions: vec![Position::MIN],
+            next: Position::MIN,
         }
     }
 }
@@ -97,44 +100,34 @@ impl Order {
         Order::default()
     }
 
-    pub fn var_after(&mut self, previous: impl Into<Option<Var>>) -> Var {
-        let previous = previous.into();
-        let prev_pos = self.position(previous);
-        let prev_sub = match previous {
-            None => &mut self.subsequents[0],
-            Some(var) => &mut self.subsequents[var.0.get() as usize],
-        };
+    pub fn var_after(&mut self, previous: Var) -> Var {
+        let prev = self.position(previous);
 
-        let position = Position(prev_pos.0 + ((prev_sub.0 - prev_pos.0) / 2));
-
-        assert!(position > prev_pos);
-
-        let subsequent = *prev_sub;
-
-        *prev_sub = position;
-
-        let var = Var(NonZero::new(self.positions.len() as u32).unwrap());
-        self.positions.push(position);
-        self.subsequents.push(subsequent);
-
-        if position > self.position(self.max) {
-            self.max = Some(var)
+        for pos in &mut self.positions {
+            if *pos > prev {
+                pos.0 += 1;
+            }
         }
+        self.next = Position(self.next.0 + 1);
 
-        var
-    }
+        let nextvar = self.positions.len() as u32;
+        self.positions.push(Position(prev.0 + 1));
 
-    pub fn max(&self) -> Option<Var> {
-        self.max
+        Var(NonZero::new(nextvar).unwrap())
     }
 
     pub fn var(&mut self) -> Var {
-        self.var_after(self.max)
+        let nextvar = self.positions.len() as u32;
+        let pos = Position(self.next.0 + 1);
+        self.next = pos;
+        self.positions.push(pos);
+
+        Var(NonZero::new(nextvar).unwrap())
     }
 
     pub fn position(&self, var: impl Into<Option<Var>>) -> Position {
         match var.into() {
-            None => self.positions[0],
+            None => Position::MAX,
             Some(var) => self.positions[var.0.get() as usize],
         }
     }
