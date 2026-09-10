@@ -39,7 +39,7 @@ use std::{
 ///
 /// In `formally`, this is used in places where two objects with the same value must nevertheless
 /// be considered distinct, most prominently the `Declared` and `Defined` types in the `smt` crate.
-#[derive(Clone, Default, From)]
+#[derive(Clone, Copy, Default, From)]
 #[from(T)]
 #[repr(transparent)]
 pub struct Nominal<T>(pub T);
