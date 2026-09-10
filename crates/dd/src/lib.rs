@@ -23,7 +23,7 @@
 //
 
 mod formally {
-    // pub use formally_support as support;
+    pub use formally_support as support;
     pub extern crate self as dd;
 }
 
