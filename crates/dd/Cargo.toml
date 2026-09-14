@@ -15,3 +15,4 @@ dashmap = "6.2.1"
 formally-support = { path = "../support", version = "0.2.0" }
 itertools = "0.15.0"
 parking_lot = "0.12.5"
+smallvec = "1.16.1"

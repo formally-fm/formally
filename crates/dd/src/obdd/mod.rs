@@ -22,91 +22,21 @@
 // SOFTWARE.
 //
 
+mod inner;
+
 use crate::formally;
 use formally::support::Nominal;
 
-use dashmap::DashMap;
 use itertools::Itertools;
 use parking_lot::RwLock;
 
 use std::{
     cmp,
     fmt::{Debug, Formatter},
-    num::NonZero,
-    ops::{Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not},
-    sync::atomic::{AtomicU32, Ordering},
+    ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not},
 };
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct VarID(NonZero<u32>);
-
-impl VarID {
-    fn from_index(index: usize) -> VarID {
-        VarID(NonZero::new((index + 1) as u32).unwrap())
-    }
-
-    fn into_index(self) -> usize {
-        (self.0.get() - 1) as usize
-    }
-}
-
-#[derive(Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Level(u32);
-
-impl Level {
-    pub const MIN: Level = Level(0);
-    pub const MAX: Level = Level(u32::MAX);
-}
-
-impl Add<u32> for Level {
-    type Output = Level;
-
-    fn add(self, rhs: u32) -> Level {
-        Level(self.0 + rhs)
-    }
-}
-
-impl AddAssign<u32> for Level {
-    fn add_assign(&mut self, rhs: u32) {
-        *self = *self + rhs
-    }
-}
-
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-enum Tree {
-    Terminal(bool),
-    Node(Node),
-}
-
-impl Tree {
-    pub fn var(&self) -> Option<VarID> {
-        match *self {
-            Tree::Terminal(_) => None,
-            Tree::Node(node) => Some(node.var),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct Node {
-    var: VarID,
-    high: NodeID,
-    low: NodeID,
-}
-
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct NodeID(u32);
-
-impl Default for NodeID {
-    fn default() -> Self {
-        NodeID(2)
-    }
-}
-
-impl NodeID {
-    const TOP: NodeID = NodeID(1);
-    const BOTTOM: NodeID = NodeID(0);
-}
+use inner::{Inner, NodeID, VarID};
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Var<'m> {
@@ -141,142 +71,8 @@ impl Ord for Var<'_> {
         );
         let inner = self.manager.inner.read();
         inner
-            .position(Some(self.var))
-            .cmp(&inner.position(Some(other.var)))
-    }
-}
-
-struct Inner {
-    order: Vec<Level>,
-    next_level: Level,
-    nodes: DashMap<NodeID, Node>,
-    next_node: AtomicU32,
-    unique: DashMap<Node, NodeID>,
-    ite_cache: DashMap<IteKey, NodeID>,
-}
-
-impl Default for Inner {
-    fn default() -> Self {
-        Inner {
-            order: Vec::default(),
-            next_level: Level::default(),
-            nodes: DashMap::default(),
-            next_node: AtomicU32::new(2),
-            unique: DashMap::default(),
-            ite_cache: DashMap::default(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct IteKey(NodeID, NodeID, NodeID);
-
-impl Inner {
-    fn var(&mut self) -> VarID {
-        let var = VarID::from_index(self.order.len());
-
-        self.order.push(self.next_level);
-        self.next_level += 1;
-
-        var
-    }
-
-    fn position(&self, var: Option<VarID>) -> Level {
-        match var {
-            None => Level::MAX,
-            Some(var) => *self
-                .order
-                .get(var.into_index())
-                .expect("use of a non-existent Var, probably from a different Manager"),
-        }
-    }
-
-    fn tree(&self, id: NodeID) -> Tree {
-        match id {
-            NodeID::TOP => Tree::Terminal(true),
-            NodeID::BOTTOM => Tree::Terminal(false),
-            id => {
-                Tree::Node(*self.nodes.get(&id).expect(
-                    "use of a non-existent BDD, probably survived after a garbage collection",
-                ))
-            }
-        }
-    }
-
-    fn make(&self, tree: Tree) -> NodeID {
-        match tree {
-            Tree::Terminal(true) => NodeID::TOP,
-            Tree::Terminal(false) => NodeID::BOTTOM,
-            Tree::Node(node) => {
-                if node.high == node.low {
-                    return node.high;
-                }
-
-                match self.unique.entry(node) {
-                    dashmap::Entry::Occupied(entry) => *entry.get(),
-                    dashmap::Entry::Vacant(entry) => {
-                        let id = {
-                            let id = self.next_node.fetch_add(1, Ordering::Relaxed);
-                            assert_ne!(id, u32::MAX, "maximum number of BDD nodes reached");
-                            NodeID(id)
-                        };
-
-                        self.nodes.insert(id, node);
-
-                        entry.insert_entry(id);
-                        id
-                    }
-                }
-            }
-        }
-    }
-
-    fn ite(&self, guard: NodeID, then: NodeID, else_: NodeID) -> NodeID {
-        if then == else_ {
-            return then;
-        }
-
-        let g = self.tree(guard);
-
-        match g {
-            Tree::Terminal(true) => then,
-            Tree::Terminal(false) => else_,
-            Tree::Node(node) => {
-                if let Some(t) = self.ite_cache.get(&IteKey(guard, then, else_)) {
-                    return *t;
-                }
-
-                let t = self.tree(then);
-                let e = self.tree(else_);
-
-                let var = [Some(node.var), t.var(), e.var()]
-                    .into_iter()
-                    .min_by_key(|var| self.position(*var))
-                    .unwrap()
-                    .unwrap();
-
-                fn cofactors(tree: Tree, id: NodeID, var: VarID) -> (NodeID, NodeID) {
-                    match tree {
-                        Tree::Node(node) if node.var == var => (node.low, node.high),
-                        _ => (id, id),
-                    }
-                }
-
-                let (g0, g1) = cofactors(g, guard, var);
-                let (t0, t1) = cofactors(t, then, var);
-                let (e0, e1) = cofactors(e, else_, var);
-
-                let result = self.make(Tree::Node(Node {
-                    var,
-                    high: self.ite(g1, t1, e1),
-                    low: self.ite(g0, t0, e0),
-                }));
-
-                self.ite_cache
-                    .insert(IteKey(guard, then, else_), result)
-                    .unwrap_or(result)
-            }
-        }
+            .level(Some(self.var))
+            .cmp(&inner.level(Some(other.var)))
     }
 }
 
@@ -297,7 +93,35 @@ impl Manager {
     }
 
     pub fn var(&self) -> Var<'_> {
-        Var::new(self.inner.write().var(), self)
+        Var::new(self.inner.write().vars(1)[0], self)
+    }
+
+    pub fn var_after(&self, preceeding: Var<'_>) -> Var<'_> {
+        let mut inner = self.inner.write();
+        let level = inner.level(Some(preceeding.var));
+
+        Var::new(inner.vars_after(level, 1)[0], self)
+    }
+
+    pub fn vars(&self, n: u32) -> Vec<Var<'_>> {
+        let vars = self.inner.write().vars(n);
+
+        vars.into_iter().map(|v| Var::new(v, self)).collect()
+    }
+
+    pub fn vars_after(&self, preceeding: Var<'_>, n: u32) -> Vec<Var<'_>> {
+        let ids = {
+            let mut inner = self.inner.write();
+            let level = inner.level(Some(preceeding.var));
+            inner.vars_after(level, n)
+        };
+
+        let mut vars = Vec::with_capacity(n as usize);
+        for id in ids {
+            vars.push(Var::new(id, self))
+        }
+
+        vars
     }
 
     pub fn top(&self) -> BDD<'_> {
@@ -399,7 +223,7 @@ impl Debug for BDD<'_> {
 impl<'m> From<Var<'m>> for BDD<'m> {
     fn from(var: Var<'m>) -> Self {
         let manager = var.manager();
-        let node = manager.inner.read().make(Tree::Node(Node {
+        let node = manager.inner.read().make(inner::Tree::Node(inner::Node {
             var: var.var,
             high: NodeID::TOP,
             low: NodeID::BOTTOM,
@@ -411,8 +235,8 @@ impl<'m> From<Var<'m>> for BDD<'m> {
 impl<'m> PartialEq<bool> for BDD<'m> {
     fn eq(&self, other: &bool) -> bool {
         match self.manager.inner.read().tree(self.id) {
-            Tree::Terminal(b) => b == *other,
-            Tree::Node(_) => false,
+            inner::Tree::Terminal(b) => b == *other,
+            inner::Tree::Node(_) => false,
         }
     }
 }
@@ -481,7 +305,7 @@ impl<'m, T: Into<BDD<'m>>> BitXor<T> for BDD<'m> {
     type Output = BDD<'m>;
 
     fn bitxor(self, rhs: T) -> Self::Output {
-        self.manager.or([self, rhs.into()])
+        self.manager.xor([self, rhs.into()])
     }
 }
 
@@ -489,7 +313,7 @@ impl<'m, T: Into<BDD<'m>>> BitXor<T> for Var<'m> {
     type Output = BDD<'m>;
 
     fn bitxor(self, rhs: T) -> Self::Output {
-        self.manager.or([BDD::from(self), rhs.into()])
+        self.manager.xor([BDD::from(self), rhs.into()])
     }
 }
 
@@ -499,20 +323,48 @@ impl<'m, T: Into<BDD<'m>>> BitXorAssign<T> for BDD<'m> {
     }
 }
 
-#[test]
-pub fn obdds() {
-    let manager = Manager::new();
-    let p = manager.var();
-    let q = manager.var();
-
-    let tautology = p | !p;
-    let ponens = implies(implies(p, q) & p, q);
-    let not = implies(p, q) & p & !q;
-    let something = p | q;
-
-    assert_eq!(tautology, true);
-    assert_eq!(ponens, true);
-    assert_eq!(not, false);
-    assert_ne!(something, true);
-    assert_ne!(something, false);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn order() {
+        let manager = Manager::new();
+        
+        let first = manager.var();
+        let second = manager.var();
+        let middle = manager.var_after(first);
+        let seq = manager.vars_after(middle, 4);
+        
+        assert!(first < second);
+        assert!(first < middle);
+        assert!(middle < second);
+        
+        for (v1, v2) in seq.into_iter().tuple_windows() {
+            assert!(middle < v1);
+            assert!(v1 < v2);
+            assert!(v2 < second);
+        }
+    } 
+    
+    #[test]
+    fn obdds() {
+        let manager = Manager::new();
+        let p = manager.var();
+        let q = manager.var();
+    
+        let tautology = p | !p;
+        let ponens = implies(implies(p, q) & p, q);
+        let not = implies(p, q) & p & !q;
+        let something = p | q;
+        let xor = (p ^ q) & p & q;
+    
+        assert_eq!(tautology, true);
+        assert_eq!(ponens, true);
+        assert_eq!(not, false);
+        assert_ne!(something, true);
+        assert_ne!(something, false);
+        assert_eq!(xor, false);
+    }
+    
 }
