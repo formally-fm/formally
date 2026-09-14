@@ -185,30 +185,24 @@ impl Inner {
         }
     }
 
-    pub fn make(&self, tree: Tree) -> NodeID {
-        match tree {
-            Tree::Terminal(true) => NodeID::TOP,
-            Tree::Terminal(false) => NodeID::BOTTOM,
-            Tree::Node(node) => {
-                if node.high == node.low {
-                    return node.high;
-                }
+    pub fn make(&self, node: Node) -> NodeID {
+        if node.high == node.low {
+            return node.high;
+        }
 
-                match self.unique.entry(node) {
-                    dashmap::Entry::Occupied(entry) => *entry.get(),
-                    dashmap::Entry::Vacant(entry) => {
-                        let id = {
-                            let id = self.next_node.fetch_add(1, Ordering::Relaxed);
-                            assert_ne!(id, u32::MAX, "maximum number of BDD nodes reached");
-                            NodeID(id)
-                        };
+        match self.unique.entry(node) {
+            dashmap::Entry::Occupied(entry) => *entry.get(),
+            dashmap::Entry::Vacant(entry) => {
+                let id = {
+                    let id = self.next_node.fetch_add(1, Ordering::Relaxed);
+                    assert_ne!(id, u32::MAX, "maximum number of BDD nodes reached");
+                    NodeID(id)
+                };
 
-                        self.nodes.insert(id, node);
+                self.nodes.insert(id, node);
 
-                        entry.insert_entry(id);
-                        id
-                    }
-                }
+                entry.insert_entry(id);
+                id
             }
         }
     }
@@ -248,11 +242,11 @@ impl Inner {
                 let (t0, t1) = cofactors(t, then, var);
                 let (e0, e1) = cofactors(e, else_, var);
 
-                let result = self.make(Tree::Node(Node {
+                let result = self.make(Node {
                     var,
                     high: self.ite(g1, t1, e1),
                     low: self.ite(g0, t0, e0),
-                }));
+                });
 
                 self.ite_cache
                     .insert(IteKey(guard, then, else_), result)
