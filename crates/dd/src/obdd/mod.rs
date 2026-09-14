@@ -223,11 +223,11 @@ impl Debug for BDD<'_> {
 impl<'m> From<Var<'m>> for BDD<'m> {
     fn from(var: Var<'m>) -> Self {
         let manager = var.manager();
-        let node = manager.inner.read().make(inner::Tree::Node(inner::Node {
+        let node = manager.inner.read().make(inner::Node {
             var: var.var,
             high: NodeID::TOP,
             low: NodeID::BOTTOM,
-        }));
+        });
         BDD::new(node, manager)
     }
 }
@@ -326,39 +326,39 @@ impl<'m, T: Into<BDD<'m>>> BitXorAssign<T> for BDD<'m> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn order() {
         let manager = Manager::new();
-        
+
         let first = manager.var();
         let second = manager.var();
         let middle = manager.var_after(first);
         let seq = manager.vars_after(middle, 4);
-        
+
         assert!(first < second);
         assert!(first < middle);
         assert!(middle < second);
-        
+
         for (v1, v2) in seq.into_iter().tuple_windows() {
             assert!(middle < v1);
             assert!(v1 < v2);
             assert!(v2 < second);
         }
-    } 
-    
+    }
+
     #[test]
     fn obdds() {
         let manager = Manager::new();
         let p = manager.var();
         let q = manager.var();
-    
+
         let tautology = p | !p;
         let ponens = implies(implies(p, q) & p, q);
         let not = implies(p, q) & p & !q;
         let something = p | q;
         let xor = (p ^ q) & p & q;
-    
+
         assert_eq!(tautology, true);
         assert_eq!(ponens, true);
         assert_eq!(not, false);
@@ -366,5 +366,4 @@ mod tests {
         assert_ne!(something, false);
         assert_eq!(xor, false);
     }
-    
 }
