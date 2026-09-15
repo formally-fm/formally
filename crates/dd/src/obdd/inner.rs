@@ -28,7 +28,7 @@ use std::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use smallvec::SmallVec;
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
@@ -99,7 +99,7 @@ impl Slot {
     }
 }
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub(super) struct SlotID(pub u32);
 
 impl Default for SlotID {
@@ -113,8 +113,24 @@ impl SlotID {
     pub const BOTTOM: SlotID = SlotID(0);
 }
 
+struct VarInfo {
+    level: Level,
+    next: Option<VarID>,
+    slots: DashSet<SlotID>,
+}
+
+impl VarInfo {
+    fn new(level: Level, next: Option<VarID>) -> VarInfo {
+        VarInfo {
+            level,
+            next,
+            slots: DashSet::default(),
+        }
+    }
+}
+
 pub(super) struct Inner {
-    order: Vec<Level>,
+    order: Vec<VarInfo>,
     next_level: Level,
     slots: DashMap<SlotID, Slot>,
     next_node: AtomicU32,
@@ -140,28 +156,48 @@ struct IteKey(SlotID, SlotID, SlotID);
 
 impl Inner {
     pub fn vars(&mut self, n: u32) -> SmallVec<[VarID; 8]> {
+        if n == 0 {
+            return SmallVec::new();
+        }
+
         let first = self.next_level.0;
         let last = self.next_level.0 + n;
         self.next_level += n;
+
+        let new = VarID::from_index(self.order.len());
+        if let Some(last) = self.order.last_mut() {
+            last.next = Some(new);
+        }
 
         let mut vars = SmallVec::new();
         self.order.reserve(n as usize);
         for level in first..last {
             vars.push(VarID::from_index(self.order.len()));
-            self.order.push(Level(level));
+            let next = if level + 1 < last {
+                Some(VarID::from_index(self.order.len() + 1))
+            } else {
+                None
+            };
+            self.order.push(VarInfo::new(Level(level), next));
         }
 
         vars
     }
 
-    pub fn vars_after(&mut self, preceeding: Level, n: u32) -> SmallVec<[VarID; 8]> {
-        for level in &mut self.order {
-            if *level > preceeding {
+    pub fn vars_after(&mut self, prec: VarID, n: u32) -> SmallVec<[VarID; 8]> {
+        if n == 0 {
+            return SmallVec::new();
+        }
+
+        let preclevel = self.level(Some(prec));
+        let next = self.order[prec.into_index()].next;
+        for VarInfo { level, .. } in &mut self.order {
+            if *level > preclevel {
                 *level += n;
             }
         }
 
-        let first = preceeding.0 + 1;
+        let first = preclevel.0 + 1;
         let last = first + n;
         self.next_level += n;
 
@@ -169,8 +205,15 @@ impl Inner {
         self.order.reserve(n as usize);
         for level in first..last {
             vars.push(VarID::from_index(self.order.len()));
-            self.order.push(Level(level));
+            let next = if level + 1 < last {
+                Some(VarID::from_index(self.order.len() + 1))
+            } else {
+                next
+            };
+            self.order.push(VarInfo::new(Level(level), next));
         }
+
+        self.order[prec.into_index()].next = Some(vars[0]);
 
         vars
     }
@@ -178,11 +221,16 @@ impl Inner {
     pub fn level(&self, var: Option<VarID>) -> Level {
         match var {
             None => Level::MAX,
-            Some(var) => *self
+            Some(var) => self
                 .order
                 .get(var.into_index())
+                .map(|v| v.level)
                 .expect("use of a non-existent Var, probably from a different Manager"),
         }
+    }
+
+    pub fn next(&self, var: VarID) -> Option<VarID> {
+        self.order[var.into_index()].next
     }
 
     pub fn tree(&self, id: SlotID) -> Tree {
@@ -199,14 +247,12 @@ impl Inner {
     }
 
     pub fn inc_ref(&self, id: SlotID) -> SlotID {
-        match id {
-            SlotID::TOP => id,
-            SlotID::BOTTOM => id,
-            id => {
-                self.slots.get_mut(&id).unwrap().refs += 1;
-                id
-            }
+        if id == SlotID::TOP || id == SlotID::BOTTOM {
+            return id;
         }
+
+        self.slots.get_mut(&id).unwrap().refs += 1;
+        id
     }
 
     pub fn dec_ref(&self, id: SlotID) {
@@ -214,20 +260,20 @@ impl Inner {
             return;
         }
 
-        match self.slots.entry(id) {
-            dashmap::Entry::Occupied(mut e) => {
-                let slot = e.get_mut();
-                if slot.refs > 0 {
-                    slot.refs -= 1;
-                }
-                if slot.refs == 0 {
-                    self.dec_ref(slot.node.high);
-                    self.dec_ref(slot.node.low);
-                    self.unique.remove(&slot.node);
-                    e.remove();
-                }
-            }
-            _ => panic!("use of non-existent SlotID"),
+        let dashmap::Entry::Occupied(mut e) = self.slots.entry(id) else {
+            panic!("use of non-existent SlotID")
+        };
+
+        let slot = e.get_mut();
+        if slot.refs > 0 {
+            slot.refs -= 1;
+        }
+        if slot.refs == 0 {
+            self.dec_ref(slot.node.high);
+            self.dec_ref(slot.node.low);
+            self.unique.remove(&slot.node);
+            self.order[slot.node.var.into_index()].slots.remove(&id);
+            e.remove();
         }
     }
 
@@ -248,6 +294,7 @@ impl Inner {
                 self.inc_ref(node.high);
                 self.inc_ref(node.low);
                 self.slots.insert(id, Slot::new(node));
+                self.order[node.var.into_index()].slots.insert(id);
 
                 entry.insert_entry(id);
                 id
@@ -263,6 +310,13 @@ impl Inner {
                 None
             }
             dashmap::Entry::Vacant(_) => None,
+        }
+    }
+
+    fn cofactors(&self, tree: Tree, id: SlotID, var: VarID) -> (SlotID, SlotID) {
+        match tree {
+            Tree::Node(node) if node.var == var => (node.low, node.high),
+            _ => (id, id),
         }
     }
 
@@ -291,16 +345,9 @@ impl Inner {
                     .unwrap()
                     .unwrap();
 
-                fn cofactors(tree: Tree, id: SlotID, var: VarID) -> (SlotID, SlotID) {
-                    match tree {
-                        Tree::Node(node) if node.var == var => (node.low, node.high),
-                        _ => (id, id),
-                    }
-                }
-
-                let (g0, g1) = cofactors(g, guard, var);
-                let (t0, t1) = cofactors(t, then, var);
-                let (e0, e1) = cofactors(e, else_, var);
+                let (g0, g1) = self.cofactors(g, guard, var);
+                let (t0, t1) = self.cofactors(t, then, var);
+                let (e0, e1) = self.cofactors(e, else_, var);
 
                 let result = self.make(Node {
                     var,
@@ -311,5 +358,65 @@ impl Inner {
                 self.ite_cache.insert(key, result).unwrap_or(result)
             }
         }
+    }
+
+    // FIXME: swapping levels instead of swapping variables
+    //
+    // This allows to implement arbitrary swaps easily:
+    // - requires to maintain a backref table from levels to variables
+    // - it does not need the `next` field in VarInfo anymore
+    pub fn swap(&mut self, var: VarID) {
+        let index = var.into_index();
+        let Some(next) = self.order[index].next else {
+            return;
+        };
+
+        for id in std::mem::take(&mut self.order[index].slots) {
+            let node = &mut self.slots.get_mut(&id).unwrap().node;
+
+            let high = self.tree(node.high);
+            let low = self.tree(node.low);
+
+            if high.var() != Some(next) && low.var() != Some(next) {
+                self.order[index].slots.insert(id);
+                continue;
+            }
+
+            self.unique.remove(node);
+
+            let (h0, h1) = self.cofactors(high, node.high, next);
+            let (l0, l1) = self.cofactors(low, node.low, next);
+
+            let high = self.make(Node {
+                var,
+                high: h1,
+                low: l1,
+            });
+
+            let low = self.make(Node {
+                var,
+                high: h0,
+                low: l0,
+            });
+
+            assert_ne!(high, low);
+
+            self.inc_ref(high);
+            self.inc_ref(low);
+            *node = Node {
+                var: next,
+                high,
+                low,
+            };
+            self.unique.insert(*node, id);
+            self.order[next.into_index()].slots.insert(id);
+        }
+
+        let temp = self.order[var.into_index()].level;
+        self.order[var.into_index()].level = self.order[next.into_index()].level;
+        self.order[next.into_index()].level = temp;
+
+        self.order[var.into_index()].next = self.order[next.into_index()].next;
+        self.order[next.into_index()].next = Some(var);
     }
 }
