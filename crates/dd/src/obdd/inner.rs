@@ -83,31 +83,43 @@ impl Tree {
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub(super) struct Node {
     pub var: VarID,
-    pub high: NodeID,
-    pub low: NodeID,
+    pub high: SlotID,
+    pub low: SlotID,
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub(super) struct NodeID(pub u32);
+pub(super) struct Slot {
+    node: Node,
+    refs: u32,
+}
 
-impl Default for NodeID {
-    fn default() -> Self {
-        NodeID(2)
+impl Slot {
+    fn new(node: Node) -> Slot {
+        Slot { node, refs: 0 }
     }
 }
 
-impl NodeID {
-    pub const TOP: NodeID = NodeID(1);
-    pub const BOTTOM: NodeID = NodeID(0);
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+pub(super) struct SlotID(pub u32);
+
+impl Default for SlotID {
+    fn default() -> Self {
+        SlotID(2)
+    }
+}
+
+impl SlotID {
+    pub const TOP: SlotID = SlotID(1);
+    pub const BOTTOM: SlotID = SlotID(0);
 }
 
 pub(super) struct Inner {
     order: Vec<Level>,
     next_level: Level,
-    nodes: DashMap<NodeID, Node>,
+    slots: DashMap<SlotID, Slot>,
     next_node: AtomicU32,
-    unique: DashMap<Node, NodeID>,
-    ite_cache: DashMap<IteKey, NodeID>,
+    unique: DashMap<Node, SlotID>,
+    ite_cache: DashMap<IteKey, SlotID>,
 }
 
 impl Default for Inner {
@@ -115,7 +127,7 @@ impl Default for Inner {
         Inner {
             order: Vec::default(),
             next_level: Level::default(),
-            nodes: DashMap::default(),
+            slots: DashMap::default(),
             next_node: AtomicU32::new(2),
             unique: DashMap::default(),
             ite_cache: DashMap::default(),
@@ -124,7 +136,7 @@ impl Default for Inner {
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct IteKey(NodeID, NodeID, NodeID);
+struct IteKey(SlotID, SlotID, SlotID);
 
 impl Inner {
     pub fn vars(&mut self, n: u32) -> SmallVec<[VarID; 8]> {
@@ -173,19 +185,53 @@ impl Inner {
         }
     }
 
-    pub fn tree(&self, id: NodeID) -> Tree {
+    pub fn tree(&self, id: SlotID) -> Tree {
         match id {
-            NodeID::TOP => Tree::Terminal(true),
-            NodeID::BOTTOM => Tree::Terminal(false),
+            SlotID::TOP => Tree::Terminal(true),
+            SlotID::BOTTOM => Tree::Terminal(false),
+            id => Tree::Node(
+                self.slots
+                    .get(&id)
+                    .map(|s| s.node)
+                    .expect("use of a non-existent SlotID"),
+            ),
+        }
+    }
+
+    pub fn inc_ref(&self, id: SlotID) -> SlotID {
+        match id {
+            SlotID::TOP => id,
+            SlotID::BOTTOM => id,
             id => {
-                Tree::Node(*self.nodes.get(&id).expect(
-                    "use of a non-existent BDD, probably survived after a garbage collection",
-                ))
+                self.slots.get_mut(&id).unwrap().refs += 1;
+                id
             }
         }
     }
 
-    pub fn make(&self, node: Node) -> NodeID {
+    pub fn dec_ref(&self, id: SlotID) {
+        if id == SlotID::TOP || id == SlotID::BOTTOM {
+            return;
+        }
+
+        match self.slots.entry(id) {
+            dashmap::Entry::Occupied(mut e) => {
+                let slot = e.get_mut();
+                if slot.refs > 0 {
+                    slot.refs -= 1;
+                }
+                if slot.refs == 0 {
+                    self.dec_ref(slot.node.high);
+                    self.dec_ref(slot.node.low);
+                    self.unique.remove(&slot.node);
+                    e.remove();
+                }
+            }
+            _ => panic!("use of non-existent SlotID"),
+        }
+    }
+
+    pub fn make(&self, node: Node) -> SlotID {
         if node.high == node.low {
             return node.high;
         }
@@ -196,10 +242,12 @@ impl Inner {
                 let id = {
                     let id = self.next_node.fetch_add(1, Ordering::Relaxed);
                     assert_ne!(id, u32::MAX, "maximum number of BDD nodes reached");
-                    NodeID(id)
+                    SlotID(id)
                 };
 
-                self.nodes.insert(id, node);
+                self.inc_ref(node.high);
+                self.inc_ref(node.low);
+                self.slots.insert(id, Slot::new(node));
 
                 entry.insert_entry(id);
                 id
@@ -207,7 +255,18 @@ impl Inner {
         }
     }
 
-    pub fn ite(&self, guard: NodeID, then: NodeID, else_: NodeID) -> NodeID {
+    fn ite_cache(&self, key: IteKey) -> Option<SlotID> {
+        match self.ite_cache.entry(key) {
+            dashmap::Entry::Occupied(e) if self.slots.contains_key(e.get()) => Some(*e.get()),
+            dashmap::Entry::Occupied(e) => {
+                e.remove();
+                None
+            }
+            dashmap::Entry::Vacant(_) => None,
+        }
+    }
+
+    pub fn ite(&self, guard: SlotID, then: SlotID, else_: SlotID) -> SlotID {
         if then == else_ {
             return then;
         }
@@ -218,8 +277,9 @@ impl Inner {
             Tree::Terminal(true) => then,
             Tree::Terminal(false) => else_,
             Tree::Node(node) => {
-                if let Some(t) = self.ite_cache.get(&IteKey(guard, then, else_)) {
-                    return *t;
+                let key = IteKey(guard, then, else_);
+                if let Some(t) = self.ite_cache(key) {
+                    return t;
                 }
 
                 let t = self.tree(then);
@@ -231,7 +291,7 @@ impl Inner {
                     .unwrap()
                     .unwrap();
 
-                fn cofactors(tree: Tree, id: NodeID, var: VarID) -> (NodeID, NodeID) {
+                fn cofactors(tree: Tree, id: SlotID, var: VarID) -> (SlotID, SlotID) {
                     match tree {
                         Tree::Node(node) if node.var == var => (node.low, node.high),
                         _ => (id, id),
@@ -248,9 +308,7 @@ impl Inner {
                     low: self.ite(g0, t0, e0),
                 });
 
-                self.ite_cache
-                    .insert(IteKey(guard, then, else_), result)
-                    .unwrap_or(result)
+                self.ite_cache.insert(key, result).unwrap_or(result)
             }
         }
     }

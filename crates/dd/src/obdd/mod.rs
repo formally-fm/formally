@@ -36,7 +36,7 @@ use std::{
     ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not},
 };
 
-use inner::{Inner, NodeID, VarID};
+use inner::{Inner, SlotID, VarID};
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Var<'m> {
@@ -125,11 +125,11 @@ impl Manager {
     }
 
     pub fn top(&self) -> BDD<'_> {
-        BDD::new(NodeID::TOP, self)
+        BDD::new(SlotID::TOP, self)
     }
 
     pub fn bottom(&self) -> BDD<'_> {
-        BDD::new(NodeID::BOTTOM, self)
+        BDD::new(SlotID::BOTTOM, self)
     }
 
     pub fn not<'m>(&'m self, arg: impl Into<BDD<'m>>) -> BDD<'m> {
@@ -195,16 +195,28 @@ pub fn implies<'m>(left: impl Into<BDD<'m>>, right: impl Into<BDD<'m>>) -> BDD<'
     left.manager.implies(left, right)
 }
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Hash, PartialEq, Eq)]
 pub struct BDD<'m> {
-    id: NodeID,
+    id: SlotID,
     manager: Nominal<&'m Manager>,
 }
 
+impl<'m> Clone for BDD<'m> {
+    fn clone(&self) -> Self {
+        BDD::new(self.id, self.manager())
+    }
+}
+
+impl Drop for BDD<'_> {
+    fn drop(&mut self) {
+        self.manager.inner.read().dec_ref(self.id);
+    }
+}
+
 impl<'m> BDD<'m> {
-    fn new(id: NodeID, manager: &'m Manager) -> BDD<'m> {
+    fn new(id: SlotID, manager: &'m Manager) -> BDD<'m> {
         BDD {
-            id,
+            id: manager.inner.read().inc_ref(id),
             manager: Nominal(manager),
         }
     }
@@ -220,13 +232,25 @@ impl Debug for BDD<'_> {
     }
 }
 
+impl<'m> From<&BDD<'m>> for BDD<'m> {
+    fn from(bdd: &BDD<'m>) -> Self {
+        bdd.clone()
+    }
+}
+
+impl<'m> From<&Var<'m>> for BDD<'m> {
+    fn from(var: &Var<'m>) -> Self {
+        BDD::from(*var)
+    }
+}
+
 impl<'m> From<Var<'m>> for BDD<'m> {
     fn from(var: Var<'m>) -> Self {
         let manager = var.manager();
         let node = manager.inner.read().make(inner::Node {
             var: var.var,
-            high: NodeID::TOP,
-            low: NodeID::BOTTOM,
+            high: SlotID::TOP,
+            low: SlotID::BOTTOM,
         });
         BDD::new(node, manager)
     }
@@ -257,6 +281,22 @@ impl<'m> Not for Var<'m> {
     }
 }
 
+impl<'m> Not for &BDD<'m> {
+    type Output = BDD<'m>;
+
+    fn not(self) -> Self::Output {
+        self.manager.not(self)
+    }
+}
+
+impl<'m> Not for &Var<'m> {
+    type Output = BDD<'m>;
+
+    fn not(self) -> Self::Output {
+        self.manager.not(self)
+    }
+}
+
 impl<'m, T: Into<BDD<'m>>> BitAnd<T> for BDD<'m> {
     type Output = BDD<'m>;
 
@@ -272,10 +312,25 @@ impl<'m, T: Into<BDD<'m>>> BitAnd<T> for Var<'m> {
         self.manager.and([BDD::from(self), rhs.into()])
     }
 }
+impl<'m, T: Into<BDD<'m>>> BitAnd<T> for &BDD<'m> {
+    type Output = BDD<'m>;
+
+    fn bitand(self, rhs: T) -> Self::Output {
+        self.manager.and([self, &rhs.into()])
+    }
+}
+
+impl<'m, T: Into<BDD<'m>>> BitAnd<T> for &Var<'m> {
+    type Output = BDD<'m>;
+
+    fn bitand(self, rhs: T) -> Self::Output {
+        self.manager.and([BDD::from(self), rhs.into()])
+    }
+}
 
 impl<'m, T: Into<BDD<'m>>> BitAndAssign<T> for BDD<'m> {
     fn bitand_assign(&mut self, rhs: T) {
-        *self = *self & rhs.into();
+        *self = &*self & rhs.into();
     }
 }
 
@@ -295,9 +350,25 @@ impl<'m, T: Into<BDD<'m>>> BitOr<T> for Var<'m> {
     }
 }
 
+impl<'m, T: Into<BDD<'m>>> BitOr<T> for &BDD<'m> {
+    type Output = BDD<'m>;
+
+    fn bitor(self, rhs: T) -> Self::Output {
+        self.manager.or([self, &rhs.into()])
+    }
+}
+
+impl<'m, T: Into<BDD<'m>>> BitOr<T> for &Var<'m> {
+    type Output = BDD<'m>;
+
+    fn bitor(self, rhs: T) -> Self::Output {
+        self.manager.or([BDD::from(self), rhs.into()])
+    }
+}
+
 impl<'m, T: Into<BDD<'m>>> BitOrAssign<T> for BDD<'m> {
     fn bitor_assign(&mut self, rhs: T) {
-        *self = *self | rhs.into();
+        *self = &*self | rhs.into();
     }
 }
 
@@ -317,9 +388,25 @@ impl<'m, T: Into<BDD<'m>>> BitXor<T> for Var<'m> {
     }
 }
 
+impl<'m, T: Into<BDD<'m>>> BitXor<T> for &BDD<'m> {
+    type Output = BDD<'m>;
+
+    fn bitxor(self, rhs: T) -> Self::Output {
+        self.manager.xor([self, &rhs.into()])
+    }
+}
+
+impl<'m, T: Into<BDD<'m>>> BitXor<T> for &Var<'m> {
+    type Output = BDD<'m>;
+
+    fn bitxor(self, rhs: T) -> Self::Output {
+        self.manager.xor([BDD::from(self), rhs.into()])
+    }
+}
+
 impl<'m, T: Into<BDD<'m>>> BitXorAssign<T> for BDD<'m> {
     fn bitxor_assign(&mut self, rhs: T) {
-        *self = *self ^ rhs.into();
+        *self = &*self ^ rhs.into();
     }
 }
 
@@ -356,8 +443,8 @@ mod tests {
         let tautology = p | !p;
         let ponens = implies(implies(p, q) & p, q);
         let not = implies(p, q) & p & !q;
-        let something = p | q;
-        let xor = (p ^ q) & p & q;
+        let something = p & q;
+        let xor = (p ^ q) & &something;
 
         assert_eq!(tautology, true);
         assert_eq!(ponens, true);
