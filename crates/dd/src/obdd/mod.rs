@@ -55,6 +55,14 @@ impl<'m> Var<'m> {
     pub fn manager(&self) -> &'m Manager {
         self.manager.into_inner()
     }
+
+    pub fn next(&self) -> Option<Var<'m>> {
+        self.manager
+            .inner
+            .read()
+            .next(self.var)
+            .map(|v| Var::new(v, self.manager()))
+    }
 }
 
 impl PartialOrd for Var<'_> {
@@ -98,9 +106,8 @@ impl Manager {
 
     pub fn var_after(&self, preceeding: Var<'_>) -> Var<'_> {
         let mut inner = self.inner.write();
-        let level = inner.level(Some(preceeding.var));
 
-        Var::new(inner.vars_after(level, 1)[0], self)
+        Var::new(inner.vars_after(preceeding.var, 1)[0], self)
     }
 
     pub fn vars(&self, n: u32) -> Vec<Var<'_>> {
@@ -110,11 +117,7 @@ impl Manager {
     }
 
     pub fn vars_after(&self, preceeding: Var<'_>, n: u32) -> Vec<Var<'_>> {
-        let ids = {
-            let mut inner = self.inner.write();
-            let level = inner.level(Some(preceeding.var));
-            inner.vars_after(level, n)
-        };
+        let ids = self.inner.write().vars_after(preceeding.var, n);
 
         let mut vars = Vec::with_capacity(n as usize);
         for id in ids {
@@ -122,6 +125,10 @@ impl Manager {
         }
 
         vars
+    }
+
+    pub fn swap(&self, var: Var<'_>) {
+        self.inner.write().swap(var.var);
     }
 
     pub fn top(&self) -> BDD<'_> {
@@ -421,17 +428,22 @@ mod tests {
         let first = manager.var();
         let second = manager.var();
         let middle = manager.var_after(first);
-        let seq = manager.vars_after(middle, 4);
+        let seq = manager.vars_after(second, 4);
 
         assert!(first < second);
         assert!(first < middle);
         assert!(middle < second);
 
         for (v1, v2) in seq.into_iter().tuple_windows() {
-            assert!(middle < v1);
+            assert!(second < v1);
             assert!(v1 < v2);
-            assert!(v2 < second);
         }
+
+        manager.swap(first);
+        assert!(middle < first);
+
+        manager.swap(first);
+        assert!(second < first);
     }
 
     #[test]
@@ -449,6 +461,14 @@ mod tests {
         assert_eq!(tautology, true);
         assert_eq!(ponens, true);
         assert_eq!(not, false);
+        assert_ne!(something, true);
+        assert_ne!(something, false);
+        assert_eq!(xor, false);
+
+        manager.swap(p);
+
+        let xor = (p ^ q) & &something;
+
         assert_ne!(something, true);
         assert_ne!(something, false);
         assert_eq!(xor, false);
