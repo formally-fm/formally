@@ -24,7 +24,7 @@
 
 use std::{
     num::NonZero,
-    ops::{Add, AddAssign},
+    ops::{Add, AddAssign, Sub},
     sync::atomic::{AtomicU32, Ordering},
 };
 
@@ -49,6 +49,10 @@ pub struct Level(u32);
 
 impl Level {
     const MAX: Level = Level(u32::MAX);
+
+    fn into_index(self) -> usize {
+        self.0 as usize
+    }
 }
 
 impl Add<u32> for Level {
@@ -62,6 +66,14 @@ impl Add<u32> for Level {
 impl AddAssign<u32> for Level {
     fn add_assign(&mut self, rhs: u32) {
         *self = *self + rhs
+    }
+}
+
+impl Sub for Level {
+    type Output = i64;
+
+    fn sub(self, rhs: Self) -> i64 {
+        self.0 as i64 - rhs.0 as i64
     }
 }
 
@@ -113,25 +125,15 @@ impl SlotID {
     pub const BOTTOM: SlotID = SlotID(0);
 }
 
+#[derive(Default)]
 struct VarInfo {
-    level: Level,
-    next: Option<VarID>,
     slots: DashSet<SlotID>,
 }
 
-impl VarInfo {
-    fn new(level: Level, next: Option<VarID>) -> VarInfo {
-        VarInfo {
-            level,
-            next,
-            slots: DashSet::default(),
-        }
-    }
-}
-
 pub(super) struct Inner {
-    order: Vec<VarInfo>,
-    next_level: Level,
+    order: Vec<Level>,
+    levels: Vec<VarID>,
+    varinfo: Vec<VarInfo>,
     slots: DashMap<SlotID, Slot>,
     next_node: AtomicU32,
     unique: DashMap<Node, SlotID>,
@@ -142,7 +144,8 @@ impl Default for Inner {
     fn default() -> Self {
         Inner {
             order: Vec::default(),
-            next_level: Level::default(),
+            levels: Vec::default(),
+            varinfo: Vec::default(),
             slots: DashMap::default(),
             next_node: AtomicU32::new(2),
             unique: DashMap::default(),
@@ -160,25 +163,19 @@ impl Inner {
             return SmallVec::new();
         }
 
-        let first = self.next_level.0;
-        let last = self.next_level.0 + n;
-        self.next_level += n;
+        let next_level = self.levels.len() as u32;
 
-        let new = VarID::from_index(self.order.len());
-        if let Some(last) = self.order.last_mut() {
-            last.next = Some(new);
-        }
+        let first = next_level;
+        let last = next_level + n;
 
         let mut vars = SmallVec::new();
         self.order.reserve(n as usize);
         for level in first..last {
-            vars.push(VarID::from_index(self.order.len()));
-            let next = if level + 1 < last {
-                Some(VarID::from_index(self.order.len() + 1))
-            } else {
-                None
-            };
-            self.order.push(VarInfo::new(Level(level), next));
+            let var = VarID::from_index(self.order.len());
+            vars.push(var);
+            self.levels.push(var);
+            self.order.push(Level(level));
+            self.varinfo.push(VarInfo::default())
         }
 
         vars
@@ -190,8 +187,7 @@ impl Inner {
         }
 
         let preclevel = self.level(Some(prec));
-        let next = self.order[prec.into_index()].next;
-        for VarInfo { level, .. } in &mut self.order {
+        for level in &mut self.order {
             if *level > preclevel {
                 *level += n;
             }
@@ -199,21 +195,16 @@ impl Inner {
 
         let first = preclevel.0 + 1;
         let last = first + n;
-        self.next_level += n;
 
         let mut vars = SmallVec::new();
         self.order.reserve(n as usize);
         for level in first..last {
-            vars.push(VarID::from_index(self.order.len()));
-            let next = if level + 1 < last {
-                Some(VarID::from_index(self.order.len() + 1))
-            } else {
-                next
-            };
-            self.order.push(VarInfo::new(Level(level), next));
+            let var = VarID::from_index(self.order.len());
+            vars.push(var);
+            self.levels.push(var);
+            self.order.push(Level(level));
+            self.varinfo.push(VarInfo::default());
         }
-
-        self.order[prec.into_index()].next = Some(vars[0]);
 
         vars
     }
@@ -221,16 +212,15 @@ impl Inner {
     pub fn level(&self, var: Option<VarID>) -> Level {
         match var {
             None => Level::MAX,
-            Some(var) => self
+            Some(var) => *self
                 .order
                 .get(var.into_index())
-                .map(|v| v.level)
                 .expect("use of a non-existent Var, probably from a different Manager"),
         }
     }
 
-    pub fn next(&self, var: VarID) -> Option<VarID> {
-        self.order[var.into_index()].next
+    pub fn at_level(&self, level: Level) -> Option<VarID> {
+        self.levels.get(level.into_index()).copied()
     }
 
     pub fn tree(&self, id: SlotID) -> Tree {
@@ -272,7 +262,7 @@ impl Inner {
             self.dec_ref(slot.node.high);
             self.dec_ref(slot.node.low);
             self.unique.remove(&slot.node);
-            self.order[slot.node.var.into_index()].slots.remove(&id);
+            self.varinfo[slot.node.var.into_index()].slots.remove(&id);
             e.remove();
         }
     }
@@ -294,7 +284,7 @@ impl Inner {
                 self.inc_ref(node.high);
                 self.inc_ref(node.low);
                 self.slots.insert(id, Slot::new(node));
-                self.order[node.var.into_index()].slots.insert(id);
+                self.varinfo[node.var.into_index()].slots.insert(id);
 
                 entry.insert_entry(id);
                 id
@@ -360,25 +350,38 @@ impl Inner {
         }
     }
 
-    // FIXME: swapping levels instead of swapping variables
-    //
-    // This allows to implement arbitrary swaps easily:
-    // - requires to maintain a backref table from levels to variables
-    // - it does not need the `next` field in VarInfo anymore
-    pub fn swap(&mut self, var: VarID) {
+    pub fn restrict(&self, var: VarID, value: bool, body: SlotID) -> SlotID {
+        match self.tree(body) {
+            Tree::Terminal(true) => SlotID::TOP,
+            Tree::Terminal(false) => SlotID::BOTTOM,
+            Tree::Node(node) if node.var == var && value => node.high,
+            Tree::Node(node) if node.var == var && !value => node.low,
+            Tree::Node(node) if self.level(Some(node.var)) < self.level(Some(var)) => {
+                self.make(Node {
+                    var: node.var,
+                    high: self.restrict(var, value, node.high),
+                    low: self.restrict(var, value, node.low),
+                })
+            }
+            Tree::Node(_) => body,
+        }
+    }
+
+    pub fn swap(&mut self, level: Level) {
+        let var = self.levels[level.into_index()];
         let index = var.into_index();
-        let Some(next) = self.order[index].next else {
+        let Some(next) = self.at_level(level + 1) else {
             return;
         };
 
-        for id in std::mem::take(&mut self.order[index].slots) {
+        for id in std::mem::take(&mut self.varinfo[index].slots) {
             let node = &mut self.slots.get_mut(&id).unwrap().node;
 
             let high = self.tree(node.high);
             let low = self.tree(node.low);
 
             if high.var() != Some(next) && low.var() != Some(next) {
-                self.order[index].slots.insert(id);
+                self.varinfo[index].slots.insert(id);
                 continue;
             }
 
@@ -409,14 +412,11 @@ impl Inner {
                 low,
             };
             self.unique.insert(*node, id);
-            self.order[next.into_index()].slots.insert(id);
+            self.varinfo[next.into_index()].slots.insert(id);
         }
 
-        let temp = self.order[var.into_index()].level;
-        self.order[var.into_index()].level = self.order[next.into_index()].level;
-        self.order[next.into_index()].level = temp;
-
-        self.order[var.into_index()].next = self.order[next.into_index()].next;
-        self.order[next.into_index()].next = Some(var);
+        self.order.swap(var.into_index(), next.into_index());
+        self.levels
+            .swap(level.into_index(), (level + 1).into_index());
     }
 }
