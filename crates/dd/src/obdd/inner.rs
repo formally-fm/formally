@@ -126,7 +126,7 @@ impl Default for SlotID {
 impl SlotID {
     pub const TOP: SlotID = SlotID(1);
     pub const BOTTOM: SlotID = SlotID(0);
-    
+
     pub fn is_terminal(&self) -> bool {
         *self == SlotID::TOP || *self == SlotID::BOTTOM
     }
@@ -206,6 +206,8 @@ impl Inner {
         let first = preclevel.0 + 1;
         let last = first + n;
 
+        let firstvar = self.order.len();
+        let lastvar = firstvar + n as usize;
         let mut vars = SmallVec::new();
         for level in first..last {
             let var = VarID::from_index(self.order.len());
@@ -215,15 +217,11 @@ impl Inner {
             self.varinfo.push(VarInfo::default());
         }
 
-        let mut levels = Vec::new();
-        levels.resize(self.order.len(), None);
+        self.levels.resize(self.order.len(), VarID(0));
 
-        for index in 0..self.order.len() {
-            levels[self.order[index].into_index()] = Some(VarID::from_index(index));
+        for index in firstvar..lastvar {
+            self.levels[self.order[index].into_index()] = VarID::from_index(index);
         }
-
-        self.levels.clear();
-        self.levels.extend(levels.into_iter().map(|v| v.unwrap()));
 
         vars
     }
@@ -298,7 +296,6 @@ impl Inner {
         let mut orphans = self.collect();
         while !orphans.is_empty() {
             for id in std::mem::take(&mut orphans) {
-                
                 let Some(slot) = self.slots.get_mut(&id) else {
                     unreachable!()
                 };
@@ -312,7 +309,7 @@ impl Inner {
                     self.slots.get_mut(&slot.node.low).unwrap().refs -= 1;
                 }
                 drop(slot);
-                
+
                 self.slots.remove(&id);
             }
             orphans = self.collect();
