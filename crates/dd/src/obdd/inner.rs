@@ -22,28 +22,31 @@
 // SOFTWARE.
 //
 
+use dashmap::{DashMap, DashSet};
+use smallvec::SmallVec;
 use std::{
-    num::NonZero,
     ops::{Add, AddAssign, Sub},
     sync::atomic::{AtomicU32, Ordering},
 };
 
-use dashmap::{DashMap, DashSet};
-use smallvec::SmallVec;
-
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub(super) struct VarID(NonZero<u32>);
+pub(super) struct VarID(u32);
 
 impl VarID {
     pub fn from_index(index: usize) -> VarID {
-        VarID(NonZero::new((index + 1) as u32).unwrap())
+        VarID(index as u32)
     }
 
     pub fn into_index(self) -> usize {
-        (self.0.get() - 1) as usize
+        self.0 as usize
     }
 }
 
+/// The position of a [variable](super::Var) in the variable order.
+///
+/// [Level] is an opaque value representing the position of a [variable](super::Var) in the current
+/// variable order. [Level]s can be compared among each other, subtracted to obtain their distance
+/// and added to an unsigned integer to step through the order.
 #[derive(Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Level(u32);
 
@@ -123,6 +126,10 @@ impl Default for SlotID {
 impl SlotID {
     pub const TOP: SlotID = SlotID(1);
     pub const BOTTOM: SlotID = SlotID(0);
+    
+    pub fn is_terminal(&self) -> bool {
+        *self == SlotID::TOP || *self == SlotID::BOTTOM
+    }
 }
 
 #[derive(Default)]
@@ -158,7 +165,7 @@ impl Default for Inner {
 struct IteKey(SlotID, SlotID, SlotID);
 
 impl Inner {
-    pub fn vars(&mut self, n: u32) -> SmallVec<[VarID; 8]> {
+    pub fn add_vars(&mut self, n: u32) -> SmallVec<[VarID; 8]> {
         if n == 0 {
             return SmallVec::new();
         }
@@ -181,10 +188,13 @@ impl Inner {
         vars
     }
 
-    pub fn vars_after(&mut self, prec: VarID, n: u32) -> SmallVec<[VarID; 8]> {
+    pub fn add_vars_after(&mut self, prec: VarID, n: u32) -> SmallVec<[VarID; 8]> {
         if n == 0 {
             return SmallVec::new();
         }
+
+        self.order.reserve(n as usize);
+        self.levels.reserve(n as usize);
 
         let preclevel = self.level(Some(prec));
         for level in &mut self.order {
@@ -197,7 +207,6 @@ impl Inner {
         let last = first + n;
 
         let mut vars = SmallVec::new();
-        self.order.reserve(n as usize);
         for level in first..last {
             let var = VarID::from_index(self.order.len());
             vars.push(var);
@@ -206,7 +215,21 @@ impl Inner {
             self.varinfo.push(VarInfo::default());
         }
 
+        let mut levels = Vec::new();
+        levels.resize(self.order.len(), None);
+
+        for index in 0..self.order.len() {
+            levels[self.order[index].into_index()] = Some(VarID::from_index(index));
+        }
+
+        self.levels.clear();
+        self.levels.extend(levels.into_iter().map(|v| v.unwrap()));
+
         vars
+    }
+
+    pub fn n_vars(&self) -> usize {
+        self.order.len()
     }
 
     pub fn level(&self, var: Option<VarID>) -> Level {
@@ -258,12 +281,41 @@ impl Inner {
         if slot.refs > 0 {
             slot.refs -= 1;
         }
-        if slot.refs == 0 {
-            self.dec_ref(slot.node.high);
-            self.dec_ref(slot.node.low);
-            self.unique.remove(&slot.node);
-            self.varinfo[slot.node.var.into_index()].slots.remove(&id);
-            e.remove();
+    }
+
+    fn collect(&mut self) -> Vec<SlotID> {
+        let mut orphans = Vec::new();
+        for s in self.slots.iter() {
+            if s.refs == 0 {
+                orphans.push(*s.key())
+            }
+        }
+
+        orphans
+    }
+
+    pub fn reclaim(&mut self) {
+        let mut orphans = self.collect();
+        while !orphans.is_empty() {
+            for id in std::mem::take(&mut orphans) {
+                
+                let Some(slot) = self.slots.get_mut(&id) else {
+                    unreachable!()
+                };
+
+                self.unique.remove(&slot.node);
+                self.varinfo[slot.node.var.into_index()].slots.remove(&id);
+                if !slot.node.high.is_terminal() {
+                    self.slots.get_mut(&slot.node.high).unwrap().refs -= 1;
+                }
+                if !slot.node.low.is_terminal() {
+                    self.slots.get_mut(&slot.node.low).unwrap().refs -= 1;
+                }
+                drop(slot);
+                
+                self.slots.remove(&id);
+            }
+            orphans = self.collect();
         }
     }
 
@@ -276,7 +328,7 @@ impl Inner {
             dashmap::Entry::Occupied(entry) => *entry.get(),
             dashmap::Entry::Vacant(entry) => {
                 let id = {
-                    let id = self.next_node.fetch_add(1, Ordering::Relaxed);
+                    let id = self.next_node.fetch_add(1, Ordering::AcqRel);
                     assert_ne!(id, u32::MAX, "maximum number of BDD nodes reached");
                     SlotID(id)
                 };
@@ -345,7 +397,9 @@ impl Inner {
                     low: self.ite(g0, t0, e0),
                 });
 
-                self.ite_cache.insert(key, result).unwrap_or(result)
+                self.ite_cache.insert(key, result);
+
+                result
             }
         }
     }
@@ -375,7 +429,7 @@ impl Inner {
         };
 
         for id in std::mem::take(&mut self.varinfo[index].slots) {
-            let node = &mut self.slots.get_mut(&id).unwrap().node;
+            let node = self.slots.get_mut(&id).unwrap().node;
 
             let high = self.tree(node.high);
             let low = self.tree(node.low);
@@ -385,7 +439,7 @@ impl Inner {
                 continue;
             }
 
-            self.unique.remove(node);
+            self.unique.remove(&node);
 
             let (h0, h1) = self.cofactors(high, node.high, next);
             let (l0, l1) = self.cofactors(low, node.low, next);
@@ -406,6 +460,7 @@ impl Inner {
 
             self.inc_ref(high);
             self.inc_ref(low);
+            let node = &mut self.slots.get_mut(&id).unwrap().node;
             *node = Node {
                 var: next,
                 high,

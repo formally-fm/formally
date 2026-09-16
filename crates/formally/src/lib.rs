@@ -44,7 +44,9 @@
 //!    error reporting infrastructure.
 //! 3. [formally::smt](smt) provides an abstraction over Satisfiability Modulo Theories solvers and
 //!    (what will hopefully become) a fully conformant implementation of the SMT-LIBv2 language.
-//! 4. A simple toy command-line frontend to test the [formally::smt](smt) module.
+//! 4. [formally::dd](dd) implements common variants of *decision diagrams* (currently only a
+//!    concurrent implementation of OBDDs).
+//! 5. A simple toy command-line frontend to test the [formally::smt](smt) module.
 //!
 //! The [formally::smt](smt) module is quite under heavy development but can already handle simple
 //! SMT-LIBv2 scripts, solving them with a [Z3](https://github.com/Z3Prover/z3) or
@@ -67,8 +69,8 @@
 //!    2. on macOS, setting the `rpath` of the final executable by specifying the
 //!       `-Wl,-rpath,$CVC5_LIB_DIR` option
 //!
-//! This can be done conveniently and once and for all by editing Cargo's `config.toml` (see the 
-//! *Configuration* section in the 
+//! This can be done conveniently and once and for all by editing Cargo's `config.toml` (see the
+//! *Configuration* section in the
 //! [Cargo Book](https://doc.rust-lang.org/cargo/reference/config.html)):
 //!
 //! For example, suppose you are on a macOS system, Z3 has been installed with Homebrew and
@@ -140,3 +142,8 @@ pub extern crate formally_io as io;
 #[cfg(feature = "smt")]
 #[doc(inline)]
 pub extern crate formally_smt as smt;
+
+#[cfg_attr(docsrs, doc(cfg(feature = "dd")))]
+#[cfg(feature = "dd")]
+#[doc(inline)]
+pub extern crate formally_dd as dd;
