@@ -22,6 +22,22 @@
 // SOFTWARE.
 //
 
+//! Implementation of decision diagrams.
+#![doc = ""]
+#![cfg_attr(
+    not(feature = "__subcratedoc"),
+    doc = "**WARNING: This crate is not supposed to be used directly.**"
+)]
+#![doc = ""]
+#![cfg_attr(
+    not(feature = "__subcratedoc"),
+    doc = "**Use instead the `formally::io` module of the main `formally` crate by enabling the `\"io\"` feature.**"
+)]
+#![doc = ""]
+//!
+//! Currently the module only provides a *concurrent* implementation of ordered binary decision
+//! diagrams (OBBDs) under the [obdd] module.
+
 mod formally {
     pub use formally_support as support;
     pub extern crate self as dd;

@@ -107,7 +107,7 @@ impl From<Mode> for smt::Answer {
 
 /// Type specifying the operating settings for the interpreter.
 pub struct Settings {
-    /// The [Config] for the underlying [Solver].
+    /// The [Config] for the underlying [Solver](smt::Solver).
     pub config: Config,
     /// The SMT backend to use.
     pub backend: &'static dyn Backend,
@@ -126,7 +126,10 @@ impl Settings {
     }
 
     pub fn output(self, output: impl 'static + RenderTarget) -> Settings {
-        Settings { output: Box::new(output), ..self }
+        Settings {
+            output: Box::new(output),
+            ..self
+        }
     }
 }
 
