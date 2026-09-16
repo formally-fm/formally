@@ -158,6 +158,15 @@ impl Manager {
             inner.swap(min + i)
         }
     }
+    
+    pub fn make<'m>(&'m self, node: Node<'m>) -> BDD<'m> {
+        let id = self.inner.read().make(inner::Node {
+            var: node.var.var,
+            high: node.high.id,
+            low: node.low.id,
+        });
+        BDD::new(id, self)
+    }
 
     pub fn top(&self) -> BDD<'_> {
         BDD::new(SlotID::TOP, self)
@@ -303,6 +312,19 @@ impl<'m> From<Var<'m>> for Lit<'m> {
     }
 }
 
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub enum Tree<'m> {
+    Terminal(bool),
+    Node(Node<'m>)
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub struct Node<'m> {
+    pub var: Var<'m>,
+    pub high: BDD<'m>,
+    pub low: BDD<'m>
+}
+
 #[derive(Hash, PartialEq, Eq)]
 pub struct BDD<'m> {
     id: SlotID,
@@ -331,6 +353,19 @@ impl<'m> BDD<'m> {
 
     pub fn manager(&self) -> &'m Manager {
         self.manager.into_inner()
+    }
+
+    pub fn tree(&self) -> Tree<'m> {
+        let tree = self.manager().inner.read().tree(self.id);
+        
+        match tree {
+            inner::Tree::Terminal(value) => Tree::Terminal(value),
+            inner::Tree::Node(node) => Tree::Node(Node {
+                var: Var::new(node.var, self.manager()),
+                high: BDD::new(node.high, self.manager()),
+                low: BDD::new(node.low, self.manager()),
+            })
+        }
     }
 }
 
@@ -608,7 +643,7 @@ mod tests {
                 let not = implies(p, q) & p & !q;
                 let something = p & q;
                 let xor = (p ^ q) & &something;
-        
+
                 assert_eq!(tautology, true);
                 assert_eq!(ponens, true);
                 assert_eq!(not, false);
@@ -619,25 +654,25 @@ mod tests {
 
             scope.spawn(|| {
                 let something = p & q;
-                
+
                 manager.swap(p, q);
-    
+
                 let xor = (p ^ q) & &something;
-    
+
                 assert_ne!(something, true);
                 assert_ne!(something, false);
                 assert_eq!(xor, false);
             });
-            
+
             scope.spawn(|| {
                 let w = manager.var();
                 let something = p & (q | w);
-    
+
                 manager.swap(p, w);
-    
+
                 let ep = exists([p], &something);
                 let ap = forall([p], &something);
-    
+
                 assert_ne!(ep, true);
                 assert_ne!(ep, false);
                 assert_eq!(ap, false);
