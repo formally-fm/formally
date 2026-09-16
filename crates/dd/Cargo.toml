@@ -10,6 +10,10 @@ readme = "README.md"
 categories = [ "mathematics" ]
 keywords = [ "formal-methods", "decision-diagrams" ]
 
+[features]
+default = []
+__subcratedoc = []
+
 [dependencies]
 dashmap = "6.2.1"
 formally-support = { path = "../support", version = "0.2.0" }
