@@ -175,8 +175,11 @@ impl Inner {
         let first = next_level;
         let last = next_level + n;
 
-        let mut vars = SmallVec::new();
         self.order.reserve(n as usize);
+        self.levels.reserve(n as usize);
+        self.varinfo.reserve(n as usize);
+
+        let mut vars = SmallVec::with_capacity(n as usize);
         for level in first..last {
             let var = VarID::from_index(self.order.len());
             vars.push(var);
@@ -193,31 +196,31 @@ impl Inner {
             return SmallVec::new();
         }
 
-        self.order.reserve(n as usize);
-        self.levels.reserve(n as usize);
+        self.levels.resize(self.levels.len() + n as usize, VarID(0));
 
         let preclevel = self.level(Some(prec));
-        for level in &mut self.order {
+        for (var, level) in self.order.iter_mut().enumerate() {
             if *level > preclevel {
                 *level += n;
+                self.levels[level.into_index()] = VarID::from_index(var);
             }
         }
 
         let first = preclevel.0 + 1;
         let last = first + n;
 
+        self.order.reserve(n as usize);
+        self.varinfo.reserve(n as usize);
+
         let firstvar = self.order.len();
         let lastvar = firstvar + n as usize;
-        let mut vars = SmallVec::new();
+        let mut vars = SmallVec::with_capacity(n as usize);
         for level in first..last {
             let var = VarID::from_index(self.order.len());
             vars.push(var);
-            self.levels.push(var);
             self.order.push(Level(level));
             self.varinfo.push(VarInfo::default());
         }
-
-        self.levels.resize(self.order.len(), VarID(0));
 
         for index in firstvar..lastvar {
             self.levels[self.order[index].into_index()] = VarID::from_index(index);
