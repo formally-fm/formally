@@ -36,6 +36,7 @@
 //! See [Manager] and [BDD] as starting points for the API.
 
 mod inner;
+mod model;
 mod order;
 
 use crate::formally;
@@ -50,8 +51,10 @@ use std::{
     ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not},
 };
 
-use inner::{Inner, SlotID};
+pub use model::{Model, ModelIterator};
 pub use order::Level;
+
+use inner::{Inner, SlotID};
 use order::VarID;
 
 /// A variable.
@@ -329,10 +332,9 @@ impl Manager {
     }
 
     /// Return the exclusive disjunction of the given iterator of [BDD]s.
-    pub fn xor<'m>(&'m self, args: impl IntoIterator<Item = impl Into<BDD<'m>>>) -> BDD<'m> {
-        args.into_iter().fold(self.bottom(), |acc, arg| {
-            self.ite(acc, self.not(arg), self.bottom())
-        })
+    pub fn xor<'m>(&'m self, left: impl Into<BDD<'m>>, right: impl Into<BDD<'m>>) -> BDD<'m> {
+        let right = right.into();
+        self.ite(left, self.not(right.clone()), right)
     }
 
     /// Return the implication between the two given [BDD]s.
@@ -553,6 +555,10 @@ impl<'m> BDD<'m> {
         self.manager.into_inner()
     }
 
+    pub fn models(&self) -> ModelIterator<'m> {
+        ModelIterator::new(self.manager(), self.clone())
+    }
+
     /// Return a [Tree] to inspect the internal structure of this [BDD].
     pub fn tree(&self) -> Tree<'m> {
         let inner = self.manager().inner.read();
@@ -765,7 +771,7 @@ impl<'m, T: Into<BDD<'m>>> BitXor<T> for BDD<'m> {
     type Output = BDD<'m>;
 
     fn bitxor(self, rhs: T) -> Self::Output {
-        self.manager.xor([self, rhs.into()])
+        self.manager.xor(self, rhs.into())
     }
 }
 
@@ -773,7 +779,7 @@ impl<'m, T: Into<BDD<'m>>> BitXor<T> for Var<'m> {
     type Output = BDD<'m>;
 
     fn bitxor(self, rhs: T) -> Self::Output {
-        self.manager.xor([BDD::from(self), rhs.into()])
+        self.manager.xor(BDD::from(self), rhs.into())
     }
 }
 
@@ -781,7 +787,7 @@ impl<'m, T: Into<BDD<'m>>> BitXor<T> for &BDD<'m> {
     type Output = BDD<'m>;
 
     fn bitxor(self, rhs: T) -> Self::Output {
-        self.manager.xor([self, &rhs.into()])
+        self.manager.xor(self, &rhs.into())
     }
 }
 
@@ -789,7 +795,7 @@ impl<'m, T: Into<BDD<'m>>> BitXor<T> for &Var<'m> {
     type Output = BDD<'m>;
 
     fn bitxor(self, rhs: T) -> Self::Output {
-        self.manager.xor([BDD::from(self), rhs.into()])
+        self.manager.xor(BDD::from(self), rhs.into())
     }
 }
 
@@ -887,5 +893,18 @@ mod tests {
                 assert_eq!(ap, false);
             });
         });
+    }
+
+    #[test]
+    fn models() {
+        let manager = Manager::new();
+        let p = manager.add_var();
+        let q = manager.add_var();
+
+        let test = p ^ q;
+
+        let models: Vec<_> = test.models().collect();
+
+        assert!(models == [[!p, q.into()], [p.into(), !q]]);
     }
 }
