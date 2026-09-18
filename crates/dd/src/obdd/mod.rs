@@ -36,6 +36,7 @@
 //! See [Manager] and [BDD] as starting points for the API.
 
 mod inner;
+mod order;
 
 use crate::formally;
 use formally::support::Nominal;
@@ -49,8 +50,9 @@ use std::{
     ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not},
 };
 
-pub use inner::Level;
-use inner::{Inner, SlotID, VarID};
+use inner::{Inner, SlotID};
+pub use order::Level;
+use order::VarID;
 
 /// A variable.
 ///
@@ -90,7 +92,7 @@ pub struct Var<'m> {
 
 impl Debug for Var<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Var({})", self.var.into_index())
+        write!(f, "Var({})", self.var.index())
     }
 }
 
@@ -109,7 +111,7 @@ impl<'m> Var<'m> {
 
     /// Return the *level*, i.e. the position in the variable order, of the variable.
     pub fn level(&self) -> Level {
-        self.manager.inner.read().level(Some(self.var))
+        self.manager.inner.read().level_of(Some(self.var))
     }
 
     /// Return the next variable in the variable order.
@@ -119,7 +121,7 @@ impl<'m> Var<'m> {
     pub fn next(&self) -> Option<Var<'m>> {
         let inner = self.manager.inner.read();
         inner
-            .at_level(inner.level(Some(self.var)) + 1)
+            .var_at(inner.level_of(Some(self.var)) + 1)
             .map(|id| Var::new(id, self.manager()))
     }
 }
@@ -138,8 +140,8 @@ impl Ord for Var<'_> {
         );
         let inner = self.manager.inner.read();
         inner
-            .level(Some(self.var))
-            .cmp(&inner.level(Some(other.var)))
+            .level_of(Some(self.var))
+            .cmp(&inner.level_of(Some(other.var)))
     }
 }
 
@@ -198,15 +200,13 @@ impl Manager {
 
     /// Create a new [variable](Var) positioned at the bottom of the current variable order.
     pub fn add_var(&self) -> Var<'_> {
-        Var::new(self.inner.write().add_vars(1)[0], self)
+        Var::new(self.inner.write().add_var(), self)
     }
 
     /// Create a new [variable](Var) positioned immediately after the given one in the current
     /// variable order.
     pub fn add_var_after(&self, preceeding: Var<'_>) -> Var<'_> {
-        let mut inner = self.inner.write();
-
-        Var::new(inner.add_vars_after(preceeding.var, 1)[0], self)
+        Var::new(self.inner.write().add_var_after(preceeding.var), self)
     }
 
     /// Create a given number of [variables](Var) positioned at the bottom of the current variable
@@ -231,29 +231,27 @@ impl Manager {
     }
 
     /// Return the number of variables currently managed by this [Manager].
-    pub fn n_vars(&self) -> usize {
+    pub fn n_vars(&self) -> u32 {
         self.inner.read().n_vars()
     }
 
     /// Return an iterator to all the variables currently managed by this [Manager].
     pub fn vars(&self) -> impl ExactSizeIterator<Item = Var<'_>> {
         let n = self.n_vars();
-        (0..n)
-            .into_iter()
-            .map(|i| Var::new(VarID::from_index(i), self))
+        (0..n).into_iter().map(|i| Var::new(VarID(i), self))
     }
 
     /// Return the [variable](Var) positioned at the given level of the current variable order, or
     /// [None] if there is no such variable.
     pub fn var_at(&self, level: Level) -> Option<Var<'_>> {
-        self.inner.read().at_level(level).map(|v| Var::new(v, self))
+        self.inner.read().var_at(level).map(|v| Var::new(v, self))
     }
 
     /// Swap the position in the variable order of the given variable with the one positioned
     /// immediately after it.
     pub fn swap_adjacent(&self, var: Var<'_>) {
         let mut inner = self.inner.write();
-        let level = inner.level(Some(var.var));
+        let level = inner.level_of(Some(var.var));
         inner.swap(level);
     }
 
@@ -264,8 +262,8 @@ impl Manager {
         }
 
         let mut inner = self.inner.write();
-        let l1 = inner.level(Some(v1.var));
-        let l2 = inner.level(Some(v2.var));
+        let l1 = inner.level_of(Some(v1.var));
+        let l2 = inner.level_of(Some(v2.var));
 
         let min = min(l1, l2);
         let max = max(l1, l2);
@@ -811,12 +809,13 @@ mod tests {
 
         let first = manager.add_var();
         let third = manager.add_var();
-        let middle = manager.add_var_after(first);
-        let seq = manager.add_vars_after(third, 4);
-
         assert!(first < third);
+
+        let middle = manager.add_var_after(first);
         assert!(first < middle);
         assert!(middle < third);
+
+        let seq = manager.add_vars_after(third, 4);
 
         for (v1, v2) in seq.into_iter().tuple_windows() {
             assert!(third < v1);
