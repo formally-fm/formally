@@ -526,6 +526,8 @@ pub struct Node<'m> {
 /// assert_eq!(ponens, true);
 /// # }
 /// ```
+///
+/// Satisfying assignments of a [BDD] can be iterated over using the [BDD::models()] method.
 #[derive(Hash, PartialEq, Eq)]
 pub struct BDD<'m> {
     id: SlotID,
@@ -557,6 +559,30 @@ impl<'m> BDD<'m> {
         self.manager.into_inner()
     }
 
+    /// Return an iterator over the satisfying assignments of this [BDD].
+    ///
+    /// Example:
+    /// ```
+    /// # mod formally {
+    /// #     pub extern crate formally_dd as dd;
+    /// # }
+    /// use formally::dd::obdd::Manager;
+    ///
+    /// # fn main() {
+    /// let manager = Manager::new();
+    /// let p = manager.add_var();
+    /// let q = manager.add_var();
+    ///
+    /// let xor = p ^ q;
+    ///
+    /// for model in xor.models() {
+    ///     println!("model: {model}")
+    /// }
+    /// # }
+    /// ```
+    ///
+    /// The [next()](ModelIterator::next()) method of the resulting iterator panics if the variable
+    /// order of the underlying [Manager] changed after the construction of the iterator
     pub fn models(&self) -> ModelIterator<'m> {
         ModelIterator::new(self.manager(), self.clone())
     }
