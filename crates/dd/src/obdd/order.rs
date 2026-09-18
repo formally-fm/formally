@@ -22,7 +22,10 @@
 // SOFTWARE.
 //
 
-use std::ops::{Add, AddAssign, Sub};
+use std::{
+    ops::{Add, AddAssign, Sub},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 /// The position of a [variable](Var) in the variable order.
 ///
@@ -72,15 +75,30 @@ impl VarID {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct Order {
     var_to_level: Vec<Level>,
     level_to_var: Vec<VarID>,
+    seq: AtomicUsize,
+}
+
+impl Clone for Order {
+    fn clone(&self) -> Self {
+        Order {
+            var_to_level: self.var_to_level.clone(),
+            level_to_var: self.level_to_var.clone(),
+            seq: AtomicUsize::new(0),
+        }
+    }
 }
 
 impl Order {
     pub fn size(&self) -> u32 {
         self.var_to_level.len() as u32
+    }
+
+    pub fn seq(&self) -> usize {
+        self.seq.load(Ordering::Relaxed)
     }
 
     pub fn level_of(&self, var: VarID) -> Level {
@@ -118,6 +136,8 @@ impl Order {
 
         self.var_to_level.swap(v1.index(), v2.index());
         self.level_to_var.swap(l1.index(), l2.index());
+
+        self.seq.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn add_var(&mut self) -> VarID {
