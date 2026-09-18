@@ -78,10 +78,10 @@ impl<'m, const N: usize> PartialEq<[Lit<'m>; N]> for Model<'m> {
 
         for (literal, lit) in zip(self.literals.iter().copied(), other.iter().copied()) {
             if literal.0 != lit.var().var || literal.1 != lit.value() {
-                return false
+                return false;
             }
         }
-        
+
         true
     }
 }
@@ -137,10 +137,25 @@ struct Frame {
     state: State,
 }
 
+impl Frame {
+    fn new(inner: &Inner, slot: SlotID) -> Frame {
+        inner.inc_ref(slot);
+        Frame {
+            slot,
+            state: State::Enter,
+        }
+    }
+
+    fn release(&self, inner: &Inner) {
+        inner.dec_ref(self.slot)
+    }
+}
+
 #[derive(Clone)]
 pub struct ModelIterator<'m> {
     stack: Vec<Frame>,
     model: Model<'m>,
+    seq: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -149,14 +164,25 @@ enum Advance {
     Stop,
 }
 
+impl Drop for ModelIterator<'_> {
+    fn drop(&mut self) {
+        let inner = self.model.manager.inner.read();
+        while !self.stack.is_empty() {
+            self.stack.pop().inspect(|f| f.release(&inner));
+        }
+    }
+}
+
 impl<'m> ModelIterator<'m> {
     pub(super) fn new(manager: &'m Manager, root: BDD<'m>) -> Self {
+        let inner = manager.inner.read();
         ModelIterator {
             stack: vec![Frame {
-                slot: root.id,
+                slot: inner.inc_ref(root.id),
                 state: State::Enter,
             }],
             model: Model::new(manager),
+            seq: inner.seq(),
         }
     }
 
@@ -165,12 +191,18 @@ impl<'m> ModelIterator<'m> {
             return Advance::Stop;
         };
 
-        let tree = self.model.manager.inner.read().tree(top.slot);
+        let inner = self.model.manager.inner.read();
+        assert_eq!(
+            self.seq,
+            inner.seq(),
+            "OBDD variable order changed while iterating over models"
+        );
+        let tree = inner.tree(top.slot);
 
         match tree {
             inner::Tree::Terminal(true) => Advance::Stop,
             inner::Tree::Terminal(false) => {
-                self.stack.pop();
+                self.stack.pop().inspect(|f| f.release(&inner));
                 Advance::Continue
             }
             inner::Tree::Node(node) => {
@@ -179,22 +211,16 @@ impl<'m> ModelIterator<'m> {
                     State::Enter => {
                         self.model.set(var, false);
                         self.stack.last_mut().unwrap().state = State::LowVisited;
-                        self.stack.push(Frame {
-                            slot: node.low,
-                            state: State::Enter,
-                        });
+                        self.stack.push(Frame::new(&inner, node.low));
                     }
                     State::LowVisited => {
                         self.model.set(var, true);
                         self.stack.last_mut().unwrap().state = State::HighVisited;
-                        self.stack.push(Frame {
-                            slot: node.high,
-                            state: State::Enter,
-                        });
+                        self.stack.push(Frame::new(&inner, node.high));
                     }
                     State::HighVisited => {
                         self.model.set(var, None);
-                        self.stack.pop();
+                        self.stack.pop().inspect(|f| f.release(&inner));
                     }
                 }
                 Advance::Continue
