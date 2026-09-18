@@ -27,9 +27,9 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-/// The position of a [variable](Var) in the variable order.
+/// The position of a [variable](super::Var) in the variable order.
 ///
-/// [Level] is an opaque value representing the position of a [variable](Var) in the current
+/// [Level] is an opaque value representing the position of a [variable](super::Var) in the current
 /// variable order. [Level]s can be compared among each other, subtracted to obtain their distance
 /// and added to an unsigned integer to step through the order.
 #[derive(Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]

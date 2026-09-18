@@ -32,6 +32,33 @@ use std::{
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 struct Literal(VarID, bool);
 
+/// A partial truth assignment for a [BDD]
+///
+/// [Model] represents a partial truth assignment to the variables managed by a [Manager]. Each
+/// variable can be either `true`, `false` or not set.
+///
+/// [Model]s can be obtained by iterating over all the satisfying assignments of a [BDD] using
+/// the [BDD::models()] method.
+///
+/// Example:
+/// ```
+/// # mod formally {
+/// #     pub extern crate formally_dd as dd;
+/// # }
+/// use formally::dd::obdd::Manager;
+///
+/// # fn main() {
+/// let manager = Manager::new();
+/// let p = manager.add_var();
+/// let q = manager.add_var();
+///
+/// let xor = p ^ q;
+///
+/// for model in xor.models() {
+///     println!("model: {model}")
+/// }
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct Model<'m> {
     manager: &'m Manager,
@@ -96,6 +123,7 @@ impl<'m> Model<'m> {
         }
     }
 
+    /// Get the truth value (if any) of a variable in this model.
     pub fn get(&self, var: Var<'_>) -> Option<bool> {
         self.literals
             .binary_search_by_key(&var, |lit| Var::new(lit.0, self.manager))
@@ -103,6 +131,7 @@ impl<'m> Model<'m> {
             .map(|i| self.literals[i].1)
     }
 
+    /// Set the truth value of a variable in this model.
     pub fn set(&mut self, var: Var<'_>, value: impl Into<Option<bool>>) {
         let result = self
             .literals
@@ -118,6 +147,8 @@ impl<'m> Model<'m> {
         }
     }
 
+    /// Unsets the truth value of the last variable in the variable order currently set in this
+    /// model.
     pub fn pop(&mut self) {
         self.literals.pop();
     }
@@ -151,6 +182,10 @@ impl Frame {
     }
 }
 
+/// An iterator over the satisfying assignments of a [BDD].
+///
+/// The [next()](ModelIterator::next()) method panics if the variable order of the underlying
+/// [Manager] changed after the construction of the iterator.
 #[derive(Clone)]
 pub struct ModelIterator<'m> {
     stack: Vec<Frame>,
