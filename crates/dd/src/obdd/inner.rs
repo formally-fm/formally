@@ -117,6 +117,10 @@ impl Default for Inner {
 struct IteKey(SlotID, SlotID, SlotID);
 
 impl Inner {
+    pub fn seq(&self) -> usize {
+        self.order.seq()
+    }
+
     pub fn add_var(&mut self) -> VarID {
         let var = self.order.add_var();
         self.varinfo.push(VarInfo::default());
@@ -217,8 +221,11 @@ impl Inner {
         orphans
     }
 
-    pub fn reclaim(&mut self) {
+    pub fn reclaim(&mut self) -> usize {
+        let mut reclaimed = 0;
         let mut orphans = self.collect();
+        reclaimed += orphans.len();
+
         while !orphans.is_empty() {
             for id in std::mem::take(&mut orphans) {
                 let Some(slot) = self.slots.get_mut(&id) else {
@@ -238,7 +245,10 @@ impl Inner {
                 self.slots.remove(&id);
             }
             orphans = self.collect();
+            reclaimed += orphans.len();
         }
+
+        reclaimed
     }
 
     pub fn make(&self, node: Node) -> SlotID {

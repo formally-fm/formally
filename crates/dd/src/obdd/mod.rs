@@ -294,8 +294,10 @@ impl Manager {
 
     /// Reclaim memory by discarding nodes that are not transitively referenced by any live [BDD]
     /// handle.
-    pub fn reclaim(&self) {
-        self.inner.write().reclaim();
+    ///
+    /// Returns the number of nodes reclaimed.
+    pub fn reclaim(&self) -> usize {
+        self.inner.write().reclaim()
     }
 
     /// Return the [BDD] corresponding to the [true] function.
@@ -906,5 +908,45 @@ mod tests {
         let models: Vec<_> = test.models().collect();
 
         assert!(models == [[!p, q.into()], [p.into(), !q]]);
+    }
+
+    #[test]
+    fn reclaim_while_iterating() {
+        let manager = Manager::new();
+        let p = manager.add_var();
+        let q = manager.add_var();
+
+        let test = p ^ q;
+
+        manager.reclaim();
+
+        let mut models = test.models();
+        drop(test);
+
+        assert_eq!(manager.reclaim(), 0);
+
+        models.next().unwrap();
+        models.next().unwrap();
+        assert!(models.next().is_none());
+
+        assert!(manager.reclaim() > 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "OBDD variable order changed while iterating over models")]
+    fn reorder_while_iterating() {
+        let manager = Manager::new();
+        let p = manager.add_var();
+        let q = manager.add_var();
+
+        let test = p ^ q;
+
+        let mut models = test.models();
+
+        models.next().unwrap();
+
+        manager.swap(p, q);
+
+        models.next().unwrap();
     }
 }
