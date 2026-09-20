@@ -22,6 +22,8 @@
 // SOFTWARE.
 //
 
+use rstest::*;
+
 mod formally {
     pub extern crate formally_io as io;
     pub extern crate formally_smt as smt;
@@ -29,12 +31,14 @@ mod formally {
 }
 
 use formally::{
-    io::print::RenderTarget,
-    smt::{backends::Register, smtlib::interpreter::Interpreter, *},
+    smt::{
+        backends,
+        smtlib::interpreter::{Interpreter, Settings},
+        *,
+    },
     support::*,
 };
 
-use formally_smt::smtlib::interpreter::Settings;
 use std::{
     ffi::OsStr,
     fs, io,
@@ -85,71 +89,25 @@ fn enumerate() -> io::Result<Vec<(Category, PathBuf)>> {
     Ok(paths)
 }
 
-// struct TestEmitter {
-//     emitter: Box<dyn Emitter>,
-//     error: &'static Mutex<bool>,
-// }
-//
-// impl TestEmitter {
-//     pub fn new(emitter: impl 'static + Emitter, error: &'static Mutex<bool>) -> TestEmitter {
-//         TestEmitter {
-//             emitter: Box::new(emitter),
-//             error,
-//         }
-//     }
-// }
-//
-// impl Emitter for TestEmitter {
-//     fn emit(&self, level: Level, diag: Diagnostic) {
-//         *self.error.lock().unwrap() = true;
-//         self.emitter.emit(level, diag)
-//     }
-//
-//     fn note(&self, kind: NoteKind, note: Diagnostic) {
-//         self.emitter.note(kind, note)
-//     }
-// }
-//
-// static DID_ERROR: Mutex<bool> = Mutex::new(false);
-
-#[derive(Clone, Copy)]
-struct Sink;
-
-impl io::Write for Sink {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        io::Write::write(&mut io::sink(), buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        io::Write::flush(&mut io::sink())
-    }
-}
-
-impl RenderTarget for Sink {
-    fn is_terminal(&self) -> bool {
-        false
-    }
-}
-
-#[test]
-pub fn smtlib() -> Result<()> {
+#[rstest]
+pub fn smtlib(#[values("z3", "cvc5")] backend: &str) -> Result<()> {
     for (category, test) in enumerate()? {
-        let mut interpreter =
-            Interpreter::with_backend(Settings::default().output(Sink), Register::backend("z3")?);
+        let mut interpreter = Interpreter::with_backend(
+            Settings::default().output(io::sink()),
+            backends::get(backend)?,
+        );
 
-        let emitter = BatchEmitter::new(&NullEmitter);
+        let emitter = BatchEmitter::new();
         let result = Diagnostic::with(&emitter, || interpreter.run(&test));
 
-        let errors = emitter.into_emitted();
-        assert_eq!(!errors.is_empty(), category == Category::Error);
-
-        if errors.is_empty() {
-            match result {
+        match emitter.ok() {
+            Ok(_) => match result {
                 Ok(Answer::Yes) => assert_eq!(category, Category::Sat),
                 Ok(Answer::No) => assert_eq!(category, Category::Unsat),
                 Ok(Answer::Unknown) => assert_eq!(category, Category::Unknown),
                 Err(_) => assert_eq!(category, Category::Error),
-            }
+            },
+            Err(_) => assert_eq!(category, Category::Error),
         }
     }
 

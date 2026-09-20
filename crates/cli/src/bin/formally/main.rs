@@ -23,8 +23,7 @@
 //
 
 use formally::{
-    smt,
-    smt::{Config, backends::Register, smtlib::interpreter::*},
+    smt::{Config, backends, smtlib::interpreter::*},
     support::{Diagnostic, DiagnosticEmitted},
 };
 
@@ -35,7 +34,7 @@ use std::{path::*, process::ExitCode};
 
 fn backend_opt_help() -> String {
     let mut backends = Vec::new();
-    for backend in Register::backends() {
+    for backend in backends::all() {
         if let Ok(name) = backend.name() {
             backends.push(name);
         }
@@ -83,8 +82,8 @@ fn main() -> ExitCode {
 fn solve(args: Solve) -> Result<(), DiagnosticEmitted> {
     Diagnostic::with(&SMTLibEmitter::new(), || {
         let backend = match args.backend {
-            Some(backend) => Register::backend(backend)?,
-            None => &smt::backends::Default,
+            Some(backend) => backends::get(backend)?,
+            None => &backends::Default,
         };
 
         let mut interpreter = Interpreter::with_backend(Config::default(), backend);

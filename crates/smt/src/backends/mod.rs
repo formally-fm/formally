@@ -67,9 +67,9 @@
 //!
 //! # The API facade
 //!
-//! The [api] module contains two types, [SolverFacade](api::SolverFacade) and
-//! [ManagerFacade](api::ManagerFacade), that help implementing a backend based on common
-//! programmatic APIs (as opposed to calling a command-line tool). Using the API facade should be
+//! The [api] module contains two types, [ApiSolver](api::ApiSolver) and
+//! [ApiManager](api::ApiManager), that help implementing a backend based on common programmatic
+//! APIs (as opposed to calling a command-line tool). Using the API facade should be
 //! preferred respecting to implementing [Backend] directly because it hides a non-trivial amounts
 //! of complexity. We refer to the documentation of the [api] module for details.
 //!
@@ -143,6 +143,7 @@
 //!    preconditions, and can have arbitrary (but *not* undefined) behavior in those cases.
 
 mod register;
+pub use register::*;
 
 pub mod api;
 
@@ -151,8 +152,6 @@ pub mod cvc5;
 
 #[cfg(feature = "z3")]
 pub mod z3;
-
-pub use register::*;
 
 use crate::formally;
 use formally::{

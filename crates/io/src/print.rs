@@ -32,19 +32,83 @@
 //! the possibility of specifying the number of columns to print in.
 
 pub use ::pretty::RcDoc;
-use std::{fmt, io};
+use std::{fmt, fs, io};
 
 /// A trait for write streams that know if they are terminals.
 ///
 /// This trait is automatically implemented for any type implementing both [io::Write] and
 /// [io::IsTerminal]. It does not have `io::IsTerminal` as supertrait because the latter is sealed.
-pub trait RenderTarget: io::Write {
+pub trait RenderTarget: io::Write + IsTerminal {}
+
+impl<T: io::Write + IsTerminal> RenderTarget for T {}
+
+/// Trait to subsume `std::io::IsTerminal` which is sealed.
+///
+/// We have `RenderTarget: io::Write + IsTerminal` instead of using `io::IsTerminal` because
+/// the latter is sealed and so cannot be implemented by downstream types. Any `T: io::IsTerminal`
+/// is also [IsTerminal].
+pub trait IsTerminal {
     fn is_terminal(&self) -> bool;
 }
 
-impl<T: io::Write + io::IsTerminal> RenderTarget for T {
+// TODO: if Rust issue #161941 is fixed remove all this stuff.
+impl IsTerminal for fs::File {
     fn is_terminal(&self) -> bool {
         io::IsTerminal::is_terminal(self)
+    }
+}
+
+impl IsTerminal for io::Stderr {
+    fn is_terminal(&self) -> bool {
+        io::IsTerminal::is_terminal(self)
+    }
+}
+
+impl IsTerminal for io::StderrLock<'_> {
+    fn is_terminal(&self) -> bool {
+        io::IsTerminal::is_terminal(self)
+    }
+}
+
+impl IsTerminal for io::Stdin {
+    fn is_terminal(&self) -> bool {
+        io::IsTerminal::is_terminal(self)
+    }
+}
+
+impl IsTerminal for io::StdinLock<'_> {
+    fn is_terminal(&self) -> bool {
+        io::IsTerminal::is_terminal(self)
+    }
+}
+
+impl IsTerminal for io::Stdout {
+    fn is_terminal(&self) -> bool {
+        io::IsTerminal::is_terminal(self)
+    }
+}
+
+impl IsTerminal for io::StdoutLock<'_> {
+    fn is_terminal(&self) -> bool {
+        io::IsTerminal::is_terminal(self)
+    }
+}
+
+impl IsTerminal for io::Sink {
+    fn is_terminal(&self) -> bool {
+        false
+    }
+}
+
+impl IsTerminal for io::Repeat {
+    fn is_terminal(&self) -> bool {
+        false
+    }
+}
+
+impl IsTerminal for io::Empty {
+    fn is_terminal(&self) -> bool {
+        false
     }
 }
 
