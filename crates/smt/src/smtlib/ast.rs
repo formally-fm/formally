@@ -37,6 +37,8 @@ use crate::*;
 
 use formally::support::*;
 
+use std::sync::Arc;
+
 use derive_more::{Display, From};
 use transitive::Transitive;
 
@@ -59,7 +61,7 @@ pub struct Boolean {
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Display, Located, Locatable)]
 #[display("{value}")]
 pub struct Numeral {
-    pub value: Integer,
+    pub value: Arc<Integer>,
     pub span: Option<Span>,
 }
 
@@ -67,7 +69,7 @@ pub struct Numeral {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Display, Located, Locatable)]
 #[display("{value}")]
 pub struct Decimal {
-    pub value: Rational,
+    pub value: Arc<Rational>,
     pub span: Option<Span>,
 }
 
@@ -472,6 +474,13 @@ pub struct Assert {
     pub span: Option<Span>,
 }
 
+/// An `(get-qe)` command.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
+pub struct GetQE {
+    pub term: Term,
+    pub span: Option<Span>,
+}
+
 /// A `(check-sat-assuming)` command.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct CheckSatAssuming {
@@ -510,6 +519,7 @@ pub enum Command {
     GetOption(GetOption),
     #[from(skip)]
     GetProof(Option<Span>),
+    GetQE(GetQE),
     #[from(skip)]
     GetUnsatAssumptions(Option<Span>),
     #[from(skip)]
@@ -551,6 +561,7 @@ impl Command {
             Command::GetModel(_) => "get-model",
             Command::GetOption(_) => "get-option",
             Command::GetProof(_) => "get-proof",
+            Command::GetQE(_) => "get-qe",
             Command::GetUnsatAssumptions(_) => "get-unsat-assumptions",
             Command::GetUnsatCore(_) => "get-unsat-core",
             Command::GetValue(_) => "get-value",
@@ -744,6 +755,13 @@ pub struct GetProofResponse {
     pub span: Option<Span>,
 }
 
+/// The response of a `(get-qe)` command.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
+pub struct GetQEResponse {
+    pub term: Term,
+    pub span: Option<Span>,
+}
+
 /// The response of a `(get-unsat-assumption)` command.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct GetUnsatAssumptionResponse {
@@ -779,6 +797,7 @@ pub enum Response {
     GetModel(GetModelResponse),
     GetOption(GetOptionResponse),
     GetProof(GetProofResponse),
+    GetQE(GetQEResponse),
     GetUnsatAssumption(GetUnsatAssumptionResponse),
     GetUnsatCore(GetUnsatCoreResponse),
     GetValue(GetValueResponse),

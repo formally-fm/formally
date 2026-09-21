@@ -64,8 +64,8 @@ impl Interpreter {
     fn constant_to_smt(solver: &smt::Solver, cnst: ast::Constant) -> smt::Term {
         let span = cnst.span();
         let cnst = match cnst {
-            ast::Constant::Numeral(n) => smt::Constant::from(n.value),
-            ast::Constant::Decimal(d) => smt::Constant::from(d.value),
+            ast::Constant::Numeral(n) => smt::Constant::from((*n.value).clone()),
+            ast::Constant::Decimal(d) => smt::Constant::from((*d.value).clone()),
             ast::Constant::Hexadecimal(n) => smt::Constant::from(n.value),
             ast::Constant::Binary(n) => smt::Constant::from(n.value),
             ast::Constant::String(_) => todo!(),
@@ -184,5 +184,57 @@ impl Interpreter {
             smt::Variable::new(Identifier::from(var.name.inner().to_string()), sort)
                 .over(var.span.clone()),
         )
+    }
+
+    pub(crate) fn smt_to_term(term: &smt::Term) -> Result<ast::Term> {
+        match term.kind() {
+            smt::TermKind::Constant(cnst) => {
+                let cnst = match cnst {
+                    smt::Constant::Integer { value, span } => {
+                        ast::Constant::Numeral(ast::Numeral {
+                            value: value.clone(),
+                            span: span.clone(),
+                        })
+                    }
+                    smt::Constant::Rational { value, span } => {
+                        ast::Constant::Decimal(ast::Decimal {
+                            value: value.clone(),
+                            span: span.clone(),
+                        })
+                    }
+                };
+                Ok(ast::Term::Constant(cnst))
+            }
+            smt::TermKind::Atom(atom) => {
+                let mut args = Vec::with_capacity(atom.arguments.len());
+                for arg in &*atom.arguments {
+                    args.push(Self::smt_to_term(arg)?)
+                }
+                Ok(ast::Term::Application(ast::Application {
+                    head: ast::QualifiedIdentifier::from(ast::Identifier::from(
+                        ast::Symbol::new(atom.head.name()).unwrap(),
+                    )),
+                    args,
+                    span: atom.span(),
+                }))
+            }
+            smt::TermKind::Quantified(_) => todo!(),
+            smt::TermKind::Let(let_) => {
+                let mut bindings = Vec::with_capacity(let_.bindings.len());
+                for binding in &*let_.bindings {
+                    bindings.push(ast::Binding {
+                        name: ast::Symbol::new(binding.variable.name()).unwrap(),
+                        body: Self::smt_to_term(&binding.def)?,
+                        span: binding.span(),
+                    })
+                }
+                
+                Ok(ast::Term::Let(ast::Let {
+                    bindings,
+                    body: Box::new(Self::smt_to_term(&let_.body)?),
+                    span: let_.span(),
+                }))
+            }
+        }
     }
 }

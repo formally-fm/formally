@@ -212,30 +212,6 @@ pub struct TermManager {
     defs: RefCell<HashSet<Arc<Definition<Sort, Sort, Term>>>>,
 }
 
-impl TermManager {
-    fn decl(&self, decl: Declaration<Sort, Sort>) -> Declared {
-        if let Some(decl) = self.decls.borrow().get(&decl) {
-            return Declared(Nominal(decl.clone()));
-        }
-
-        let arc = Arc::new(decl);
-        self.decls.borrow_mut().insert(arc.clone());
-
-        Declared(Nominal(arc))
-    }
-
-    fn def(&self, def: Definition<Sort, Sort, Term>) -> Defined {
-        if let Some(def) = self.defs.borrow().get(&def) {
-            return Defined(Nominal(def.clone()));
-        }
-
-        let arc = Arc::new(def);
-        self.defs.borrow_mut().insert(arc.clone());
-
-        Defined(Nominal(arc))
-    }
-}
-
 impl Debug for TermManager {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "TermManager {{ }}")
@@ -264,7 +240,7 @@ impl TermManager {
             defs: RefCell::default(),
         })
     }
-
+    
     /// Construct a [TermManager] over a given [Backend] and [TermPool].
     pub fn with_pool(backend: impl Backend, pool: Rc<dyn TermPool>) -> Result<TermManager> {
         Ok(TermManager {
@@ -274,10 +250,39 @@ impl TermManager {
             defs: RefCell::default(),
         })
     }
+    
+    /// Return the [backend::Manager] this [TermManager] was built on.
+    pub fn manager(&self) -> Rc<dyn backends::Manager> {
+        self.backend_manager.clone()
+    }
 
     /// Return a reference to the underlying [TermPool].
     pub fn pool(&self) -> &dyn TermPool {
         &*self.pool
+    }
+}
+
+impl TermManager {
+    fn decl(&self, decl: Declaration<Sort, Sort>) -> Declared {
+        if let Some(decl) = self.decls.borrow().get(&decl) {
+            return Declared(Nominal(decl.clone()));
+        }
+
+        let arc = Arc::new(decl);
+        self.decls.borrow_mut().insert(arc.clone());
+
+        Declared(Nominal(arc))
+    }
+
+    fn def(&self, def: Definition<Sort, Sort, Term>) -> Defined {
+        if let Some(def) = self.defs.borrow().get(&def) {
+            return Defined(Nominal(def.clone()));
+        }
+
+        let arc = Arc::new(def);
+        self.defs.borrow_mut().insert(arc.clone());
+
+        Defined(Nominal(arc))
     }
 }
 
@@ -340,6 +345,11 @@ impl Solver {
     /// Create a [Solver] with a default backend and a dedicated [TermManager].
     pub fn new(config: &Config) -> Result<Solver> {
         Solver::with_manager(config, TermManager::new()?)
+    }
+    
+    /// Get the [TermManager] of this [Solver].
+    pub fn manager(&self) -> Rc<TermManager> {
+        self.manager.clone()
     }
 
     /// Get the currently selected [Logic].

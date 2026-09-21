@@ -27,7 +27,7 @@
 //!
 //! This module helps writing SMT backends based on programmatic APIs (as opposed to e.g., calling a
 //! command-line tool), by abstracting most of the logic needed for the conversion from
-//! [formally::smt]'s data structures and the underlying backend ones.
+//! [formally::smt](smt)'s data structures and the underlying backend ones.
 //!
 //! Using these facilities when applicable is recommended against implementing the backend from
 //! scratch, because they hide a non-trivial amount of complexity.
@@ -278,6 +278,15 @@ pub trait Solver: Sized {
 
     /// Return the model if one exists.
     fn model(&self) -> Result<Self::Model<'_>>;
+}
+
+/// Trait to allow [api::ApiSolver](ApiSolver) to implement the [qe::QE](QE) trait.
+pub trait QE: Solver + Sized {
+    /// Perform quantifier elimination on the given term, if at all supported.
+    fn qe(
+        &self,
+        term: <Self::Manager as Manager>::Term,
+    ) -> Result<<Self::Manager as Manager>::Term>;
 }
 
 /// Trait to represent a model from a [Solver].

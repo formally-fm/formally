@@ -26,7 +26,7 @@ use crate::smtlib::ast::*;
 use formally_io::parse::{combinators::*, parsers::*, *};
 
 use rug::ops::CompleteRound;
-use std::str::FromStr as _;
+use std::{str::FromStr as _, sync::Arc};
 
 impl<'c> Parsable<'c> for Boolean {
     fn parser() -> Parser<'c, Self> {
@@ -49,7 +49,7 @@ impl<'c> Parsable<'c> for Numeral {
             )
             .to_string()
             .map(|s| Numeral {
-                value: rug::Integer::from_str(s.as_str()).unwrap(),
+                value: Arc::new(rug::Integer::from_str(s.as_str()).unwrap()),
                 span: None,
             })
             .located()
@@ -78,11 +78,11 @@ impl<'c> Parsable<'c> for Decimal {
             .map(|((int, _), frac)| format!("{int}.{frac}"))
             .skipping(nothing())
             .map(|s| Decimal {
-                value: rug::Float::parse(s)
+                value: Arc::new(rug::Float::parse(s)
                     .unwrap()
                     .complete(53)
                     .to_rational()
-                    .unwrap(),
+                    .unwrap()),
                 span: None,
             })
             .located()
@@ -582,6 +582,10 @@ impl<'c> Parsable<'c> for Command {
         .or(command(
             "get-proof",
             succeed().map(|_| Command::GetProof(None)),
+        ))
+        .or(command(
+            "get-qe",
+            Term::parser().map(|term| Command::GetQE(GetQE { term, span: None })),
         ))
         .or(command(
             "get-unsat-assumptions",

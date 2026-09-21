@@ -126,7 +126,10 @@ impl Settings {
     }
 
     pub fn output(self, output: impl 'static + RenderTarget) -> Settings {
-        Settings { output: Box::new(output), ..self }
+        Settings {
+            output: Box::new(output),
+            ..self
+        }
     }
 }
 
@@ -228,6 +231,7 @@ impl Interpreter {
                 GetAssertions(_) => Self::unsupported(&mut *state.output),
                 GetInfo(_) => Self::unsupported(&mut *state.output),
                 GetOption(_) => Self::unsupported(&mut *state.output),
+                GetQE(qe) => Self::get_qe(state, qe),
                 Pop(pop) => Self::pop(state, pop),
                 Push(push) => Self::push(state, push),
                 Reset(_) => Self::unsupported(&mut *state.output),
@@ -342,6 +346,20 @@ impl Interpreter {
         *self = Interpreter::Exited(std::mem::take(config), mode);
 
         Ok(())
+    }
+
+    fn get_qe(state: &mut State, getqe: ast::GetQE) -> Result<()> {
+        let manager = state.solver.manager().manager();
+        let qe = manager.backend().qe(&state.config, manager.clone())?;
+        let term = Interpreter::term_to_smt(&state.solver, getqe.term)?;
+        let term = state.solver.lookup(term, smt::Role::Function)?;
+        let term = qe.qe(term, state.solver.pool())?;
+        let term = Interpreter::smt_to_term(&term)?;
+
+        Interpreter::response(
+            &mut *state.output,
+            ast::Response::GetQE(ast::GetQEResponse { term, span: None }),
+        )
     }
 
     fn set_logic(&mut self, sl: ast::SetLogic) -> Result<()> {
@@ -459,7 +477,7 @@ impl Interpreter {
     }
 
     fn declare_sort(state: &mut State, decl: ast::DeclareSort) -> Result<()> {
-        if decl.arity.value > 0 {
+        if *decl.arity.value > 0 {
             error!(
                 decl.arity.span,
                 "parametric uninterpreted sorts are not supported yet"

@@ -84,6 +84,14 @@ impl Backend for Default {
     fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error> {
         default()?.solver(config, manager)
     }
+
+    fn qe(
+        &self,
+        config: &Config,
+        manager: Rc<dyn Manager>,
+    ) -> std::result::Result<Box<dyn QE>, Error> {
+        default()?.qe(config, manager)
+    }
 }
 
 /// Return the default backend.

@@ -33,6 +33,7 @@ use formally::smt::{
     },
     logic,
     logics::{Logic, LogicEx},
+    qe::QE,
     theories,
 };
 use std::{rc::Rc, sync::Arc};
@@ -83,6 +84,12 @@ impl Backend for Cvc5 {
         config: &smt::Config,
         manager: Rc<dyn backends::Manager>,
     ) -> Result<Box<dyn backends::Solver>> {
+        Ok(Box::new(api::ApiSolver::<Solver>::new(
+            self, config, manager,
+        )?))
+    }
+
+    fn qe(&self, config: &smt::Config, manager: Rc<dyn backends::Manager>) -> Result<Box<dyn QE>> {
         Ok(Box::new(api::ApiSolver::<Solver>::new(
             self, config, manager,
         )?))
@@ -160,6 +167,15 @@ impl api::Solver for Solver {
 
     fn model(&self) -> Result<Self::Model<'_>> {
         Ok(Model { solver: self })
+    }
+}
+
+impl api::QE for Solver {
+    fn qe(
+        &self,
+        term: <Self::Manager as api::Manager>::Term,
+    ) -> Result<<Self::Manager as api::Manager>::Term> {
+        Ok(self.cvc5solver.get_quantifier_elimination(term))
     }
 }
 
@@ -569,10 +585,10 @@ impl Manager {
         let mut children = Vec::with_capacity(numchildren);
         for child in 0..numchildren {
             let child = self.cvc5manager.get_term_child(term, child);
-            let sort = self.cvc5manager.get_term_sort(term);
+            let sort = self.cvc5manager.get_term_sort(child);
 
-            intargs = intargs && sort == self.cvc5manager.get_integer_sort();
-            realargs = realargs && sort == self.cvc5manager.get_real_sort();
+            intargs = intargs && self.cvc5manager.sort_is_integer(sort);
+            realargs = realargs && self.cvc5manager.sort_is_real(sort);
 
             children.push(self.export(child, pool, to_func.clone(), to_sort.clone())?);
         }

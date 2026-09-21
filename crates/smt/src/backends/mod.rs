@@ -155,7 +155,7 @@ pub mod z3;
 
 use crate::formally;
 use formally::{
-    smt::{self, Config, Declared, Defined, ModelProvider, logics},
+    smt::{self, Config, Declared, Defined, ModelProvider, logics, qe::QE},
     support::{Diagnosable, Identifier, Level, Located, Span},
 };
 use std::{any::Any, fmt::Debug, fmt::Formatter, io, rc::Rc};
@@ -263,6 +263,19 @@ pub trait Backend: 'static + Send + Sync {
 
     /// Create an instance of the backend solver based on the given [Config] and [Manager]
     fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error>;
+
+    /// Create a quantifier elimination engine, if at all supported, based on the given [Config] and
+    /// [Manager].
+    #[allow(unused)]
+    fn qe(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn QE>, Error> {
+        Err(Error::new(
+            self.name()?,
+            ErrorKind::Unsupported {
+                msg: "quantifier elimination".into(),
+                span: None,
+            },
+        ))
+    }
 }
 
 impl Backend for &'static (dyn 'static + Backend) {
@@ -276,6 +289,10 @@ impl Backend for &'static (dyn 'static + Backend) {
 
     fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error> {
         (*self).solver(config, manager)
+    }
+
+    fn qe(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn QE>, Error> {
+        (*self).qe(config, manager)
     }
 }
 

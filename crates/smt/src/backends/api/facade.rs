@@ -22,14 +22,18 @@
 // SOFTWARE.
 //
 
-use crate::formally;
-use formally::smt::{
-    self,
-    backends::{
-        self, Backend,
-        api::{Manager, Model, Solver},
+use crate::{Term, formally};
+use formally::{
+    smt::{
+        self,
+        backends::{
+            self, Backend,
+            api::{Manager, Model, QE, Solver},
+        },
+        logics::{Logic, LogicEx, standard_logic},
+        qe,
     },
-    logics::{Logic, LogicEx, standard_logic},
+    support,
 };
 use std::{any::Any, cell::RefCell, collections::HashMap, iter::zip, rc::Rc};
 
@@ -130,6 +134,15 @@ impl<S: Solver> backends::Solver for ApiSolver<S> {
             solver: self,
             model: self.solver.model()?,
         })))
+    }
+}
+
+impl<S: QE> qe::QE for ApiSolver<S> {
+    fn qe(&self, term: Term, pool: &dyn smt::TermPool) -> support::Result<Term> {
+        let term = self.manager.term(&term, &BindMap::default())?;
+        let term = QE::qe(&self.solver, term)?;
+
+        Ok(self.manager.export(term, pool)?)
     }
 }
 
@@ -572,7 +585,7 @@ impl<M: Manager> ApiManager<M> {
             None => Err(backends::Error::new(
                 self.manager.backend().name()?,
                 backends::ErrorKind::Unsupported {
-                    msg: "unsupported Z3_ast in conversion to Term".into(),
+                    msg: "unsupported term handle in conversion to Term".into(),
                     span: None,
                 },
             )),

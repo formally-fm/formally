@@ -48,15 +48,15 @@ impl TermManager {
     pub fn get_term_sort(&self, term: Term) -> Sort {
         unsafe { NonNull::new(cvc5::term_get_sort(term.as_ptr())).unwrap() }
     }
-    
+
     pub fn get_term_num_children(&self, term: Term) -> usize {
         unsafe { cvc5::term_get_num_children(term.as_ptr()) }
     }
-    
+
     pub fn get_term_child(&self, term: Term, index: usize) -> Term {
         unsafe { NonNull::new(cvc5::term_get_child(term.as_ptr(), index)).unwrap() }
     }
-    
+
     pub fn get_boolean_sort(&self) -> Sort {
         unsafe { NonNull::new(cvc5::get_boolean_sort(self.manager)).unwrap() }
     }
@@ -101,6 +101,14 @@ impl TermManager {
             let value = CStr::from_ptr(value).to_string_lossy();
             Some(rug::Rational::from_str_radix(&value, 10).unwrap())
         }
+    }
+
+    pub fn sort_is_integer(&self, sort: Sort) -> bool {
+        unsafe { cvc5::sort_is_integer(sort.as_ptr()) }
+    }
+
+    pub fn sort_is_real(&self, sort: Sort) -> bool {
+        unsafe { cvc5::sort_is_real(sort.as_ptr()) }
     }
 
     pub fn mk_array_sort(&self, index: Sort, element: Sort) -> Sort {
@@ -245,6 +253,12 @@ impl Solver {
 
     pub fn get_value(&self, term: Term) -> Term {
         unsafe { NonNull::new(cvc5::get_value(self.solver, term.as_ptr())).unwrap() }
+    }
+
+    pub fn get_quantifier_elimination(&self, term: Term) -> Term {
+        unsafe {
+            NonNull::new(cvc5::get_quantifier_elimination(self.solver, term.as_ptr())).unwrap()
+        }
     }
 }
 

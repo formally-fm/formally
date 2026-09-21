@@ -29,13 +29,29 @@ use crate::smtlib::ast::*;
 
 impl Pretty for Numeral {
     fn pretty(&self) -> RcDoc<'static> {
-        RcDoc::as_string(&self.value)
+        if *self.value >= 0 {
+            RcDoc::as_string(&self.value)
+        } else {
+            parens(
+                RcDoc::text("-")
+                    .append(RcDoc::space())
+                    .append(RcDoc::as_string(-(*self.value).clone())),
+            )
+        }
     }
 }
 
 impl Pretty for Decimal {
     fn pretty(&self) -> RcDoc<'static> {
-        RcDoc::text(self.value.to_f64().to_string())
+        if *self.value >= 0 {
+            RcDoc::text(self.value.to_f64().to_string())
+        } else {
+            parens(
+                RcDoc::text("-")
+                    .append(RcDoc::space())
+                    .append(RcDoc::text((-(*self.value).clone()).to_f64().to_string())),
+            )
+        }
     }
 }
 
@@ -190,14 +206,14 @@ impl Pretty for SortedVar {
 impl Pretty for Application {
     fn pretty(&self) -> RcDoc<'static> {
         let Application { head: id, args, .. } = self;
-        parens(
-            id.pretty()
-                .append(RcDoc::space())
-                .append(RcDoc::intersperse(
-                    args.iter().map(Pretty::pretty),
-                    RcDoc::space(),
-                )),
-        )
+        let body = id
+            .pretty()
+            .append(RcDoc::space())
+            .append(RcDoc::intersperse(
+                args.iter().map(Pretty::pretty),
+                RcDoc::space(),
+            ));
+        if args.is_empty() { body } else { parens(body) }
     }
 }
 
@@ -398,6 +414,9 @@ impl Pretty for Command {
                 .append(RcDoc::space())
                 .append(keyword.pretty()),
             Command::GetProof(_) => RcDoc::text("get-proof"),
+            Command::GetQE(GetQE { term, .. }) => RcDoc::text("get-qe")
+                .append(RcDoc::space())
+                .append(term.pretty()),
             Command::GetUnsatAssumptions(_) => RcDoc::text("get-unsat-assumptions"),
             Command::GetUnsatCore(_) => RcDoc::text("get-unsat-core"),
             Command::GetValue(GetValue { terms, .. }) => RcDoc::text("get-value")
@@ -451,6 +470,7 @@ impl Pretty for Response {
             Response::GetModel(_) => todo!(),
             Response::GetOption(_) => todo!(),
             Response::GetProof(_) => todo!(),
+            Response::GetQE(qe) => qe.term.pretty(),
             Response::GetUnsatAssumption(_) => todo!(),
             Response::GetUnsatCore(_) => todo!(),
             Response::GetValue(GetValueResponse { values, .. }) => parens(RcDoc::intersperse(
