@@ -34,6 +34,7 @@ use formally::smt::{
     logic,
     logics::{Logic, LogicEx},
     theories,
+    qe::QE
 };
 use itertools::Itertools;
 use std::rc::Rc;
@@ -85,6 +86,12 @@ impl Backend for Z3 {
         config: &smt::Config,
         manager: Rc<dyn backends::Manager>,
     ) -> Result<Box<dyn backends::Solver>> {
+        Ok(Box::new(api::ApiSolver::<Solver>::new(
+            self, config, manager,
+        )?))
+    }
+
+    fn qe(&self, config: &smt::Config, manager: Rc<dyn backends::Manager>) -> Result<Box<dyn QE>> {
         Ok(Box::new(api::ApiSolver::<Solver>::new(
             self, config, manager,
         )?))
@@ -176,6 +183,15 @@ impl api::Solver for Solver {
             solver: self,
             model: self.z3solver.get_model(),
         })
+    }
+}
+
+impl api::QE for Solver {
+    fn qe(
+        &self,
+        term: <Self::Manager as api::Manager>::Term,
+    ) -> Result<<Self::Manager as api::Manager>::Term> {
+        Ok(term.get_quantifier_elimination())
     }
 }
 

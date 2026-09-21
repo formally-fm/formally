@@ -565,7 +565,7 @@ impl Ast {
     pub fn id(&self) -> u32 {
         unsafe { Z3_get_ast_id(self.ctx.ctx, self.ast) }
     }
-    
+
     pub fn kind(&self) -> AstKind {
         unsafe { Z3_get_ast_kind(self.ctx.ctx, self.ast) }
     }
@@ -652,6 +652,45 @@ impl Ast {
         Ast::new(&self.ctx, unsafe {
             Z3_get_quantifier_body(self.ctx.ctx, self.ast).unwrap()
         })
+    }
+
+    pub fn get_quantifier_elimination(&self) -> Ast {
+        let ctx = self.ctx.ctx;
+        unsafe {
+            let goal = Z3_mk_goal(ctx, false, false, false).unwrap();
+            Z3_goal_inc_ref(ctx, goal);
+            Z3_goal_assert(ctx, goal, self.ast);
+
+            let qe = Z3_mk_tactic(ctx, c"qe".as_ptr()).unwrap();
+            Z3_tactic_inc_ref(ctx, qe);
+
+            let result = Z3_tactic_apply(ctx, qe, goal).unwrap();
+            Z3_apply_result_inc_ref(ctx, result);
+
+            assert_eq!(Z3_apply_result_get_num_subgoals(ctx, result), 1);
+
+            let output = Z3_apply_result_get_subgoal(ctx, result, 0).unwrap();
+            let size = Z3_goal_size(ctx, output);
+
+            let mut formulas = Vec::new();
+            for i in 0..size {
+                formulas.push(Z3_goal_formula(ctx, output, i).unwrap())
+            }
+            
+            let ast = match size {
+                0 => Z3_mk_true(ctx).unwrap(),
+                1 => formulas[0],
+                n => Z3_mk_and(ctx, n, formulas.as_ptr()).unwrap()
+            };
+            
+            Z3_inc_ref(ctx, ast);
+            
+            Z3_apply_result_dec_ref(ctx, result);
+            Z3_tactic_dec_ref(ctx, qe);
+            Z3_goal_dec_ref(ctx, goal);
+            
+            Ast::new(&self.ctx, ast)
+        }
     }
 }
 
