@@ -38,7 +38,7 @@ pub static BACKENDS: [&'static dyn Backend];
 ///
 /// This error type is [Diagnosable], meaning that you can convert it to [DiagnosticEmitted] with
 /// the `?` operator and it emits itself as diagnostics automatically when this happens.
-#[derive(Debug, Error, Located)]
+#[derive(Debug, Clone, Error, Located)]
 #[error("SMT backend `{0}` not found")]
 pub struct BackendNotFound<'s>(pub Identifier<'s>);
 

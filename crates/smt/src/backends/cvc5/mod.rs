@@ -27,12 +27,15 @@ use crate::formally;
 use bindings as cvc5;
 use formally::smt::{
     self, ToTerm as _,
-    backends::{self, Backend, api},
+    backends::{
+        self, Backend,
+        api::{self, Manager as _},
+    },
     logic,
     logics::{Logic, LogicEx},
     theories,
 };
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 type Result<T, E = backends::Error> = std::result::Result<T, E>;
 
@@ -302,26 +305,54 @@ impl api::Manager for Manager {
 
     fn export(
         &self,
-        term: Self::Term,
+        term: cvc5::Term,
         pool: &dyn smt::TermPool,
-        _to_func: impl Clone + Fn(Self::FuncDecl) -> Option<smt::UserFunction>,
-        _to_sort: impl Clone + Fn(Self::Sort) -> Option<smt::Sort>,
+        to_func: impl Clone + Fn(cvc5::Term) -> Option<smt::UserFunction>,
+        to_sort: impl Clone + Fn(cvc5::Sort) -> Option<smt::Sort>,
     ) -> Option<smt::Term> {
         use smt::theories::*;
 
-        if let Some(value) = self.cvc5manager.get_boolean_value(term) {
-            return if value {
-                Some(Core::True().into_term_in(pool))
-            } else {
-                Some(Core::False().into_term_in(pool))
-            };
-        } else if let Some(value) = self.cvc5manager.get_integer_value(term) {
-            return Some(smt::Constant::from(value).into_term_in(pool));
-        } else if let Some(value) = self.cvc5manager.get_real_value(term) {
-            return Some(smt::Constant::from(value).into_term_in(pool));
-        }
+        match self.cvc5manager.get_term_kind(term) {
+            cvc5::Kind::Constant => to_func(term).map(|f| f.into_term_in(pool)),
+            cvc5::Kind::Variable => to_func(term).map(|f| f.into_term_in(pool)),
+            cvc5::Kind::ApplyUf => {
+                let mut children = Vec::new();
+                let head = to_func(self.cvc5manager.get_term_child(term, 0))?;
+                for child in 1..self.cvc5manager.get_term_num_children(term) {
+                    children.push(self.export(
+                        self.cvc5manager.get_term_child(term, child),
+                        pool,
+                        to_func.clone(),
+                        to_sort.clone(),
+                    )?)
+                }
 
-        None
+                Some(smt::term!(#head #(#children)*).into_term_in(pool))
+            }
+            cvc5::Kind::ConstBoolean => {
+                if self.cvc5manager.get_boolean_value(term).unwrap() {
+                    Some(Core::True().into_term_in(pool))
+                } else {
+                    Some(Core::False().into_term_in(pool))
+                }
+            }
+            cvc5::Kind::ConstRational => Some(
+                smt::Constant::Rational {
+                    value: Arc::new(self.cvc5manager.get_real_value(term).unwrap()),
+                    span: None,
+                }
+                .into_term_in(pool),
+            ),
+            cvc5::Kind::ConstInteger => Some(
+                smt::Constant::Integer {
+                    value: Arc::new(self.cvc5manager.get_integer_value(term).unwrap()),
+                    span: None,
+                }
+                .into_term_in(pool),
+            ),
+            cvc5::Kind::Forall | cvc5::Kind::Exists => todo!(),
+            _ => self.export_app(term, pool, to_func, to_sort),
+        }
     }
 }
 
@@ -399,7 +430,7 @@ impl Manager {
             }
             theories::IntsAtom::Div(args) => {
                 let args = to_terms(args)?;
-                self.cvc5manager.mk_term(cvc5::Kind::Distinct, &args)
+                self.cvc5manager.mk_term(cvc5::Kind::IntsDivision, &args)
             }
             theories::IntsAtom::Mod_(left, right) => {
                 let left = to_term(left)?;
@@ -456,7 +487,7 @@ impl Manager {
             }
             theories::RealsAtom::Div(args) => {
                 let args = to_terms(args)?;
-                self.cvc5manager.mk_term(cvc5::Kind::Distinct, &args)
+                self.cvc5manager.mk_term(cvc5::Kind::Division, &args)
             }
             theories::RealsAtom::Le(args) => {
                 let args = to_terms(args)?;
@@ -520,5 +551,69 @@ impl Manager {
                     .mk_term(cvc5::Kind::Store, &[array, index, elem])
             }
         })
+    }
+
+    fn export_app(
+        &self,
+        term: cvc5::Term,
+        pool: &dyn smt::TermPool,
+        to_func: impl Clone + Fn(cvc5::Term) -> Option<smt::UserFunction>,
+        to_sort: impl Clone + Fn(cvc5::Sort) -> Option<smt::Sort>,
+    ) -> Option<smt::Term> {
+        use smt::theories::*;
+
+        let mut intargs = true;
+        let mut realargs = true;
+
+        let numchildren = self.cvc5manager.get_term_num_children(term);
+        let mut children = Vec::with_capacity(numchildren);
+        for child in 0..numchildren {
+            let child = self.cvc5manager.get_term_child(term, child);
+            let sort = self.cvc5manager.get_term_sort(term);
+
+            intargs = intargs && sort == self.cvc5manager.get_integer_sort();
+            realargs = realargs && sort == self.cvc5manager.get_real_sort();
+
+            children.push(self.export(child, pool, to_func.clone(), to_sort.clone())?);
+        }
+
+        let head = match self.cvc5manager.get_term_kind(term) {
+            cvc5::Kind::Equal => Core::equals(),
+            cvc5::Kind::Distinct => Core::distinct(),
+            cvc5::Kind::Not => Core::not(),
+            cvc5::Kind::And => Core::and(),
+            cvc5::Kind::Implies => Core::implies(),
+            cvc5::Kind::Or => Core::or(),
+            cvc5::Kind::Xor => Core::xor(),
+            cvc5::Kind::Ite => Core::ite(),
+            cvc5::Kind::Add if intargs => Ints::plus(),
+            cvc5::Kind::Add if realargs => Reals::plus(),
+            cvc5::Kind::Mult if intargs => Ints::mult(),
+            cvc5::Kind::Mult if realargs => Reals::mult(),
+            cvc5::Kind::Sub if intargs => Ints::minus(),
+            cvc5::Kind::Sub if realargs => Reals::minus(),
+            cvc5::Kind::Neg if intargs => Ints::unary_minus(),
+            cvc5::Kind::Neg if realargs => Reals::unary_minus(),
+            cvc5::Kind::Division => Reals::div(),
+            cvc5::Kind::IntsDivision => Ints::div(),
+            cvc5::Kind::IntsModulus => Ints::mod_(),
+            cvc5::Kind::Abs => Ints::abs(),
+            cvc5::Kind::Lt if intargs => Ints::lt(),
+            cvc5::Kind::Lt if realargs => Reals::lt(),
+            cvc5::Kind::Leq if intargs => Ints::le(),
+            cvc5::Kind::Leq if realargs => Reals::le(),
+            cvc5::Kind::Gt if intargs => Ints::gt(),
+            cvc5::Kind::Gt if realargs => Reals::gt(),
+            cvc5::Kind::Geq if intargs => Ints::ge(),
+            cvc5::Kind::Geq if realargs => Reals::ge(),
+            cvc5::Kind::IsInteger => RealsInts::is_int(),
+            cvc5::Kind::ToInteger => RealsInts::to_int(),
+            cvc5::Kind::ToReal => RealsInts::to_real(),
+            cvc5::Kind::Select => Arrays::select(),
+            cvc5::Kind::Store => Arrays::store(),
+            _ => return None,
+        };
+
+        Some(smt::term!(#head #(#children)*).into_term_in(pool))
     }
 }

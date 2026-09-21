@@ -188,7 +188,7 @@ impl Error {
 impl From<BackendNotFound<'_>> for Error {
     fn from(err: BackendNotFound<'_>) -> Self {
         let err = BackendNotFound(err.0.into_owned());
-        Error::new(&err.0.name().to_string(), ErrorKind::BackendNotFound(err))
+        Error::new(err.clone().0.name(), ErrorKind::BackendNotFound(err))
     }
 }
 

@@ -92,7 +92,7 @@ pub trait Manager: Default + Sized {
     type Sort: Clone + Hash + PartialEq + Eq;
 
     /// The type of the backend's API representing a term.
-    type Term: Clone;
+    type Term: Clone + Hash + PartialEq + Eq;
 
     /// A Boolean constant telling whether your API supports directly the definition of functions.
     ///

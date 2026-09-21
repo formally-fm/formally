@@ -41,6 +41,22 @@ impl TermManager {
         }
     }
 
+    pub fn get_term_kind(&self, term: Term) -> Kind {
+        unsafe { cvc5::term_get_kind(term.as_ptr()) }
+    }
+
+    pub fn get_term_sort(&self, term: Term) -> Sort {
+        unsafe { NonNull::new(cvc5::term_get_sort(term.as_ptr())).unwrap() }
+    }
+    
+    pub fn get_term_num_children(&self, term: Term) -> usize {
+        unsafe { cvc5::term_get_num_children(term.as_ptr()) }
+    }
+    
+    pub fn get_term_child(&self, term: Term, index: usize) -> Term {
+        unsafe { NonNull::new(cvc5::term_get_child(term.as_ptr(), index)).unwrap() }
+    }
+    
     pub fn get_boolean_sort(&self) -> Sort {
         unsafe { NonNull::new(cvc5::get_boolean_sort(self.manager)).unwrap() }
     }

@@ -562,6 +562,10 @@ impl Ast {
         }
     }
 
+    pub fn id(&self) -> u32 {
+        unsafe { Z3_get_ast_id(self.ctx.ctx, self.ast) }
+    }
+    
     pub fn kind(&self) -> AstKind {
         unsafe { Z3_get_ast_kind(self.ctx.ctx, self.ast) }
     }
@@ -704,6 +708,20 @@ impl Drop for Ast {
         unsafe { Z3_dec_ref(self.ctx.ctx, self.ast) }
     }
 }
+
+impl Hash for Ast {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id().hash(state)
+    }
+}
+
+impl PartialEq for Ast {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for Ast {}
 
 impl Clone for App {
     fn clone(&self) -> Self {
