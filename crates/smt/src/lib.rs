@@ -398,15 +398,6 @@ pub mod exports {
     pub use paste::paste;
 }
 
-mod decl;
-mod pool;
-mod pretty;
-mod resolve;
-mod solver;
-mod sort;
-mod term;
-mod type_check;
-
 #[doc(hidden)]
 pub mod macros;
 pub use macros::backend;
@@ -417,10 +408,5 @@ pub mod qe;
 pub mod smtlib;
 pub mod theories;
 
-pub use decl::*;
-pub use pool::*;
-pub use resolve::*;
-pub use solver::*;
-pub use sort::*;
-pub use term::*;
-pub use type_check::*;
+mod base;
+pub use base::*;

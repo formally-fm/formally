@@ -22,19 +22,19 @@
 // SOFTWARE.
 //
 
-//! Interfaces for quantifier elimination.
-//!
-//! This module collects everything regarding quantifier elimination.
-//!
-//! For now, just the [QE] trait which is implemented by the result of
-//! [Backend::qe()](backends::Backend::qe()), for SMT backends that support QE, but may also be
-//! implemented separately by other engines implementing QE exclusively.
+mod decl;
+mod pool;
+mod pretty;
+mod resolve;
+mod solver;
+mod sort;
+mod term;
+mod type_check;
 
-use crate::formally;
-use formally::{smt::*, support::*};
-
-/// A trait for backends providing quantifier elimination functionalities.
-pub trait QE {
-    /// Perform quantifier elimination on the given `term`, constructing the result using `pool`.
-    fn qe(&self, term: Term, pool: &dyn TermPool) -> Result<Term>;
-}
+pub use decl::*;
+pub use pool::*;
+pub use resolve::*;
+pub use solver::*;
+pub use sort::*;
+pub use term::*;
+pub use type_check::*;
