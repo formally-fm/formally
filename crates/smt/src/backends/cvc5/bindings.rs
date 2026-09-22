@@ -28,7 +28,10 @@ pub use cvc5::Plugin;
 use std::ffi::CStr;
 use std::{ffi::CString, ptr::NonNull, rc::Rc};
 
+/// A non-null version of [cvc5_sys::Sort].
 pub type Sort = NonNull<cvc5::cvc5_sort_t>;
+
+/// A non-null version of [cvc5_sys::Term].
 pub type Term = NonNull<cvc5::cvc5_term_t>;
 
 pub struct TermManager {

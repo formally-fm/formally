@@ -37,6 +37,9 @@ use formally::smt::{
     theories,
 };
 
+pub use cvc5::Sort;
+pub use cvc5::Term;
+
 use std::{cell::RefCell, ffi, ptr::NonNull, rc::Rc, sync::Arc};
 
 type Result<T, E = backends::Error> = std::result::Result<T, E>;
@@ -216,23 +219,24 @@ impl api::QE for Solver {
 ///
 /// This mimics the [the cvc5 C API plug-in interface](https://cvc5.github.io/docs/cvc5-1.4.0/api/c/structs/cvc5plugin.html).
 ///
-/// Install a plugin into a [cvc5::Solver] with the [cvc5::Solver::add_plugin()] method.
+/// Install a plugin into a [cvc5::Solver](Solver) with the
+/// [cvc5::Solver::add_plugin()](Solver::add_plugin()) method.
 pub trait Plugin: 'static {
     /// Return a list of lemmas to add to the SAT solver. Called periodically, roughly at every SAT
     /// decision.
-    fn check(&self) -> &[cvc5::Term] {
+    fn check(&self) -> &[Term] {
         &[]
     }
 
     /// Notify SAT clause, called when `clause` is learned by the SAT solver.
     #[allow(unused)]
-    fn notify_sat_clause(&self, clause: cvc5::Term) {
+    fn notify_sat_clause(&self, clause: Term) {
         // nop
     }
 
     /// Notify theory lemma, called when `lemma` is sent by a theory solver.
     #[allow(unused)]
-    fn notify_theory_lemma(&self, lemma: cvc5::Term) {
+    fn notify_theory_lemma(&self, lemma: Term) {
         // nop
     }
 
