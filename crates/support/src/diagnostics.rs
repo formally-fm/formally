@@ -322,7 +322,7 @@ impl DefaultGlobalEmitter {
 /// The global [Emitter].
 ///
 /// This is the [Emitter] everyone should use, in general, to ensure a consistent rendering of
-/// diagnostics in an application based on [formally]. It is used by all the diagnostic macros
+/// diagnostics in an application based on `::formally`. It is used by all the diagnostic macros
 /// ([error!], [warning!], [note!], etc.).
 ///
 /// The behavior of [GlobalEmitter] can be changed locally with [Diagnostic::with()], or by changing

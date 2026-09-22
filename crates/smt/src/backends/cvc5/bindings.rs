@@ -24,6 +24,7 @@
 use cvc5_sys as cvc5;
 
 pub use cvc5::Kind;
+pub use cvc5::Plugin;
 use std::ffi::CStr;
 use std::{ffi::CString, ptr::NonNull, rc::Rc};
 
@@ -31,13 +32,13 @@ pub type Sort = NonNull<cvc5::cvc5_sort_t>;
 pub type Term = NonNull<cvc5::cvc5_term_t>;
 
 pub struct TermManager {
-    manager: *mut cvc5::TermManager,
+    pub(super) manager: NonNull<cvc5::TermManager>,
 }
 
 impl TermManager {
     pub fn new() -> TermManager {
         TermManager {
-            manager: unsafe { cvc5::term_manager_new() },
+            manager: unsafe { NonNull::new(cvc5::term_manager_new()).unwrap() },
         }
     }
 
@@ -58,15 +59,15 @@ impl TermManager {
     }
 
     pub fn get_boolean_sort(&self) -> Sort {
-        unsafe { NonNull::new(cvc5::get_boolean_sort(self.manager)).unwrap() }
+        unsafe { NonNull::new(cvc5::get_boolean_sort(self.manager.as_ptr())).unwrap() }
     }
 
     pub fn get_integer_sort(&self) -> Sort {
-        unsafe { NonNull::new(cvc5::get_integer_sort(self.manager)).unwrap() }
+        unsafe { NonNull::new(cvc5::get_integer_sort(self.manager.as_ptr())).unwrap() }
     }
 
     pub fn get_real_sort(&self) -> Sort {
-        unsafe { NonNull::new(cvc5::get_real_sort(self.manager)).unwrap() }
+        unsafe { NonNull::new(cvc5::get_real_sort(self.manager.as_ptr())).unwrap() }
     }
 
     pub fn get_boolean_value(&self, term: Term) -> Option<bool> {
@@ -114,7 +115,7 @@ impl TermManager {
     pub fn mk_array_sort(&self, index: Sort, element: Sort) -> Sort {
         unsafe {
             NonNull::new(cvc5::mk_array_sort(
-                self.manager,
+                self.manager.as_ptr(),
                 index.as_ptr(),
                 element.as_ptr(),
             ))
@@ -125,7 +126,7 @@ impl TermManager {
     pub fn mk_fun_sort(&self, sorts: &[Sort], range: Sort) -> Sort {
         unsafe {
             NonNull::new(cvc5::mk_fun_sort(
-                self.manager,
+                self.manager.as_ptr(),
                 sorts.len(),
                 sorts.as_ptr().cast(),
                 range.as_ptr(),
@@ -137,7 +138,7 @@ impl TermManager {
     pub fn mk_term(&self, kind: Kind, children: &[Term]) -> Term {
         unsafe {
             NonNull::new(cvc5::mk_term(
-                self.manager,
+                self.manager.as_ptr(),
                 kind,
                 children.len(),
                 children.as_ptr().cast(),
@@ -148,31 +149,51 @@ impl TermManager {
 
     pub fn mk_var(&self, sort: Sort, name: &str) -> Term {
         let name = CString::new(name.as_bytes()).unwrap();
-        unsafe { NonNull::new(cvc5::mk_var(self.manager, sort.as_ptr(), name.as_ptr())).unwrap() }
+        unsafe {
+            NonNull::new(cvc5::mk_var(
+                self.manager.as_ptr(),
+                sort.as_ptr(),
+                name.as_ptr(),
+            ))
+            .unwrap()
+        }
     }
 
     pub fn mk_const(&self, sort: Sort, name: &str) -> Term {
         let name = CString::new(name.as_bytes()).unwrap();
-        unsafe { NonNull::new(cvc5::mk_const(self.manager, sort.as_ptr(), name.as_ptr())).unwrap() }
+        unsafe {
+            NonNull::new(cvc5::mk_const(
+                self.manager.as_ptr(),
+                sort.as_ptr(),
+                name.as_ptr(),
+            ))
+            .unwrap()
+        }
     }
 
     pub fn mk_boolean(&self, value: bool) -> Term {
-        unsafe { NonNull::new(cvc5::mk_boolean(self.manager, value)).unwrap() }
+        unsafe { NonNull::new(cvc5::mk_boolean(self.manager.as_ptr(), value)).unwrap() }
     }
 
     pub fn mk_integer(&self, value: &str) -> Term {
         let value = CString::new(value.as_bytes()).unwrap();
-        unsafe { NonNull::new(cvc5::mk_integer(self.manager, value.as_ptr())).unwrap() }
+        unsafe { NonNull::new(cvc5::mk_integer(self.manager.as_ptr(), value.as_ptr())).unwrap() }
     }
 
     pub fn mk_real(&self, value: &str) -> Term {
         let value = CString::new(value.as_bytes()).unwrap();
-        unsafe { NonNull::new(cvc5::mk_real(self.manager, value.as_ptr())).unwrap() }
+        unsafe { NonNull::new(cvc5::mk_real(self.manager.as_ptr(), value.as_ptr())).unwrap() }
     }
 
     pub fn mk_uninterpreted_sort(&self, name: &str) -> Sort {
         let name = CString::new(name.as_bytes()).unwrap();
-        unsafe { NonNull::new(cvc5::mk_uninterpreted_sort(self.manager, name.as_ptr())).unwrap() }
+        unsafe {
+            NonNull::new(cvc5::mk_uninterpreted_sort(
+                self.manager.as_ptr(),
+                name.as_ptr(),
+            ))
+            .unwrap()
+        }
     }
 }
 
@@ -184,34 +205,38 @@ impl Default for TermManager {
 
 impl Drop for TermManager {
     fn drop(&mut self) {
-        unsafe { cvc5::term_manager_delete(self.manager) }
+        unsafe { cvc5::term_manager_delete(self.manager.as_ptr()) }
     }
 }
 
 pub struct Solver {
     _manager: Rc<TermManager>,
-    solver: *mut cvc5::Solver,
+    pub(super) solver: NonNull<cvc5::Solver>,
 }
 
 impl Solver {
     pub fn new(manager: Rc<TermManager>) -> Solver {
         Solver {
             _manager: manager.clone(),
-            solver: unsafe { cvc5::new(manager.manager) },
+            solver: unsafe { NonNull::new(cvc5::new(manager.manager.as_ptr())).unwrap() },
         }
     }
 
     pub fn set_option(&self, option: &str, value: &str) {
         let option = CString::new(option.as_bytes()).unwrap();
         let value = CString::new(value.as_bytes()).unwrap();
-        unsafe { cvc5::set_option(self.solver, option.as_ptr(), value.as_ptr()) }
+        unsafe { cvc5::set_option(self.solver.as_ptr(), option.as_ptr(), value.as_ptr()) }
     }
 
     pub fn set_logic(&self, logic: &str) {
         let logic = CString::new(logic.as_bytes()).unwrap();
-        unsafe { cvc5::set_logic(self.solver, logic.as_ptr()) }
+        unsafe { cvc5::set_logic(self.solver.as_ptr(), logic.as_ptr()) }
     }
 
+    pub fn add_plugin(&self, plugin: *mut Plugin) {
+        unsafe { cvc5::add_plugin(self.solver.as_ptr(), plugin) }
+    }
+    
     pub fn define_fun(
         &self,
         name: &str,
@@ -223,7 +248,7 @@ impl Solver {
         let name = CString::new(name.as_bytes()).unwrap();
         unsafe {
             NonNull::new(cvc5::define_fun(
-                self.solver,
+                self.solver.as_ptr(),
                 name.as_ptr(),
                 vars.len(),
                 vars.as_ptr().cast(),
@@ -236,35 +261,39 @@ impl Solver {
     }
 
     pub fn assert_formula(&self, term: Term) {
-        unsafe { cvc5::assert_formula(self.solver, term.as_ptr()) }
+        unsafe { cvc5::assert_formula(self.solver.as_ptr(), term.as_ptr()) }
     }
 
     pub fn check_sat(&self) -> Result {
-        Result::new(unsafe { cvc5::check_sat(self.solver) })
+        Result::new(unsafe { cvc5::check_sat(self.solver.as_ptr()) })
     }
 
     pub fn push(&self) {
-        unsafe { cvc5::push(self.solver, 1) }
+        unsafe { cvc5::push(self.solver.as_ptr(), 1) }
     }
 
     pub fn pop(&self, n: u32) {
-        unsafe { cvc5::pop(self.solver, n) }
+        unsafe { cvc5::pop(self.solver.as_ptr(), n) }
     }
 
     pub fn get_value(&self, term: Term) -> Term {
-        unsafe { NonNull::new(cvc5::get_value(self.solver, term.as_ptr())).unwrap() }
+        unsafe { NonNull::new(cvc5::get_value(self.solver.as_ptr(), term.as_ptr())).unwrap() }
     }
 
     pub fn get_quantifier_elimination(&self, term: Term) -> Term {
         unsafe {
-            NonNull::new(cvc5::get_quantifier_elimination(self.solver, term.as_ptr())).unwrap()
+            NonNull::new(cvc5::get_quantifier_elimination(
+                self.solver.as_ptr(),
+                term.as_ptr(),
+            ))
+            .unwrap()
         }
     }
 }
 
 impl Drop for Solver {
     fn drop(&mut self) {
-        unsafe { cvc5::delete(self.solver) }
+        unsafe { cvc5::delete(self.solver.as_ptr()) }
     }
 }
 

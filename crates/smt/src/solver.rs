@@ -240,7 +240,7 @@ impl TermManager {
             defs: RefCell::default(),
         })
     }
-    
+
     /// Construct a [TermManager] over a given [Backend] and [TermPool].
     pub fn with_pool(backend: impl Backend, pool: Rc<dyn TermPool>) -> Result<TermManager> {
         Ok(TermManager {
@@ -250,8 +250,8 @@ impl TermManager {
             defs: RefCell::default(),
         })
     }
-    
-    /// Return the [backend::Manager] this [TermManager] was built on.
+
+    /// Return the [backends::Manager] this [TermManager] was built on.
     pub fn manager(&self) -> Rc<dyn backends::Manager> {
         self.backend_manager.clone()
     }
@@ -346,10 +346,15 @@ impl Solver {
     pub fn new(config: &Config) -> Result<Solver> {
         Solver::with_manager(config, TermManager::new()?)
     }
-    
+
     /// Get the [TermManager] of this [Solver].
     pub fn manager(&self) -> Rc<TermManager> {
         self.manager.clone()
+    }
+    
+    /// Return the [backends::Solver] this [Solver] was built on.
+    pub fn solver(&self) -> &dyn backends::Solver {
+        &*self.backend_solver
     }
 
     /// Get the currently selected [Logic].

@@ -36,30 +36,58 @@ use formally::smt::{
     qe::QE,
     theories,
 };
-use std::{rc::Rc, sync::Arc};
+
+use std::{cell::RefCell, ffi, ptr::NonNull, rc::Rc, sync::Arc};
 
 type Result<T, E = backends::Error> = std::result::Result<T, E>;
 
+/// The `cvc5` backend.
+///
+/// See the [high-level documentation](crate) for how to use the backend.
+///
+/// Some `cvc5`-specific features and the native [cvc5_sys] handles are available by downcasting the
+/// result of the [Cvc5::solver()] method to `api::ApiSolver<cvc5::Solver>` and calling the
+/// [api::ApiSolver::solver()] method.
 #[smt::backend]
 #[derive(Clone, Copy, Default)]
 pub struct Cvc5;
 
+/// The [api::Manager] implementation for the [Cvc5] backend.
 #[derive(Default)]
-struct Manager {
+pub struct Manager {
     cvc5manager: Rc<cvc5::TermManager>,
 }
 
-struct Solver {
-    cvc5solver: Rc<cvc5::Solver>,
-    logic: &'static dyn Logic,
+impl Manager {
+    /// Return the underlying [cvc5_sys::TermManager] handle.
+    pub fn cvc5_term_manager(&self) -> NonNull<cvc5_sys::TermManager> {
+        self.cvc5manager.manager
+    }
 }
 
-struct Model<'s> {
+/// The [api::Solver] implementation for the [Cvc5] backend.
+pub struct Solver {
+    cvc5solver: Rc<cvc5::Solver>,
+    logic: &'static dyn Logic,
+    plugins: RefCell<Vec<Rc<dyn Plugin>>>,
+    cvc5_plugins: RefCell<Vec<Box<cvc5::Plugin>>>,
+}
+
+impl Solver {
+    /// Return the underlying [cvc5_sys::Solver] handle.
+    pub fn cvc5_solver(&self) -> NonNull<cvc5_sys::Solver> {
+        self.cvc5solver.solver
+    }
+}
+
+/// The [api::Model] implementation for the [Cvc5] backend.
+pub struct Model<'s> {
     solver: &'s Solver,
 }
 
 logic! {
-    name: ALL,
+    /// The SMT logic corresponding to `(set-logic ALL)` for the [Cvc5] backend.
+    name: pub ALL,
     theories: [
         theories::Core,
         theories::Ints,
@@ -119,7 +147,12 @@ impl api::Solver for Solver {
             None => &ALL,
         };
 
-        let solver = Solver { cvc5solver, logic };
+        let solver = Solver {
+            cvc5solver,
+            logic,
+            plugins: RefCell::default(),
+            cvc5_plugins: RefCell::default(),
+        };
 
         solver.config(config)?;
 
@@ -176,6 +209,84 @@ impl api::QE for Solver {
         term: <Self::Manager as api::Manager>::Term,
     ) -> Result<<Self::Manager as api::Manager>::Term> {
         Ok(self.cvc5solver.get_quantifier_elimination(term))
+    }
+}
+
+/// A plugin for the `cvc5` solver.
+///
+/// This mimics the [the cvc5 C API plug-in interface](https://cvc5.github.io/docs/cvc5-1.4.0/api/c/structs/cvc5plugin.html).
+///
+/// Install a plugin into a [cvc5::Solver] with the [cvc5::Solver::add_plugin()] method.
+pub trait Plugin: 'static {
+    /// Return a list of lemmas to add to the SAT solver. Called periodically, roughly at every SAT
+    /// decision.
+    fn check(&self) -> &[cvc5::Term] {
+        &[]
+    }
+
+    /// Notify SAT clause, called when `clause` is learned by the SAT solver.
+    #[allow(unused)]
+    fn notify_sat_clause(&self, clause: cvc5::Term) {
+        // nop
+    }
+
+    /// Notify theory lemma, called when `lemma` is sent by a theory solver.
+    #[allow(unused)]
+    fn notify_theory_lemma(&self, lemma: cvc5::Term) {
+        // nop
+    }
+
+    /// Get the name of the plugin (for debugging).
+    fn get_name() -> &'static ffi::CStr
+    where
+        Self: Sized;
+}
+
+impl Solver {
+    unsafe extern "C" fn plugin_check<P: Plugin>(
+        size: *mut usize,
+        state: *mut ffi::c_void,
+    ) -> *const *mut cvc5_sys::cvc5_term_t {
+        unsafe {
+            let slice = P::check(&*state.cast());
+            size.write(slice.len());
+            slice.as_ptr().cast()
+        }
+    }
+
+    unsafe extern "C" fn plugin_notify_sat_clause<P: Plugin>(
+        clause: *mut cvc5_sys::cvc5_term_t,
+        state: *mut ffi::c_void,
+    ) {
+        unsafe { P::notify_sat_clause(&*state.cast(), NonNull::new(clause).unwrap()) }
+    }
+
+    unsafe extern "C" fn plugin_notify_theory_lemma<P: Plugin>(
+        lemma: *mut cvc5_sys::cvc5_term_t,
+        state: *mut ffi::c_void,
+    ) {
+        unsafe { P::notify_theory_lemma(&*state.cast(), NonNull::new(lemma).unwrap()) }
+    }
+
+    unsafe extern "C" fn plugin_get_name<P: Plugin>() -> *const ffi::c_char {
+        P::get_name().as_ptr()
+    }
+
+    pub fn add_plugin<P: Plugin>(&self, plugin: Rc<P>) {
+        let mut cvc5_plugin = Box::new(cvc5::Plugin {
+            check: Some(Self::plugin_check::<P>),
+            notify_sat_clause: Some(Self::plugin_notify_sat_clause::<P>),
+            notify_theory_lemma: Some(Self::plugin_notify_theory_lemma::<P>),
+            get_name: Some(Self::plugin_get_name::<P>),
+            d_check_state: Rc::as_ptr(&plugin) as *mut ffi::c_void,
+            d_notify_sat_clause_state: Rc::as_ptr(&plugin) as *mut ffi::c_void,
+            d_notify_theory_lemma_state: Rc::as_ptr(&plugin) as *mut ffi::c_void,
+        });
+
+        self.cvc5solver
+            .add_plugin(Box::as_mut_ptr(&mut cvc5_plugin));
+        self.cvc5_plugins.borrow_mut().push(cvc5_plugin);
+        self.plugins.borrow_mut().push(plugin);
     }
 }
 

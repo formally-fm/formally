@@ -33,35 +33,59 @@ use formally::smt::{
     },
     logic,
     logics::{Logic, LogicEx},
+    qe::QE,
     theories,
-    qe::QE
 };
 use itertools::Itertools;
 use std::rc::Rc;
 
 type Result<T, E = backends::Error> = std::result::Result<T, E>;
 
+/// The `Z3` backend.
+///
+/// See the [high-level documentation](crate) for how to use the backend.
+///
+/// The native [z3_sys] handles are available by downcasting the result of the [Z3::solver()]
+/// method to `api::ApiSolver<z3::Solver>` and calling the [api::ApiSolver::solver()] method.
 #[smt::backend]
 #[derive(Clone, Copy, Default)]
 pub struct Z3;
 
-struct Manager {
+/// The [api::Manager] implementation for the [Z3] backend.
+pub struct Manager {
     z3context: Rc<z3::Context>,
 }
 
-struct Solver {
+impl Manager {
+    /// Return the underlying [z3_sys::Z3_context] handle.
+    pub fn z3_context(&self) -> z3_sys::Z3_context {
+        self.z3context.ctx
+    }
+}
+
+/// The [api::Manager] implementation for the [Z3] backend.
+pub struct Solver {
     z3context: Rc<z3::Context>,
     z3solver: Rc<z3::Solver>,
     logic: &'static dyn Logic,
 }
 
-struct Model<'s> {
+impl Solver {
+    /// Return the underlying [z3_sys::Z3_solver] handle.
+    pub fn z3_solver(&self) -> z3_sys::Z3_solver {
+        self.z3solver.slv
+    }
+}
+
+/// The [api::Model] implementation for the [Z3] backend.
+pub struct Model<'s> {
     solver: &'s Solver,
     model: z3::Model,
 }
 
 logic! {
-    name: ALL,
+    /// The SMT logic corresponding to `(set-logic ALL)` for the [Z3] backend.
+    name: pub ALL,
     theories: [
         theories::Core,
         theories::Ints,

@@ -107,7 +107,7 @@ impl From<Mode> for smt::Answer {
 
 /// Type specifying the operating settings for the interpreter.
 pub struct Settings {
-    /// The [Config] for the underlying [Solver].
+    /// The [Config] for the underlying [Solver](smt::Solver).
     pub config: Config,
     /// The SMT backend to use.
     pub backend: &'static dyn Backend,
@@ -354,7 +354,7 @@ impl Interpreter {
         let term = Interpreter::term_to_smt(&state.solver, getqe.term)?;
         let term = state.solver.lookup(term, smt::Role::Function)?;
         let term = qe.qe(term, state.solver.pool())?;
-        let term = Interpreter::smt_to_term(&term)?;
+        let term = ast::Term::from(term);
 
         Interpreter::response(
             &mut *state.output,

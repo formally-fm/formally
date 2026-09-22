@@ -27,7 +27,7 @@
 //!
 //! This module helps writing SMT backends based on programmatic APIs (as opposed to e.g., calling a
 //! command-line tool), by abstracting most of the logic needed for the conversion from
-//! [formally::smt](smt)'s data structures and the underlying backend ones.
+//! [formally::smt]'s data structures and the underlying backend ones.
 //!
 //! Using these facilities when applicable is recommended against implementing the backend from
 //! scratch, because they hide a non-trivial amount of complexity.

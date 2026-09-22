@@ -326,7 +326,7 @@ pub trait Manager: Any {
 /// the method can assume to hold when the backend is used through a [Solver].
 ///
 /// However, please read before the documentation on [how to write a new backend](smt::backends).
-pub trait Solver {
+pub trait Solver: Any {
     /// Return the manager this solver was built on.
     fn manager(&self) -> &dyn Manager;
 

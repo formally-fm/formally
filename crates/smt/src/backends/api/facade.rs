@@ -70,7 +70,7 @@ struct ApiModel<'s, S: 's + Solver> {
     model: S::Model<'s>,
 }
 
-impl<S: Solver> backends::Solver for ApiSolver<S> {
+impl<S: 'static + Solver> backends::Solver for ApiSolver<S> {
     fn manager(&self) -> &dyn backends::Manager {
         &*self.manager
     }
@@ -197,6 +197,11 @@ impl<S: Solver> ApiSolver<S> {
             config: RefCell::new(config.clone()),
         })
     }
+
+    /// Return a reference to the underlying [api::Solver](Solver) implementation.
+    pub fn solver(&self) -> &S {
+        &self.solver
+    }
 }
 
 impl<'s, S: 's + Solver> backends::ModelProvider for ApiModel<'s, S> {
@@ -248,6 +253,11 @@ impl<M: Manager> ApiManager<M> {
             terms: RefCell::default(),
             variables: RefCell::default(),
         }
+    }
+
+    /// Return a reference to the underlying [api::Manager](Manager) implementation.
+    pub fn manager(&self) -> Rc<M> {
+        self.manager.clone()
     }
 
     pub(crate) fn sort(&self, sort: &smt::Sort) -> Result<M::Sort> {
