@@ -41,6 +41,8 @@ linkme = "0.3.37"
 thiserror = "2.0.17"
 dashmap = "6.2.1"
 rpds = "1"
+bitvec = "1.1.1"
+boxcar = "0.2.14"
 
 [dev-dependencies]
 rstest = "0.26.0"

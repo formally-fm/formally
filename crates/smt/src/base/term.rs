@@ -29,9 +29,8 @@ use derive_more::From;
 use transitive::Transitive;
 
 pub use rug::{Integer, Rational};
-use std::fmt::Formatter;
 use std::{
-    fmt::Display,
+    fmt::{Display, Formatter},
     hash::{Hash, Hasher},
     sync::{Arc, OnceLock},
 };
