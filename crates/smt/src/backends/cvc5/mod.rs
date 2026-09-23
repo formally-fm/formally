@@ -73,6 +73,7 @@ pub struct Solver {
     cvc5solver: Rc<cvc5::Solver>,
     logic: &'static dyn Logic,
     plugins: RefCell<Vec<Rc<dyn Plugin>>>,
+    #[allow(clippy::vec_box)]
     cvc5_plugins: RefCell<Vec<Box<cvc5::Plugin>>>,
 }
 

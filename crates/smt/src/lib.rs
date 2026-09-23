@@ -408,5 +408,8 @@ pub mod qe;
 pub mod smtlib;
 pub mod theories;
 
+#[cfg(feature = "tbdd")]
+pub mod tbdd;
+
 mod base;
 pub use base::*;

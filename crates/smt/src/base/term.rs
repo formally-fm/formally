@@ -33,7 +33,7 @@ use std::fmt::Formatter;
 use std::{
     fmt::Display,
     hash::{Hash, Hasher},
-    sync::{Arc, Mutex},
+    sync::{Arc, OnceLock},
 };
 
 /// A constant term.
@@ -287,7 +287,7 @@ impl<T: Into<Atom>> From<T> for TermKind {
 /// would accept one accept instead generic instances of [ToTerm], which include the result of the
 /// [term!] macro, which is the recommended way of constructing terms.
 ///
-/// See the [ToTerm] trait for more informations about how to construct [Term] objects from [ToTerm]
+/// See the [ToTerm] trait for more information about how to construct [Term] objects from [ToTerm]
 /// instances.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Term(pub(crate) Nominal<Arc<TermInner>>);
@@ -295,7 +295,7 @@ pub struct Term(pub(crate) Nominal<Arc<TermInner>>);
 #[derive(Debug)]
 pub(crate) struct TermInner {
     pub(crate) kind: TermKind,
-    pub(crate) sort: Mutex<Option<Sort>>,
+    pub(crate) sort: OnceLock<Result<Sort, TypeCheckError>>,
     pub(crate) resolved: bool,
 }
 
@@ -313,7 +313,7 @@ impl TermInner {
 
         TermInner {
             kind,
-            sort: Mutex::default(),
+            sort: OnceLock::new(),
             resolved,
         }
     }

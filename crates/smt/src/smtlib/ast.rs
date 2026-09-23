@@ -758,7 +758,7 @@ pub struct GetProofResponse {
 /// The response of a `(get-qe)` command.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Located, Locatable)]
 pub struct GetQEResponse {
-    pub term: Term,
+    pub term: Box<Term>,
     pub span: Option<Span>,
 }
 
