@@ -296,31 +296,53 @@ pub(crate) struct TermInner {
     pub(crate) kind: TermKind,
     pub(crate) sort: OnceLock<Result<Sort, TypeCheckError>>,
     pub(crate) resolved: bool,
+    pub(crate) qf: bool,
 }
 
 impl TermInner {
     pub(crate) fn new(kind: TermKind) -> TermInner {
-        let resolved = match &kind {
-            TermKind::Constant(_) => true,
-            TermKind::Atom(atom) => {
-                matches!(&atom.head, FunctionRef::Bound(_))
-                    && atom.arguments.iter().all(Term::is_resolved)
+        let resolved;
+        let qf;
+        match &kind {
+            TermKind::Constant(_) => {
+                resolved = true;
+                qf = true;
             }
-            TermKind::Quantified(quant) => quant.body.is_resolved(),
-            TermKind::Let(let_) => let_.body.is_resolved(),
+            TermKind::Atom(atom) => {
+                resolved = matches!(&atom.head, FunctionRef::Bound(_))
+                    && atom.arguments.iter().all(Term::is_resolved);
+                qf = atom.arguments.iter().all(Term::is_quantifier_free)
+            }
+            TermKind::Quantified(quant) => {
+                resolved = quant.body.is_resolved();
+                qf = false;
+            }
+            TermKind::Let(let_) => {
+                resolved = let_.body.is_resolved();
+                qf = let_.body.is_quantifier_free();
+            }
         };
 
         TermInner {
             kind,
             sort: OnceLock::new(),
             resolved,
+            qf,
         }
     }
 }
 
 impl Term {
+    /// Tell whether this [Term] is fully resolved (i.e. it does not contain
+    /// [unbound](FunctionRef::Unbound) atoms).
     pub fn is_resolved(&self) -> bool {
         self.0.resolved
+    }
+
+    /// Tell whether this [Term] is quantifier-free (i.e. it does not contain [Quantified]
+    /// subterms).
+    pub fn is_quantifier_free(&self) -> bool {
+        self.0.qf
     }
 }
 

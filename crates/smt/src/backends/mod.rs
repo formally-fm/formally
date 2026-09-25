@@ -155,10 +155,10 @@ pub mod z3;
 
 use crate::formally;
 use formally::{
-    smt::{self, Config, Declared, Defined, ModelProvider, logics, qe::QE},
+    smt::{self, Config, Declared, Defined, ModelProvider, logics, qe},
     support::{Diagnosable, Identifier, Level, Located, Span},
 };
-use std::{any::Any, fmt::Debug, fmt::Formatter, io, rc::Rc};
+use std::{any::Any, fmt::Debug, fmt::Formatter, io, rc::Rc, sync::Arc};
 
 use derive_more::Display;
 use thiserror::Error;
@@ -263,19 +263,6 @@ pub trait Backend: 'static + Send + Sync {
 
     /// Create an instance of the backend solver based on the given [Config] and [Manager]
     fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error>;
-
-    /// Create a quantifier elimination engine, if at all supported, based on the given [Config] and
-    /// [Manager].
-    #[allow(unused)]
-    fn qe(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn QE>, Error> {
-        Err(Error::new(
-            self.name()?,
-            ErrorKind::Unsupported {
-                msg: "quantifier elimination".into(),
-                span: None,
-            },
-        ))
-    }
 }
 
 impl Backend for &'static (dyn 'static + Backend) {
@@ -289,10 +276,6 @@ impl Backend for &'static (dyn 'static + Backend) {
 
     fn solver(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn Solver>, Error> {
         (*self).solver(config, manager)
-    }
-
-    fn qe(&self, config: &Config, manager: Rc<dyn Manager>) -> Result<Box<dyn QE>, Error> {
-        (*self).qe(config, manager)
     }
 }
 
@@ -315,7 +298,7 @@ pub trait Manager: Any {
     ///
     /// This is useful to obtain a new solver or manager of the same backend or the name of the
     /// backend.
-    fn backend(&self) -> &dyn Backend;
+    fn backend(&self) -> &'static dyn Backend;
 }
 
 /// The trait for *solvers* of SMT backends.
@@ -344,6 +327,11 @@ pub trait Solver: Any {
 
     /// Return the logic object associated with the logic selected by the original [Config] object.
     fn logic(&self) -> &'_ dyn logics::Logic;
+
+    /// Return a reference to the current solver as an instance of [qe::Backend], if supported.
+    ///
+    /// The `pool` argument is used by the returned [qe::Backend] to build the resulting terms.
+    fn as_qe(&self, pool: Arc<dyn smt::TermPool>) -> Result<Box<dyn '_ + qe::Backend>, Error>;
 
     /// Register a new [Declared] object in the backend instance.
     ///

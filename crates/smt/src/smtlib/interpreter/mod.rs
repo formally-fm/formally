@@ -349,11 +349,10 @@ impl Interpreter {
     }
 
     fn get_qe(state: &mut State, getqe: ast::GetQE) -> Result<()> {
-        let manager = state.solver.manager().manager();
-        let qe = manager.backend().qe(&state.config, manager.clone())?;
+        let qe = state.solver.as_qe()?;
         let term = Interpreter::term_to_smt(&state.solver, getqe.term)?;
         let term = state.solver.lookup(term, smt::Role::Function)?;
-        let term = qe.qe(term, state.solver.pool())?;
+        let term = qe.qe(&term)?;
         let term = Box::new(ast::Term::from(term));
 
         Interpreter::response(
@@ -576,7 +575,7 @@ impl Interpreter {
                                 if let Some(value) = value {
                                     values.push((
                                         ast::Term::from(ast::Symbol::new(function.name()).unwrap()),
-                                        ast::Term::from(value.into_term_in(state.solver.pool())),
+                                        ast::Term::from(value.into_term_in(&*state.solver.pool())),
                                     ))
                                 } else {
                                     error!(

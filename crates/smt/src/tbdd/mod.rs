@@ -31,11 +31,11 @@ use formally::{
     smt::{
         Config, Function, FunctionRef, Quantified, Quantifier, Solver, Sort, Term, TermKind,
         TermManager, TermPool, ToTerm, Variable,
-        backends::cvc5::Cvc5,
+        backends::{Backend, cvc5::Cvc5},
         qe,
         theories::{Core, CoreAtom},
     },
-    support::{Located, Span},
+    support::{Diagnosable, DiagnosticEmitted, Level, Located, Span},
 };
 
 use oxidd::{
@@ -50,10 +50,9 @@ use oxidd_rules_bdd::simple::BDDTerminal;
 use dashmap::DashMap;
 use itertools::{Itertools, partition};
 use thiserror::Error;
+use transitive::Transitive;
 
-use crate::backends::Backend;
-use formally_support::{Diagnosable, Level};
-use std::{fmt::Debug, hash::Hash, ops::Deref, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, hash::Hash, ops::Deref, sync::Arc};
 //
 // Given an SMT formula and a set of variables to be existentially eliminated, things to do:
 // 1. ✓ collect the atoms to form the set of BDD variables
@@ -82,32 +81,43 @@ impl Deref for Atom {
     }
 }
 
-#[derive(Debug, Error, Located)]
+#[derive(Debug, Error, Located, Transitive)]
+#[transitive(from(OutOfMemory, ErrorKind))]
+#[transitive(from(Box<dyn Diagnosable>, ErrorKind))]
 #[error("{kind}")]
-pub struct QEError {
-    pub kind: QEErrorKind,
+struct Error {
+    pub kind: ErrorKind,
     pub span: Option<Span>,
 }
 
+impl From<ErrorKind> for Error {
+    fn from(kind: ErrorKind) -> Self {
+        Error { kind, span: None }
+    }
+}
+
 #[derive(Debug, Error)]
-pub enum QEErrorKind {
-    #[error("tried to build a T-BDD for a non-Boolean term")]
-    NotBoolean,
-    #[error("tried to build a T-BDD for a quantified term")]
-    Quantified,
+enum ErrorKind {
     #[error("maximum memory usage limit reached for BDD nodes")]
     OutOfMemory(#[from] OutOfMemory),
     #[error("building T-BDDs for let expressions is not (yet) supported")]
     UnsupportedLet,
     #[error(transparent)]
-    QE(#[from] Box<dyn Diagnosable>),
+    Backend(#[from] Box<dyn Diagnosable>),
 }
 
-impl Diagnosable for QEError {
+impl Diagnosable for Error {
     fn level(&self) -> Level {
         match &self.kind {
-            QEErrorKind::NotBoolean | QEErrorKind::Quantified => Level::Internal,
+            ErrorKind::Backend(err) => err.level(),
             _ => Level::Error,
+        }
+    }
+
+    fn notes(&self) -> DiagnosticEmitted {
+        match &self.kind {
+            ErrorKind::Backend(err) => err.notes(),
+            _ => DiagnosticEmitted,
         }
     }
 }
@@ -122,9 +132,28 @@ pub struct QE {
     bdds: DashMap<Term, BDDFunction>,
 }
 
-impl qe::QE for QE {
-    fn qe(&self, term: Term, pool: &dyn TermPool) -> Result<Term, Box<dyn Diagnosable>> {
-        todo!()
+impl qe::Backend for QE {
+    fn qe(&self, quant: Quantified) -> Result<Term, Box<dyn Diagnosable>> {
+        match quant.quantifier {
+            Quantifier::Exists => {
+                let mut result = self
+                    .bdd(&quant.body)
+                    .map_err(|err| Box::new(err) as Box<dyn Diagnosable>)?;
+                for var in &*quant.variables {
+                    let cutoff = self.reorder(var.clone());
+                    result = self
+                        .eliminate(var.clone(), cutoff, &result)
+                        .map_err(|err| Box::new(err) as Box<dyn Diagnosable>)?;
+                }
+
+                Ok(result.with_manager_shared(|m, edge| self.term(m, edge)))
+            }
+            Quantifier::Forall => todo!(),
+        }
+    }
+
+    fn pool(&self) -> Arc<dyn TermPool> {
+        self.pool.clone()
     }
 }
 
@@ -176,35 +205,44 @@ impl QE {
         })
     }
 
+    fn eliminate<'m>(
+        &self,
+        var: Variable,
+        cutoff: LevelNo,
+        bdd: &BDDFunction,
+    ) -> Result<BDDFunction, Error> {
+        bdd.with_manager_shared(|m, edge| self.eliminate_(m, var, cutoff, edge))
+    }
+
     fn eliminate_<'m>(
         &self,
         m: &Manager<'m>,
         var: Variable,
         cutoff: LevelNo,
-        bdd: &Edge<'m>,
-    ) -> Result<BDDFunction, QEErrorKind> {
-        match m.get_node(bdd) {
+        edge: &Edge<'m>,
+    ) -> Result<BDDFunction, Error> {
+        match m.get_node(edge) {
             Node::Inner(node) if node.level() < cutoff => {
                 let guard = BDDFunction::var(m, m.level_to_var(node.level()))?;
-                let (high, low) = BDDFunction::cofactors_edge(m, bdd).unwrap();
+                let (high, low) = BDDFunction::cofactors_edge(m, edge).unwrap();
                 let high = self.eliminate_(m, var.clone(), cutoff, &high)?;
                 let low = self.eliminate_(m, var, cutoff, &low)?;
 
                 Ok(guard.ite(&high, &low)?)
             }
             Node::Inner(_) => {
-                let term = Quantified {
+                let quant = Quantified {
                     quantifier: Quantifier::Exists,
                     variables: Arc::new([var]),
-                    body: self.term_edge(m, bdd),
+                    body: self.term(m, edge),
                     span: None,
-                }
-                .into_term_in(&*self.pool);
+                };
 
-                let qe = Cvc5
-                    .qe(&Config::default(), Cvc5.manager().unwrap().into())
+                let cvc5 = Cvc5
+                    .solver(&Config::default(), Cvc5.manager().unwrap().into())
                     .unwrap();
-                let eliminated = qe.qe(term, &*self.pool)?;
+                let qe = cvc5.as_qe(self.pool.clone()).unwrap();
+                let eliminated = qe.qe(quant)?;
 
                 Ok(self.bdd(&eliminated)?)
             }
@@ -215,13 +253,12 @@ impl QE {
         }
     }
 
-    fn bdd(&self, term: &Term) -> Result<BDDFunction, QEErrorKind> {
+    fn bdd(&self, term: &Term) -> Result<BDDFunction, Error> {
         if let Some(bdd) = self.bdds.get(term) {
             return Ok(bdd.clone());
         }
 
         let bdd = match term.kind() {
-            TermKind::Constant(_) => return Err(QEErrorKind::NotBoolean),
             TermKind::Atom(atom) => {
                 if let Ok(atom) = CoreAtom::try_from(atom) {
                     match atom {
@@ -273,11 +310,17 @@ impl QE {
                     self.manager
                         .with_manager_shared(|m| BDDFunction::var(m, var))?
                 } else {
-                    return Err(QEErrorKind::NotBoolean);
+                    unreachable!();
                 }
             }
-            TermKind::Quantified(_) => return Err(QEErrorKind::Quantified),
-            TermKind::Let(_) => return Err(QEErrorKind::UnsupportedLet),
+            TermKind::Constant(_) => unreachable!(),
+            TermKind::Quantified(_) => unreachable!(),
+            TermKind::Let(_) => {
+                return Err(Error {
+                    kind: ErrorKind::UnsupportedLet,
+                    span: None,
+                });
+            }
         };
 
         self.bdds.insert(term.clone(), bdd.clone());
@@ -285,12 +328,23 @@ impl QE {
         Ok(bdd)
     }
 
-    fn term(&self, bdd: BDDFunction) -> Term {
-        bdd.with_manager_shared(|m, edge| self.term_edge(m, edge))
+    fn term<'m>(&self, m: &Manager<'m>, bdd: &Edge<'m>) -> Term {
+        let mut cache = HashMap::new();
+        self.term_in(m, &BDDFunction::from_edge_ref(m, bdd), &mut cache)
     }
 
-    fn term_edge<'m>(&self, m: &Manager<'m>, edge: &Edge<'m>) -> Term {
-        match m.get_node(edge) {
+    fn term_in<'m>(
+        &self,
+        m: &Manager<'m>,
+        bdd: &BDDFunction,
+        cache: &mut HashMap<BDDFunction, Term>,
+    ) -> Term {
+        if let Some(term) = cache.get(bdd) {
+            return term.clone();
+        }
+
+        let edge = bdd.as_edge(m);
+        let term = match m.get_node(edge) {
             Node::Inner(node) => {
                 let guard = self
                     .atoms
@@ -298,8 +352,8 @@ impl QE {
                     .unwrap()
                     .0;
                 let (high, low) = BDDFunction::cofactors_edge(m, edge).unwrap();
-                let high = self.term_edge(m, &high);
-                let low = self.term_edge(m, &low);
+                let high = self.term_in(m, &BDDFunction::from_edge_ref(m, &high), cache);
+                let low = self.term_in(m, &BDDFunction::from_edge_ref(m, &low), cache);
 
                 if high == true && low == false {
                     guard
@@ -323,7 +377,10 @@ impl QE {
                 BDDTerminal::False => Core::False().into_term_in(&*self.pool),
                 BDDTerminal::True => Core::True().into_term_in(&*self.pool),
             },
-        }
+        };
+
+        cache.insert(bdd.clone(), term.clone());
+        term
     }
 
     fn free(&self, term: impl Deref<Target = Term>) -> BitSet {

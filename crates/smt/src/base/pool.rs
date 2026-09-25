@@ -28,7 +28,13 @@ use formally::{
     smt::*,
     support::{Identifier, Nominal},
 };
-use std::{borrow::Borrow, cell::RefCell, collections::HashSet, fmt::Debug, sync::Arc};
+use std::{
+    borrow::Borrow,
+    cell::RefCell,
+    collections::HashSet,
+    fmt::Debug,
+    sync::{Arc, RwLock},
+};
 
 /// Trait for types that implement subterm sharing for [terms][Term].
 ///
@@ -52,6 +58,16 @@ pub trait TermPool {
     /// Return the unique [Term] whose underlying [TermKind] is equal to the one referenced by the
     /// argument.
     fn shared_ref(&self, kind: &TermKind) -> Term;
+}
+
+impl<T: TermPool> TermPool for RwLock<T> {
+    fn shared(&self, kind: TermKind) -> Term {
+        self.read().unwrap().shared(kind)
+    }
+
+    fn shared_ref(&self, kind: &TermKind) -> Term {
+        self.read().unwrap().shared_ref(kind)
+    }
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]

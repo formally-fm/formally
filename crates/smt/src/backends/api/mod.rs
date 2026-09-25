@@ -48,15 +48,19 @@
 
 mod facade;
 pub use facade::ApiManager;
+pub use facade::ApiQE;
 pub use facade::ApiSolver;
 
-use crate::formally;
+use crate::{TermPool, formally};
 use formally::smt::{
     self,
-    backends::{Backend, Error},
+    backends::{Backend, Error, ErrorKind},
     logics::{Logic, LogicEx},
+    qe,
 };
 
+use crate::backends::api;
+use std::sync::Arc;
 use std::{hash::Hash, rc::Rc};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -101,7 +105,7 @@ pub trait Manager: Default + Sized {
     const FUNC_DEF_SUPPORTED: bool = false;
 
     /// Return the backend instance this manager has been built on.
-    fn backend(&self) -> &Self::Backend;
+    fn backend(&self) -> &'static Self::Backend;
 
     /// Return an uninterpreted sort of a given name.
     fn uninterpreted_sort(&self, name: &str) -> Result<Self::Sort>;
@@ -254,6 +258,24 @@ pub trait Solver: Sized {
         manager: Rc<Self::Manager>,
     ) -> Result<Self>;
 
+    /// Return the backend instance this solver has been built on.
+    fn backend(&self) -> &'static <Self::Manager as Manager>::Backend;
+
+    #[allow(unused)]
+    fn as_qe(
+        &self,
+        pool: Arc<dyn TermPool>,
+        manager: Rc<ApiManager<Self::Manager>>,
+    ) -> Result<Box<dyn '_ + qe::Backend>> {
+        Err(Error {
+            kind: Box::new(ErrorKind::Unsupported {
+                msg: "quantifier elimination".into(),
+                span: None,
+            }),
+            backend: self.backend().name()?.to_string(),
+        })
+    }
+
     /// Return the [Logic] object selected during construction.
     fn logic(&self) -> &dyn Logic;
 
@@ -283,6 +305,9 @@ pub trait Solver: Sized {
 /// Trait to allow [api::ApiSolver](ApiSolver) to implement the [qe::QE](QE) trait.
 pub trait QE: Solver + Sized {
     /// Perform quantifier elimination on the given term, if at all supported.
+    ///
+    /// The method *can assume* the term is in prenex form with a single non-alternating block of
+    /// quantifiers (either existential or universal).
     fn qe(
         &self,
         term: <Self::Manager as Manager>::Term,

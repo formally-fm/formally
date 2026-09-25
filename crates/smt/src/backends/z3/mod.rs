@@ -33,11 +33,10 @@ use formally::smt::{
     },
     logic,
     logics::{Logic, LogicEx},
-    qe::QE,
-    theories,
+    qe, theories,
 };
 use itertools::Itertools;
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 type Result<T, E = backends::Error> = std::result::Result<T, E>;
 
@@ -114,12 +113,6 @@ impl Backend for Z3 {
             self, config, manager,
         )?))
     }
-
-    fn qe(&self, config: &smt::Config, manager: Rc<dyn backends::Manager>) -> Result<Box<dyn QE>> {
-        Ok(Box::new(api::ApiSolver::<Solver>::new(
-            self, config, manager,
-        )?))
-    }
 }
 
 impl api::Solver for Solver {
@@ -162,6 +155,10 @@ impl api::Solver for Solver {
         Ok(solver)
     }
 
+    fn backend(&self) -> &'static <Self::Manager as api::Manager>::Backend {
+        &Z3
+    }
+    
     fn logic(&self) -> &dyn Logic {
         self.logic
     }
@@ -243,7 +240,7 @@ impl api::Manager for Manager {
     type Sort = z3::Sort;
     type Term = z3::Ast;
 
-    fn backend(&self) -> &Self::Backend {
+    fn backend(&self) -> &'static Self::Backend {
         &Z3
     }
 

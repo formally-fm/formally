@@ -23,7 +23,7 @@
 
 mod bindings;
 
-use crate::formally;
+use crate::{TermPool, formally};
 use bindings as cvc5;
 use formally::smt::{
     self, ToTerm as _,
@@ -33,8 +33,7 @@ use formally::smt::{
     },
     logic,
     logics::{Logic, LogicEx},
-    qe::QE,
-    theories,
+    qe, theories,
 };
 
 pub use cvc5::Sort;
@@ -120,12 +119,6 @@ impl Backend for Cvc5 {
             self, config, manager,
         )?))
     }
-
-    fn qe(&self, config: &smt::Config, manager: Rc<dyn backends::Manager>) -> Result<Box<dyn QE>> {
-        Ok(Box::new(api::ApiSolver::<Solver>::new(
-            self, config, manager,
-        )?))
-    }
 }
 
 impl api::Solver for Solver {
@@ -161,6 +154,14 @@ impl api::Solver for Solver {
         solver.config(config)?;
 
         Ok(solver)
+    }
+
+    fn backend(&self) -> &'static <Self::Manager as api::Manager>::Backend {
+        &Cvc5
+    }
+
+    fn as_qe(&self, pool: Arc<dyn TermPool>, manager: Rc<api::ApiManager<Self::Manager>>) -> Result<Box<dyn '_ + qe::Backend>> {
+        Ok(Box::new(api::ApiQE::new(self, manager, pool)))
     }
 
     fn logic(&self) -> &dyn Logic {
@@ -312,7 +313,7 @@ impl api::Manager for Manager {
     type Term = cvc5::Term;
     const FUNC_DEF_SUPPORTED: bool = true;
 
-    fn backend(&self) -> &Self::Backend {
+    fn backend(&self) -> &'static Self::Backend {
         &Cvc5
     }
 

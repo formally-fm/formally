@@ -257,8 +257,8 @@ impl TermManager {
     }
 
     /// Return a reference to the underlying [TermPool].
-    pub fn pool(&self) -> &dyn TermPool {
-        &*self.pool
+    pub fn pool(&self) -> Arc<dyn TermPool> {
+        self.pool.clone()
     }
 }
 
@@ -351,10 +351,14 @@ impl Solver {
     pub fn manager(&self) -> Rc<TermManager> {
         self.manager.clone()
     }
-    
+
     /// Return the [backends::Solver] this [Solver] was built on.
     pub fn solver(&self) -> &dyn backends::Solver {
         &*self.backend_solver
+    }
+
+    pub fn as_qe(&self) -> Result<qe::QE<'_>> {
+        Ok(qe::QE::new(self.backend_solver.as_qe(self.pool())?))
     }
 
     /// Get the currently selected [Logic].
@@ -377,7 +381,7 @@ impl Solver {
     }
 
     /// Return a reference to the [TermPool] of the underlying [TermManager].
-    pub fn pool(&self) -> &dyn TermPool {
+    pub fn pool(&self) -> Arc<dyn TermPool> {
         self.manager.pool()
     }
 
@@ -392,8 +396,8 @@ impl Solver {
     /// sorts and functions, the [Role] argument is needed to tell whether the term has to be
     /// interpreted as a sort or as a value term.
     pub fn lookup<T: ToTerm>(&self, term: T, role: Role) -> Result<Term> {
-        let interned = term.into_term_in(self.manager.pool());
-        let resolved = interned.resolve(self.env(), self.manager.pool(), role)?;
+        let interned = term.into_term_in(&*self.manager.pool);
+        let resolved = interned.resolve(self.env(), &*self.manager.pool, role)?;
         resolved.type_check()?;
 
         Ok(resolved)
@@ -406,7 +410,7 @@ impl Solver {
     ///
     /// The resulting sort is guaranteed to be well-formed and fully resolved.
     pub fn lookup_sort<S: ToSort>(&self, sort: &S) -> Result<Sort> {
-        let resolved = sort.resolve(self.env(), self.manager.pool(), Role::Sort)?;
+        let resolved = sort.resolve(self.env(), &*self.manager.pool, Role::Sort)?;
         resolved.type_check()?;
 
         Ok(resolved.try_into()?)
@@ -544,9 +548,9 @@ impl Solver {
         }
 
         let range = self.lookup_sort(&def.range)?;
-        let body = def.body.into_term_in(self.manager.pool()).resolve(
+        let body = def.body.into_term_in(&*self.manager.pool).resolve(
             &nested,
-            self.manager.pool(),
+            &*self.manager.pool,
             Role::Function,
         )?;
         let bodysort = body.type_check()?;
@@ -705,7 +709,7 @@ impl Model<'_> {
     pub fn value(&self, term: impl ToTerm) -> Result<Option<Term>> {
         Ok(self.provider.value(
             &self.solver.lookup(term, Role::Function)?,
-            self.solver.pool(),
+            &*self.solver.pool(),
         ))
     }
 }

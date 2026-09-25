@@ -39,7 +39,7 @@ impl Interpreter {
         match sort {
             ast::Sort::Simple(ast::Identifier::Symbol(name)) => Identifier::from(name.inner())
                 .over(name.span())
-                .into_term_in(solver.pool()),
+                .into_term_in(&*solver.pool()),
             ast::Sort::Application(ast::SortApplication {
                 head: ast::Identifier::Symbol(head),
                 args,
@@ -55,7 +55,7 @@ impl Interpreter {
 
                 term!(#head #(#args)*)
                     .over(span.clone())
-                    .into_term_in(solver.pool())
+                    .into_term_in(&*solver.pool())
             }
             _ => todo!(),
         }
@@ -72,7 +72,7 @@ impl Interpreter {
         }
         .over(span);
 
-        term!(#cnst).into_term_in(solver.pool())
+        term!(#cnst).into_term_in(&*solver.pool())
     }
 
     fn app_to_smt(
@@ -99,7 +99,7 @@ impl Interpreter {
                     span: idspan,
                 })
                 .over(span)
-                .into_term_in(solver.pool());
+                .into_term_in(&*solver.pool());
 
                 Ok(term)
             }
@@ -136,7 +136,7 @@ impl Interpreter {
                     body,
                     span: let_.span.clone(),
                 }
-                .into_term_in(solver.pool());
+                .into_term_in(&*solver.pool());
 
                 Ok(term)
             }
@@ -153,7 +153,7 @@ impl Interpreter {
                     body,
                     span: exists.span.clone(),
                 }
-                .into_term_in(solver.pool());
+                .into_term_in(&*solver.pool());
 
                 Ok(term)
             }
@@ -169,7 +169,7 @@ impl Interpreter {
                     body,
                     span: forall.span.clone(),
                 })
-                .into_term_in(solver.pool());
+                .into_term_in(&*solver.pool());
 
                 Ok(term)
             }

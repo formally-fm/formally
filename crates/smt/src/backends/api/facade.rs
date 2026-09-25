@@ -22,21 +22,19 @@
 // SOFTWARE.
 //
 
-use crate::{Term, formally};
-use formally::{
-    smt::{
-        self,
-        backends::{
-            self, Backend,
-            api::{Manager, Model, QE, Solver},
-        },
-        logics::{Logic, LogicEx, standard_logic},
-        qe,
+use crate::backends::Error;
+use crate::formally;
+use formally::smt::{
+    self, ToTerm as _,
+    backends::{
+        self, Backend,
+        api::{Manager, Model, QE, Solver},
     },
-    support,
+    logics::{Logic, LogicEx, standard_logic},
+    qe,
 };
 use formally_support::Diagnosable;
-use std::{any::Any, cell::RefCell, collections::HashMap, iter::zip, rc::Rc};
+use std::{any::Any, cell::RefCell, collections::HashMap, iter::zip, rc::Rc, sync::Arc};
 
 type Result<T, E = backends::Error> = std::result::Result<T, E>;
 
@@ -89,6 +87,10 @@ impl<S: 'static + Solver> backends::Solver for ApiSolver<S> {
         self.solver.logic()
     }
 
+    fn as_qe(&self, pool: Arc<dyn smt::TermPool>) -> Result<Box<dyn '_ + qe::Backend>, Error> {
+        self.solver.as_qe(pool, self.manager.clone())
+    }
+
     fn declare(&mut self, decl: smt::Declared) -> Result<()> {
         self.manager.declare(self.solver.solver(), decl)
     }
@@ -138,17 +140,41 @@ impl<S: 'static + Solver> backends::Solver for ApiSolver<S> {
     }
 }
 
-impl<S: QE> qe::QE for ApiSolver<S> {
-    fn qe(&self, term: Term, pool: &dyn smt::TermPool) -> Result<Term, Box<dyn Diagnosable>> {
+pub struct ApiQE<'q, Q: QE> {
+    qe: &'q Q,
+    manager: Rc<ApiManager<<Q as Solver>::Manager>>,
+    pool: Arc<dyn smt::TermPool>,
+}
+
+impl<'q, Q: QE> ApiQE<'q, Q> {
+    pub fn new(
+        qe: &'q Q,
+        manager: Rc<ApiManager<<Q as Solver>::Manager>>,
+        pool: Arc<dyn smt::TermPool>,
+    ) -> ApiQE<'q, Q> {
+        ApiQE { qe, manager, pool }
+    }
+}
+
+impl<'q, Q: QE> qe::Backend for ApiQE<'q, Q> {
+    fn qe(&self, quant: smt::Quantified) -> Result<smt::Term, Box<dyn Diagnosable>> {
+        let term = quant.into_term_in(&*self.pool);
         let term = self
             .manager
             .term(&term, &BindMap::default())
             .map_err(|e| Box::new(e) as Box<dyn Diagnosable>)?;
-        let term = QE::qe(&self.solver, term).map_err(|e| Box::new(e) as Box<dyn Diagnosable>)?;
+        let term = self
+            .qe
+            .qe(term)
+            .map_err(|e| Box::new(e) as Box<dyn Diagnosable>)?;
 
         self.manager
-            .export(term, pool)
+            .export(term, &*self.pool)
             .map_err(|e| Box::new(e) as Box<dyn Diagnosable>)
+    }
+
+    fn pool(&self) -> Arc<dyn smt::TermPool> {
+        self.pool.clone()
     }
 }
 
@@ -174,13 +200,15 @@ impl<S: Solver> ApiSolver<S> {
         let manager =
             match Rc::downcast::<ApiManager<<S as Solver>::Manager>>(manager as Rc<dyn Any>) {
                 Ok(manager) => manager,
-                Err(_) => return Err(backends::Error::new(
-                    backend.name()?,
-                    backends::ErrorKind::Internal(
-                        "`ApiSolver` method called with a `dyn Manager` which is not `ApiManager`"
-                            .into(),
-                    ),
-                )),
+                Err(_) => {
+                    return Err(backends::Error::new(
+                        backend.name()?,
+                        backends::ErrorKind::Internal(
+                            "`ApiSolver` created with a `dyn Manager` which is not `ApiManager`"
+                                .into(),
+                        ),
+                    ));
+                }
             };
 
         let logic = match &config.logic {
@@ -230,7 +258,7 @@ impl<'s, S: 's + Solver> backends::ModelProvider for ApiModel<'s, S> {
 }
 
 impl<M: 'static + Manager> backends::Manager for ApiManager<M> {
-    fn backend(&self) -> &dyn Backend {
+    fn backend(&self) -> &'static dyn Backend {
         self.manager.backend()
     }
 }
