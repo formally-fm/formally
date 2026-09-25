@@ -35,6 +35,7 @@ use formally::{
     },
     support,
 };
+use formally_support::Diagnosable;
 use std::{any::Any, cell::RefCell, collections::HashMap, iter::zip, rc::Rc};
 
 type Result<T, E = backends::Error> = std::result::Result<T, E>;
@@ -138,11 +139,16 @@ impl<S: 'static + Solver> backends::Solver for ApiSolver<S> {
 }
 
 impl<S: QE> qe::QE for ApiSolver<S> {
-    fn qe(&self, term: Term, pool: &dyn smt::TermPool) -> support::Result<Term> {
-        let term = self.manager.term(&term, &BindMap::default())?;
-        let term = QE::qe(&self.solver, term)?;
+    fn qe(&self, term: Term, pool: &dyn smt::TermPool) -> Result<Term, Box<dyn Diagnosable>> {
+        let term = self
+            .manager
+            .term(&term, &BindMap::default())
+            .map_err(|e| Box::new(e) as Box<dyn Diagnosable>)?;
+        let term = QE::qe(&self.solver, term).map_err(|e| Box::new(e) as Box<dyn Diagnosable>)?;
 
-        Ok(self.manager.export(term, pool)?)
+        self.manager
+            .export(term, pool)
+            .map_err(|e| Box::new(e) as Box<dyn Diagnosable>)
     }
 }
 

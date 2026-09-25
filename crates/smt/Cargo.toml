@@ -17,7 +17,7 @@ path = "src/lib.rs"
 [features]
 z3 = ["z3-sys"]
 cvc5 = ["cvc5-sys"]
-tbdd = ["oxidd", "parking_lot"]
+tbdd = ["oxidd", "oxidd-rules-bdd", "oxidd-reorder", "parking_lot"]
 default = ["z3", "cvc5", "tbdd"]
 __subcratedoc = []
 
@@ -30,6 +30,8 @@ z3-sys = { version = "0.13.0", optional = true }
 cvc5-sys = { version = "0.4.0", optional = true }
 
 oxidd = { version = "0.12.0", optional = true }
+oxidd-rules-bdd = { version = "0.12.0", optional = true }
+oxidd-reorder = { version = "0.7.0", optional = true }
 parking_lot = { version = "0.12.5", optional = true }
 
 derive_more = { version = "2", features = ["from", "as_ref", "display", "deref"] }
@@ -42,7 +44,6 @@ thiserror = "2.0.17"
 dashmap = "6.2.1"
 rpds = "1"
 bitvec = "1.1.1"
-boxcar = "0.2.14"
 
 [dev-dependencies]
 rstest = "0.26.0"

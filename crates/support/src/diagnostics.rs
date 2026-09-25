@@ -27,6 +27,7 @@ use crate::*;
 use std::{
     cell::RefCell,
     convert::Infallible,
+    error::Error,
     fmt::{self, Debug, Display},
     ops::Deref,
     rc::Rc,
@@ -180,7 +181,7 @@ impl Emit for Diagnostic {
 ///    Ok(())
 /// }
 /// ```
-pub trait Diagnosable: Display + Located {
+pub trait Diagnosable: Error + Located {
     /// The level at which the diagnostic has to be emitted.
     fn level(&self) -> Level {
         Level::Error
@@ -189,6 +190,24 @@ pub trait Diagnosable: Display + Located {
     /// Emit additional notes after the main diagnostic.
     fn notes(&self) -> DiagnosticEmitted {
         DiagnosticEmitted
+    }
+}
+
+impl Located for Box<dyn Diagnosable> {
+    fn span(&self) -> Option<Span> {
+        (**self).span()
+    }
+}
+
+impl Error for Box<dyn Diagnosable> {}
+
+impl Diagnosable for Box<dyn Diagnosable> {
+    fn level(&self) -> Level {
+        (**self).level()
+    }
+
+    fn notes(&self) -> DiagnosticEmitted {
+        (**self).notes()
     }
 }
 

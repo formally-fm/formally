@@ -207,7 +207,7 @@ impl Env {
 #[derive(Clone)]
 pub struct TermManager {
     backend_manager: Rc<dyn backends::Manager>,
-    pool: Rc<dyn TermPool>,
+    pool: Arc<dyn TermPool>,
     decls: RefCell<HashSet<Arc<Declaration<Sort, Sort>>>>,
     defs: RefCell<HashSet<Arc<Definition<Sort, Sort, Term>>>>,
 }
@@ -235,14 +235,14 @@ impl TermManager {
     pub fn with_backend(backend: impl Backend) -> Result<TermManager> {
         Ok(TermManager {
             backend_manager: Rc::from(backend.manager()?),
-            pool: Rc::new(HashPool::new()),
+            pool: Arc::new(HashPool::new()),
             decls: RefCell::default(),
             defs: RefCell::default(),
         })
     }
 
     /// Construct a [TermManager] over a given [Backend] and [TermPool].
-    pub fn with_pool(backend: impl Backend, pool: Rc<dyn TermPool>) -> Result<TermManager> {
+    pub fn with_pool(backend: impl Backend, pool: Arc<dyn TermPool>) -> Result<TermManager> {
         Ok(TermManager {
             backend_manager: Rc::from(backend.manager()?),
             pool,

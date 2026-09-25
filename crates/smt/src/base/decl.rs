@@ -224,6 +224,15 @@ impl Primitive {
     pub fn associativity(&self) -> Option<Associativity> {
         self.0.associativity
     }
+
+    /// Form an [Atom] that calls this [Primitive] as a function with the given arguments.
+    pub fn call(self, args: impl IntoIterator<Item = Term>) -> Atom {
+        Atom {
+            head: self.into(),
+            arguments: args.into_iter().collect(),
+            span: None,
+        }
+    }
 }
 
 /// Specification for declarations of functions (and constants, and sorts).
@@ -357,6 +366,17 @@ impl Declaration<Sort, Sort> {
 /// also refer to the [Nominal] type for details.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located, Deref)]
 pub struct Declared(pub(crate) Nominal<Arc<Declaration<Sort, Sort>>>);
+
+impl Declared {
+    /// Form an [Atom] that calls this [Declared] as a function with the given arguments.
+    pub fn call(self, args: impl IntoIterator<Item = Term>) -> Atom {
+        Atom {
+            head: self.into(),
+            arguments: args.into_iter().collect(),
+            span: None,
+        }
+    }
+}
 
 /// Specification for definitions of functions (and constants, and sorts).
 ///
@@ -510,6 +530,17 @@ impl<B: ToTerm> Definition<Sort, Sort, B> {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located, Deref)]
 pub struct Defined(pub(crate) Nominal<Arc<Definition<Sort, Sort, Term>>>);
 
+impl Defined {
+    /// Form an [Atom] that calls this [Defined] as a function with the given arguments.
+    pub fn call(self, args: impl IntoIterator<Item = Term>) -> Atom {
+        Atom {
+            head: self.into(),
+            arguments: args.into_iter().collect(),
+            span: None,
+        }
+    }
+}
+
 /// A function.
 ///
 /// The [Function] type represent any function usable to build terms.
@@ -576,6 +607,15 @@ impl Function {
             Function::User(user) => user.range(),
         }
     }
+
+    /// Form an [Atom] that calls this [Function] with the given arguments.
+    pub fn call(self, args: impl IntoIterator<Item = Term>) -> Atom {
+        Atom {
+            head: self.into(),
+            arguments: args.into_iter().collect(),
+            span: None,
+        }
+    }
 }
 
 /// A *user function*, i.e. a function either declared or defined in some [Solver].
@@ -612,6 +652,15 @@ impl UserFunction {
         match self {
             UserFunction::Declared(decl) => &decl.range,
             UserFunction::Defined(def) => &def.range,
+        }
+    }
+
+    /// Form an [Atom] that calls this [UserFunction] with the given arguments.
+    pub fn call(self, args: impl IntoIterator<Item = Term>) -> Atom {
+        Atom {
+            head: self.into(),
+            arguments: args.into_iter().collect(),
+            span: None,
         }
     }
 }

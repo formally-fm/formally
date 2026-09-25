@@ -25,8 +25,9 @@
 use crate::*;
 use formally::support::*;
 
-use derive_more::{Display, From};
+use derive_more::From;
 use transitive::Transitive;
+use thiserror::Error;
 
 use std::{
     collections::HashMap,
@@ -231,8 +232,8 @@ impl Debug for Sort {
 }
 
 /// Error type for `TryFrom<Term> for Sort`
-#[derive(Debug, Clone, Located, Display)]
-#[display("sort term must be an atom")]
+#[derive(Debug, Clone, Located, Error)]
+#[error("sort term must be an atom")]
 pub struct InvalidSortTerm {
     span: Option<Span>,
 }

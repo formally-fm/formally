@@ -36,5 +36,5 @@ use formally::{smt::*, support::*};
 /// A trait for backends providing quantifier elimination functionalities.
 pub trait QE {
     /// Perform quantifier elimination on the given `term`, constructing the result using `pool`.
-    fn qe(&self, term: Term, pool: &dyn TermPool) -> Result<Term>;
+    fn qe(&self, term: Term, pool: &dyn TermPool) -> Result<Term, Box<dyn Diagnosable>>;
 }
