@@ -81,7 +81,6 @@ impl Deref for Atom {
 
 #[derive(Debug, Error, Located, Transitive)]
 #[transitive(from(OutOfMemory, ErrorKind))]
-#[transitive(from(Box<dyn Diagnosable>, ErrorKind))]
 #[error("{kind}")]
 struct Error {
     pub kind: ErrorKind,
@@ -100,25 +99,9 @@ enum ErrorKind {
     OutOfMemory(#[from] OutOfMemory),
     #[error("building T-BDDs for let expressions is not (yet) supported")]
     UnsupportedLet,
-    #[error(transparent)]
-    Backend(#[from] Box<dyn Diagnosable>),
 }
 
-impl Diagnosable for Error {
-    fn level(&self) -> Level {
-        match &self.kind {
-            ErrorKind::Backend(err) => err.level(),
-            _ => Level::Error,
-        }
-    }
-
-    fn notes(&self) -> DiagnosticEmitted {
-        match &self.kind {
-            ErrorKind::Backend(err) => err.notes(),
-            _ => DiagnosticEmitted,
-        }
-    }
-}
+impl Diagnosable for Error {}
 
 pub struct QE<'s> {
     manager: BDDManagerRef,
@@ -188,7 +171,7 @@ impl<'s> QE<'s> {
                     result = self.eliminate(var.clone(), cutoff, &result)?;
                 }
 
-                Ok(result.with_manager_shared(|m, edge| self.term(m, edge)))
+                Ok(self.term(&result))
             }
             Quantifier::Forall => todo!(),
         }
@@ -225,48 +208,44 @@ impl<'s> QE<'s> {
         })
     }
 
-    fn eliminate<'m>(
+    fn eliminate(
         &self,
         var: Variable,
         cutoff: LevelNo,
         bdd: &BDDFunction,
     ) -> Result<BDDFunction, Error> {
-        bdd.with_manager_shared(|m, edge| self.eliminate_(m, var, cutoff, edge))
-    }
+        match bdd.cofactors() {
+            Some((high, low)) => {
+                let (level, guard) = bdd.with_manager_shared(|m, edge| -> Result<_, Error> {
+                    let Node::Inner(node) = m.get_node(edge) else {
+                        unreachable!()
+                    };
+                    let level = node.level();
+                    let var = m.level_to_var(level);
 
-    fn eliminate_<'m>(
-        &self,
-        m: &Manager<'m>,
-        var: Variable,
-        cutoff: LevelNo,
-        edge: &Edge<'m>,
-    ) -> Result<BDDFunction, Error> {
-        match m.get_node(edge) {
-            Node::Inner(node) if node.level() < cutoff => {
-                let guard = BDDFunction::var(m, m.level_to_var(node.level()))?;
-                let (high, low) = BDDFunction::cofactors_edge(m, edge).unwrap();
-                let high = self.eliminate_(m, var.clone(), cutoff, &high)?;
-                let low = self.eliminate_(m, var, cutoff, &low)?;
+                    Ok((level, BDDFunction::var(m, var)?))
+                })?;
 
-                Ok(guard.ite(&high, &low)?)
-            }
-            Node::Inner(_) => {
-                let quant = Quantified {
-                    quantifier: Quantifier::Exists,
-                    variables: Arc::new([var]),
-                    body: self.term(m, edge),
-                    span: None,
+                if level < cutoff {
+                    let high = self.eliminate(var.clone(), cutoff, &high)?;
+                    let low = self.eliminate(var, cutoff, &low)?;
+
+                    Ok(guard.ite(&high, &low)?)
+                } else {
+                    let quant = Quantified {
+                        quantifier: Quantifier::Exists,
+                        variables: Arc::new([var]),
+                        body: self.term(bdd),
+                        span: None,
+                    }
+                    .into_term_in(&*self.pool);
+
+                    let eliminated = self.solver.qe(quant).unwrap();
+
+                    Ok(self.bdd(&eliminated)?)
                 }
-                .into_term_in(&*self.pool);
-
-                let eliminated = self.solver.qe(quant).unwrap();
-
-                Ok(self.bdd(&eliminated)?)
             }
-            Node::Terminal(t) => match t {
-                BDDTerminal::False => Ok(BDDFunction::f(m)),
-                BDDTerminal::True => Ok(BDDFunction::t(m)),
-            },
+            None => Ok(bdd.clone()),
         }
     }
 
@@ -345,9 +324,10 @@ impl<'s> QE<'s> {
         Ok(bdd)
     }
 
-    fn term<'m>(&self, m: &Manager<'m>, bdd: &Edge<'m>) -> Term {
+    fn term<'m>(&self, bdd: &BDDFunction) -> Term {
         let mut cache = HashMap::new();
-        self.term_in(m, &BDDFunction::from_edge_ref(m, bdd), &mut cache)
+        self.manager
+            .with_manager_shared(|m| self.term_in(m, bdd, &mut cache))
     }
 
     fn term_in<'m>(
