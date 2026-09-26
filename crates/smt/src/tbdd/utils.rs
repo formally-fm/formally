@@ -112,7 +112,7 @@ impl BitSet {
     }
 
     pub fn set(&mut self, index: usize, value: bool) {
-        if index > self.bits.len() {
+        if index >= self.bits.len() {
             self.bits.resize(index + 1, false);
         }
         self.bits.set(index, value);
@@ -125,6 +125,9 @@ impl BitSet {
 
 impl BitOrAssign for BitSet {
     fn bitor_assign(&mut self, rhs: Self) {
+        if self.len() < rhs.len() {
+            self.bits.resize(rhs.len(), false);
+        }
         self.bits |= rhs.bits
     }
 }
