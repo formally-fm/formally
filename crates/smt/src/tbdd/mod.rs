@@ -29,10 +29,8 @@ use crate::formally;
 
 use formally::{
     smt::{
-        Config, Function, FunctionRef, Quantified, Quantifier, Solver, Sort, Term, TermKind,
-        TermManager, TermPool, ToTerm, Variable,
-        backends::{Backend, cvc5::Cvc5},
-        qe,
+        self, Function, FunctionRef, Let, Quantified, Quantifier, Solver, Sort, Term, TermKind,
+        TermPool, ToTerm, Variable,
         theories::{Core, CoreAtom},
     },
     support::{Diagnosable, DiagnosticEmitted, Level, Located, Span},
@@ -122,55 +120,77 @@ impl Diagnosable for Error {
     }
 }
 
-pub struct QE {
+pub struct QE<'s> {
     manager: BDDManagerRef,
     pool: Arc<dyn TermPool + Send + Sync>,
-    solver: Solver,
+    solver: &'s Solver,
     atoms: SyncBiMap<Atom, VarNo>,
     vars: SyncBiMap<Variable, usize>,
     free: DashMap<Term, BitSet>,
     bdds: DashMap<Term, BDDFunction>,
 }
 
-impl qe::Backend for QE {
-    fn qe(&self, quant: Quantified) -> Result<Term, Box<dyn Diagnosable>> {
+impl<'s> QE<'s> {
+    pub fn new(pool: Arc<dyn TermPool + Send + Sync>, solver: &'s Solver) -> QE<'s> {
+        QE {
+            manager: oxidd::bdd::new_manager(65_536, 65_536, 1),
+            pool: pool.clone(),
+            solver,
+            atoms: SyncBiMap::new(),
+            vars: SyncBiMap::new(),
+            free: DashMap::new(),
+            bdds: DashMap::new(),
+        }
+    }
+
+    pub fn qe(&self, term: &Term) -> Result<Term, DiagnosticEmitted> {
+        if term.is_quantifier_free() {
+            return Ok(term.clone());
+        }
+
+        match term.kind() {
+            TermKind::Constant(_) => Ok(term.clone()),
+            TermKind::Atom(atom) => Ok(smt::Atom {
+                head: atom.head.clone(),
+                arguments: atom
+                    .arguments
+                    .iter()
+                    .map(|arg| self.qe(arg))
+                    .try_collect()?,
+                span: atom.span(),
+            }
+            .into_term_in(&*self.pool)),
+            TermKind::Quantified(quant) => {
+                let quant = Quantified {
+                    quantifier: quant.quantifier,
+                    variables: quant.variables.clone(),
+                    body: self.qe(&quant.body)?,
+                    span: quant.span(),
+                };
+
+                Ok(self.qe_quant(quant)?)
+            }
+            TermKind::Let(let_) => Ok(Let {
+                bindings: let_.bindings.clone(),
+                body: self.qe(&let_.body)?,
+                span: let_.span(),
+            }
+            .into_term_in(&*self.pool)),
+        }
+    }
+
+    fn qe_quant(&self, quant: Quantified) -> Result<Term, Error> {
         match quant.quantifier {
             Quantifier::Exists => {
-                let mut result = self
-                    .bdd(&quant.body)
-                    .map_err(|err| Box::new(err) as Box<dyn Diagnosable>)?;
+                let mut result = self.bdd(&quant.body)?;
                 for var in &*quant.variables {
                     let cutoff = self.reorder(var.clone());
-                    result = self
-                        .eliminate(var.clone(), cutoff, &result)
-                        .map_err(|err| Box::new(err) as Box<dyn Diagnosable>)?;
+                    result = self.eliminate(var.clone(), cutoff, &result)?;
                 }
 
                 Ok(result.with_manager_shared(|m, edge| self.term(m, edge)))
             }
             Quantifier::Forall => todo!(),
-        }
-    }
-
-    fn pool(&self) -> Arc<dyn TermPool> {
-        self.pool.clone()
-    }
-}
-
-impl QE {
-    pub fn new(pool: Arc<dyn TermPool + Send + Sync>) -> QE {
-        QE {
-            manager: oxidd::bdd::new_manager(65_536, 65_536, 1),
-            pool: pool.clone(),
-            solver: Solver::with_manager(
-                &Config::default(),
-                TermManager::with_pool(Cvc5, pool).unwrap(),
-            )
-            .unwrap(),
-            atoms: SyncBiMap::new(),
-            vars: SyncBiMap::new(),
-            free: DashMap::new(),
-            bdds: DashMap::new(),
         }
     }
 
@@ -236,13 +256,10 @@ impl QE {
                     variables: Arc::new([var]),
                     body: self.term(m, edge),
                     span: None,
-                };
+                }
+                .into_term_in(&*self.pool);
 
-                let cvc5 = Cvc5
-                    .solver(&Config::default(), Cvc5.manager().unwrap().into())
-                    .unwrap();
-                let qe = cvc5.as_qe(self.pool.clone()).unwrap();
-                let eliminated = qe.qe(quant)?;
+                let eliminated = self.solver.qe(quant).unwrap();
 
                 Ok(self.bdd(&eliminated)?)
             }

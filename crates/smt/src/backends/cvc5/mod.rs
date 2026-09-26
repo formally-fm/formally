@@ -23,8 +23,7 @@
 
 mod bindings;
 
-use crate::{TermPool, formally};
-use bindings as cvc5;
+use crate::formally;
 use formally::smt::{
     self, ToTerm as _,
     backends::{
@@ -33,8 +32,10 @@ use formally::smt::{
     },
     logic,
     logics::{Logic, LogicEx},
-    qe, theories,
+    theories,
 };
+
+use bindings as cvc5;
 
 pub use cvc5::Sort;
 pub use cvc5::Term;
@@ -160,10 +161,6 @@ impl api::Solver for Solver {
         &Cvc5
     }
 
-    fn as_qe(&self, pool: Arc<dyn TermPool>, manager: Rc<api::ApiManager<Self::Manager>>) -> Result<Box<dyn '_ + qe::Backend>> {
-        Ok(Box::new(api::ApiQE::new(self, manager, pool)))
-    }
-
     fn logic(&self) -> &dyn Logic {
         self.logic
     }
@@ -206,9 +203,7 @@ impl api::Solver for Solver {
     fn model(&self) -> Result<Self::Model<'_>> {
         Ok(Model { solver: self })
     }
-}
 
-impl api::QE for Solver {
     fn qe(
         &self,
         term: <Self::Manager as api::Manager>::Term,

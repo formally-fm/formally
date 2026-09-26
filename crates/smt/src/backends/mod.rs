@@ -155,7 +155,7 @@ pub mod z3;
 
 use crate::formally;
 use formally::{
-    smt::{self, Config, Declared, Defined, ModelProvider, logics, qe},
+    smt::{self, Config, Declared, Defined, ModelProvider, logics},
     support::{Diagnosable, Identifier, Level, Located, Span},
 };
 use std::{any::Any, fmt::Debug, fmt::Formatter, io, rc::Rc, sync::Arc};
@@ -328,11 +328,6 @@ pub trait Solver: Any {
     /// Return the logic object associated with the logic selected by the original [Config] object.
     fn logic(&self) -> &'_ dyn logics::Logic;
 
-    /// Return a reference to the current solver as an instance of [qe::Backend], if supported.
-    ///
-    /// The `pool` argument is used by the returned [qe::Backend] to build the resulting terms.
-    fn as_qe(&self, pool: Arc<dyn smt::TermPool>) -> Result<Box<dyn '_ + qe::Backend>, Error>;
-
     /// Register a new [Declared] object in the backend instance.
     ///
     /// In most cases, declared entities need to be declared to the backend somehow before being
@@ -379,4 +374,13 @@ pub trait Solver: Any {
     /// `Ok(None)`. An error should be returned only if extracting a model failed for some
     /// unexpected reason (i.e. an I/O error).
     fn model(&self) -> Result<Option<Box<dyn '_ + ModelProvider>>, Error>;
+
+    /// Perform quantifier elimination on the given [Quantified](smt::Quantified) term.
+    ///
+    /// The method returns an equivalent quntifier-free [Term](smt::Term). The method *can assume*
+    /// the body of the given [Quantified](smt::Quantified) is *quantifier-free* and well-typed
+    /// of sort Bool.
+    ///
+    /// The [TermPool](smt::TermPool) argument is used to construct the resulting [Term](smt::Term).
+    fn qe(&self, quant: smt::Quantified, pool: &dyn smt::TermPool) -> Result<smt::Term, Error>;
 }

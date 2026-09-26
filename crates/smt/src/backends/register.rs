@@ -23,10 +23,7 @@
 //
 
 use crate::formally;
-use formally::{
-    smt::{backends::*, qe},
-    support::*,
-};
+use formally::{smt::backends::*, support::*};
 use itertools::Itertools;
 
 use linkme::distributed_slice;

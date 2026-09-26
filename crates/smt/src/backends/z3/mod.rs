@@ -33,10 +33,10 @@ use formally::smt::{
     },
     logic,
     logics::{Logic, LogicEx},
-    qe, theories,
+    theories,
 };
 use itertools::Itertools;
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 
 type Result<T, E = backends::Error> = std::result::Result<T, E>;
 
@@ -158,7 +158,7 @@ impl api::Solver for Solver {
     fn backend(&self) -> &'static <Self::Manager as api::Manager>::Backend {
         &Z3
     }
-    
+
     fn logic(&self) -> &dyn Logic {
         self.logic
     }
@@ -205,9 +205,7 @@ impl api::Solver for Solver {
             model: self.z3solver.get_model(),
         })
     }
-}
 
-impl api::QE for Solver {
     fn qe(
         &self,
         term: <Self::Manager as api::Manager>::Term,

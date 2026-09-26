@@ -31,18 +31,18 @@
 //!
 //! The module also provides [SMTLibEmitter], an [Emitter] that prints diagnostics to the terminal
 //! in the format specified by the SMT-LIBv2 syntax for responses.
-use crate::formally;
+use crate::{formally, Role};
 
 use formally::{
     io::{
         parse::Parsable as _,
         print::{Print, RenderTarget},
     },
-    smt::{self, Config, ToTerm, backends::Backend, smtlib::ast},
+    smt::{self, Config, DashPool, ToTerm, backends::Backend, smtlib::ast, tbdd},
     support::*,
 };
 
-use std::{fmt::Debug, io, path::Path};
+use std::{fmt::Debug, io, path::Path, sync::Arc};
 
 use thiserror::Error;
 
@@ -155,6 +155,7 @@ impl Default for Settings {
 struct State {
     mode: Mode,
     config: Config,
+    pool: Arc<DashPool>,
     solver: smt::Solver,
     output: Box<dyn RenderTarget>,
 }
@@ -349,9 +350,9 @@ impl Interpreter {
     }
 
     fn get_qe(state: &mut State, getqe: ast::GetQE) -> Result<()> {
-        let qe = state.solver.as_qe()?;
+        let qe = tbdd::QE::new(state.pool.clone(), &state.solver);
         let term = Interpreter::term_to_smt(&state.solver, getqe.term)?;
-        let term = state.solver.lookup(term, smt::Role::Function)?;
+        let term = state.solver.lookup(term, Role::Function)?;
         let term = qe.qe(&term)?;
         let term = Box::new(ast::Term::from(term));
 
@@ -371,15 +372,20 @@ impl Interpreter {
             logic => Some(Identifier::from(logic).into_owned().over(sl.logic.span())),
         };
 
-        match smt::Solver::with_backend(&settings.config, settings.backend) {
-            Ok(solver) => {
-                *self = Interpreter::Started(State {
-                    mode: Mode::Assert,
-                    config: settings.config,
-                    solver,
-                    output: settings.output,
-                })
-            }
+        let pool = Arc::new(DashPool::new());
+        match smt::TermManager::with_pool(settings.backend, pool.clone()) {
+            Ok(manager) => match smt::Solver::with_manager(&settings.config, manager) {
+                Ok(solver) => {
+                    *self = Interpreter::Started(State {
+                        mode: Mode::Assert,
+                        config: settings.config,
+                        pool,
+                        solver,
+                        output: settings.output,
+                    })
+                }
+                Err(_) => *self = Interpreter::Start(settings),
+            },
             Err(_) => *self = Interpreter::Start(settings),
         }
 

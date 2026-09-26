@@ -48,20 +48,16 @@
 
 mod facade;
 pub use facade::ApiManager;
-pub use facade::ApiQE;
 pub use facade::ApiSolver;
 
-use crate::{TermPool, formally};
+use crate::formally;
 use formally::smt::{
     self,
-    backends::{Backend, Error, ErrorKind},
+    backends::{Backend, Error},
     logics::{Logic, LogicEx},
-    qe,
 };
 
-use crate::backends::api;
-use std::sync::Arc;
-use std::{hash::Hash, rc::Rc};
+use std::{hash::Hash, rc::Rc, sync::Arc};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -200,7 +196,7 @@ pub trait Manager: Default + Sized {
         to_terms: impl Fn(&[smt::Term]) -> Result<Vec<Self::Term>>,
     ) -> Result<Self::Term>;
 
-    /// Translates back a [Self::Term] to a [Term](smt::Term).
+    /// Translate back a [Self::Term] to a [Term](smt::Term).
     ///
     /// The term is supposed to be built using the provided [TermPool](smt::TermPool).
     ///
@@ -261,21 +257,6 @@ pub trait Solver: Sized {
     /// Return the backend instance this solver has been built on.
     fn backend(&self) -> &'static <Self::Manager as Manager>::Backend;
 
-    #[allow(unused)]
-    fn as_qe(
-        &self,
-        pool: Arc<dyn TermPool>,
-        manager: Rc<ApiManager<Self::Manager>>,
-    ) -> Result<Box<dyn '_ + qe::Backend>> {
-        Err(Error {
-            kind: Box::new(ErrorKind::Unsupported {
-                msg: "quantifier elimination".into(),
-                span: None,
-            }),
-            backend: self.backend().name()?.to_string(),
-        })
-    }
-
     /// Return the [Logic] object selected during construction.
     fn logic(&self) -> &dyn Logic;
 
@@ -300,14 +281,11 @@ pub trait Solver: Sized {
 
     /// Return the model if one exists.
     fn model(&self) -> Result<Self::Model<'_>>;
-}
 
-/// Trait to allow [api::ApiSolver](ApiSolver) to implement the [qe::QE](QE) trait.
-pub trait QE: Solver + Sized {
-    /// Perform quantifier elimination on the given term, if at all supported.
+    /// Perform quantifier elimination on the given term.
     ///
-    /// The method *can assume* the term is in prenex form with a single non-alternating block of
-    /// quantifiers (either existential or universal).
+    /// The method *can assume* the given term is in prenex form with a single block of either all
+    /// existential or all universal quantifiers over a quantifier-free body.
     fn qe(
         &self,
         term: <Self::Manager as Manager>::Term,

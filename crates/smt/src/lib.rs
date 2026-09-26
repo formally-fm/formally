@@ -404,7 +404,6 @@ pub use macros::backend;
 
 pub mod backends;
 pub mod logics;
-pub mod qe;
 pub mod smtlib;
 pub mod theories;
 

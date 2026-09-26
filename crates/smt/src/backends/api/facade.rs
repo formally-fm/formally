@@ -22,18 +22,16 @@
 // SOFTWARE.
 //
 
-use crate::backends::Error;
 use crate::formally;
 use formally::smt::{
     self, ToTerm as _,
     backends::{
         self, Backend,
-        api::{Manager, Model, QE, Solver},
+        api::{Manager, Model, Solver},
     },
     logics::{Logic, LogicEx, standard_logic},
-    qe,
 };
-use formally_support::Diagnosable;
+
 use std::{any::Any, cell::RefCell, collections::HashMap, iter::zip, rc::Rc, sync::Arc};
 
 type Result<T, E = backends::Error> = std::result::Result<T, E>;
@@ -87,10 +85,6 @@ impl<S: 'static + Solver> backends::Solver for ApiSolver<S> {
         self.solver.logic()
     }
 
-    fn as_qe(&self, pool: Arc<dyn smt::TermPool>) -> Result<Box<dyn '_ + qe::Backend>, Error> {
-        self.solver.as_qe(pool, self.manager.clone())
-    }
-
     fn declare(&mut self, decl: smt::Declared) -> Result<()> {
         self.manager.declare(self.solver.solver(), decl)
     }
@@ -138,43 +132,13 @@ impl<S: 'static + Solver> backends::Solver for ApiSolver<S> {
             model: self.solver.model()?,
         })))
     }
-}
 
-pub struct ApiQE<'q, Q: QE> {
-    qe: &'q Q,
-    manager: Rc<ApiManager<<Q as Solver>::Manager>>,
-    pool: Arc<dyn smt::TermPool>,
-}
+    fn qe(&self, quant: smt::Quantified, pool: &dyn smt::TermPool) -> Result<smt::Term> {
+        let term = quant.into_term_in(pool);
+        let term = self.manager.term(&term, &BindMap::default())?;
+        let term = self.solver.qe(term)?;
 
-impl<'q, Q: QE> ApiQE<'q, Q> {
-    pub fn new(
-        qe: &'q Q,
-        manager: Rc<ApiManager<<Q as Solver>::Manager>>,
-        pool: Arc<dyn smt::TermPool>,
-    ) -> ApiQE<'q, Q> {
-        ApiQE { qe, manager, pool }
-    }
-}
-
-impl<'q, Q: QE> qe::Backend for ApiQE<'q, Q> {
-    fn qe(&self, quant: smt::Quantified) -> Result<smt::Term, Box<dyn Diagnosable>> {
-        let term = quant.into_term_in(&*self.pool);
-        let term = self
-            .manager
-            .term(&term, &BindMap::default())
-            .map_err(|e| Box::new(e) as Box<dyn Diagnosable>)?;
-        let term = self
-            .qe
-            .qe(term)
-            .map_err(|e| Box::new(e) as Box<dyn Diagnosable>)?;
-
-        self.manager
-            .export(term, &*self.pool)
-            .map_err(|e| Box::new(e) as Box<dyn Diagnosable>)
-    }
-
-    fn pool(&self) -> Arc<dyn smt::TermPool> {
-        self.pool.clone()
+        self.manager.export(term, pool)
     }
 }
 
