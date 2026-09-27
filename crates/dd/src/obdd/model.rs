@@ -60,8 +60,8 @@ struct Literal(VarID, bool);
 /// # }
 /// ```
 #[derive(Clone)]
-pub struct Model<'m> {
-    manager: &'m Manager,
+pub struct Model {
+    inner: Arc<RwLock<Inner>>,
     literals: Vec<Literal>,
 }
 
@@ -75,7 +75,7 @@ impl Display for Literal {
     }
 }
 
-impl Display for Model<'_> {
+impl Display for Model {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -85,25 +85,25 @@ impl Display for Model<'_> {
     }
 }
 
-impl Hash for Model<'_> {
+impl Hash for Model {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.literals.hash(state)
     }
 }
 
-impl PartialEq for Model<'_> {
+impl PartialEq for Model {
     fn eq(&self, other: &Self) -> bool {
         self.literals.eq(&other.literals)
     }
 }
 
-impl<'m, const N: usize> PartialEq<[Lit<'m>; N]> for Model<'m> {
-    fn eq(&self, other: &[Lit<'m>; N]) -> bool {
+impl<'m, const N: usize> PartialEq<[Lit; N]> for Model {
+    fn eq(&self, other: &[Lit; N]) -> bool {
         if self.literals.len() != other.len() {
             return false;
         }
 
-        for (literal, lit) in zip(self.literals.iter().copied(), other.iter().copied()) {
+        for (literal, lit) in zip(self.literals.iter().copied(), other.iter().cloned()) {
             if literal.0 != lit.var().var || literal.1 != lit.value() {
                 return false;
             }
@@ -113,29 +113,29 @@ impl<'m, const N: usize> PartialEq<[Lit<'m>; N]> for Model<'m> {
     }
 }
 
-impl Eq for Model<'_> {}
+impl Eq for Model {}
 
-impl<'m> Model<'m> {
-    pub(super) fn new(manager: &'m Manager) -> Model<'m> {
+impl Model {
+    pub(super) fn new(inner: Arc<RwLock<Inner>>) -> Model {
         Model {
-            manager,
+            inner: inner.clone(),
             literals: Vec::new(),
         }
     }
 
     /// Get the truth value (if any) of a variable in this model.
-    pub fn get(&self, var: Var<'_>) -> Option<bool> {
+    pub fn get(&self, var: Var) -> Option<bool> {
         self.literals
-            .binary_search_by_key(&var, |lit| Var::new(lit.0, self.manager))
+            .binary_search_by_key(&var, |lit| Var::new(lit.0, self.inner.clone()))
             .ok()
             .map(|i| self.literals[i].1)
     }
 
     /// Set the truth value of a variable in this model.
-    pub fn set(&mut self, var: Var<'_>, value: impl Into<Option<bool>>) {
+    pub fn set(&mut self, var: Var, value: impl Into<Option<bool>>) {
         let result = self
             .literals
-            .binary_search_by_key(&var, |lit| Var::new(lit.0, self.manager));
+            .binary_search_by_key(&var, |lit| Var::new(lit.0, self.inner.clone()));
 
         match (result, value.into()) {
             (Ok(index), None) => {
@@ -187,9 +187,9 @@ impl Frame {
 /// The [next()](ModelIterator::next()) method panics if the variable order of the underlying
 /// [Manager] changed after the construction of the iterator.
 #[derive(Clone)]
-pub struct ModelIterator<'m> {
+pub struct ModelIterator {
     stack: Vec<Frame>,
-    model: Model<'m>,
+    model: Model,
     seq: usize,
 }
 
@@ -199,24 +199,24 @@ enum Advance {
     Stop,
 }
 
-impl Drop for ModelIterator<'_> {
+impl Drop for ModelIterator {
     fn drop(&mut self) {
-        let inner = self.model.manager.inner.read();
+        let inner = self.model.inner.read();
         while !self.stack.is_empty() {
             self.stack.pop().inspect(|f| f.release(&inner));
         }
     }
 }
 
-impl<'m> ModelIterator<'m> {
-    pub(super) fn new(manager: &'m Manager, root: BDD<'m>) -> Self {
-        let inner = manager.inner.read();
+impl<'m> ModelIterator {
+    pub(super) fn new(inner: Arc<RwLock<Inner>>, root: BDD) -> Self {
+        let inner = inner.read();
         ModelIterator {
             stack: vec![Frame {
                 slot: inner.inc_ref(root.id),
                 state: State::Enter,
             }],
-            model: Model::new(manager),
+            model: Model::new(inner.arc()),
             seq: inner.seq(),
         }
     }
@@ -226,7 +226,8 @@ impl<'m> ModelIterator<'m> {
             return Advance::Stop;
         };
 
-        let inner = self.model.manager.inner.read();
+        let inner = self.model.inner.clone();
+        let inner = inner.read();
         assert_eq!(
             self.seq,
             inner.seq(),
@@ -241,7 +242,7 @@ impl<'m> ModelIterator<'m> {
                 Advance::Continue
             }
             inner::Tree::Node(node) => {
-                let var = Var::new(node.var, self.model.manager);
+                let var = Var::new(node.var, self.model.inner.clone());
                 match top.state {
                     State::Enter => {
                         self.model.set(var, false);
@@ -264,10 +265,10 @@ impl<'m> ModelIterator<'m> {
     }
 }
 
-impl<'m> Iterator for ModelIterator<'m> {
-    type Item = Model<'m>;
+impl<'m> Iterator for ModelIterator {
+    type Item = Model;
 
-    fn next(&mut self) -> Option<Model<'m>> {
+    fn next(&mut self) -> Option<Model> {
         while self.advance() == Advance::Continue {}
 
         if !self.stack.is_empty() {

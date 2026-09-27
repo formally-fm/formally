@@ -24,6 +24,7 @@ __subcratedoc = []
 [dependencies]
 formally-support = { path = "../support", version = "0.2.0" }
 formally-io = { path = "../io", version = "0.2.0" }
+formally-dd = { path = "../dd", version = "0.2.0" }
 formally-smt-macros = { path = "../smt-macros", version = "0.2.0", features = ["__subcratedoc"] }
 
 z3-sys = { version = "0.13.0", optional = true }

@@ -26,7 +26,10 @@ use super::{order::Order, *};
 
 use dashmap::{DashMap, DashSet};
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{
+    Weak,
+    atomic::{AtomicU32, Ordering},
+};
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub(super) enum Tree {
@@ -92,6 +95,7 @@ struct VarInfo {
 }
 
 pub(super) struct Inner {
+    this: Weak<RwLock<Inner>>,
     order: Order,
     varinfo: Vec<VarInfo>,
     slots: DashMap<SlotID, Slot>,
@@ -100,23 +104,28 @@ pub(super) struct Inner {
     ite_cache: DashMap<IteKey, SlotID>,
 }
 
-impl Default for Inner {
-    fn default() -> Self {
-        Inner {
-            order: Order::default(),
-            varinfo: Vec::default(),
-            slots: DashMap::default(),
-            next_node: AtomicU32::new(2),
-            unique: DashMap::default(),
-            ite_cache: DashMap::default(),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 struct IteKey(SlotID, SlotID, SlotID);
 
 impl Inner {
+    pub fn new() -> Arc<RwLock<Inner>> {
+        Arc::new_cyclic(|weak| {
+            RwLock::new(Inner {
+                this: weak.clone(),
+                order: Order::default(),
+                varinfo: Vec::default(),
+                slots: DashMap::default(),
+                next_node: AtomicU32::new(2),
+                unique: DashMap::default(),
+                ite_cache: DashMap::default(),
+            })
+        })
+    }
+
+    pub fn arc(&self) -> Arc<RwLock<Inner>> {
+        self.this.upgrade().unwrap()
+    }
+
     pub fn seq(&self) -> usize {
         self.order.seq()
     }

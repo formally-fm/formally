@@ -387,6 +387,7 @@
 //! specific [TermManagers](TermManager) and [Solvers](Solver).
 
 mod formally {
+    pub use formally_dd as dd;
     pub use formally_io as io;
     pub use formally_support as support;
     pub extern crate self as smt;
@@ -409,6 +410,9 @@ pub mod theories;
 
 #[cfg(feature = "tbdd")]
 pub mod tbdd;
+
+// #[cfg(feature = "tbdd")]
+// pub mod tbdd_hm;
 
 mod base;
 pub use base::*;

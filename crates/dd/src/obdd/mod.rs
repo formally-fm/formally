@@ -49,6 +49,7 @@ use std::{
     cmp::{self, max, min},
     fmt::{Debug, Formatter},
     ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not},
+    sync::Arc,
 };
 
 pub use model::{Model, ModelIterator};
@@ -87,61 +88,62 @@ use order::VarID;
 /// assert_eq!(b, false);
 /// # }
 /// ```
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub struct Var<'m> {
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub struct Var {
     var: VarID,
-    manager: Nominal<&'m Manager>,
+    inner: Nominal<Arc<RwLock<Inner>>>,
 }
 
-impl Debug for Var<'_> {
+impl Debug for Var {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "Var({})", self.var.index())
     }
 }
 
-impl<'m> Var<'m> {
-    fn new(var: VarID, manager: &'m Manager) -> Var<'m> {
+impl Var {
+    fn new(var: VarID, inner: Arc<RwLock<Inner>>) -> Var {
         Var {
             var,
-            manager: Nominal(manager),
+            inner: Nominal(inner),
         }
     }
 
-    /// Return a reference to the [Manager] that created the variable.
-    pub fn manager(&self) -> &'m Manager {
-        self.manager.into_inner()
+    fn manager(&self) -> Manager {
+        Manager {
+            inner: self.inner.0.clone(),
+        }
     }
 
     /// Return the *level*, i.e. the position in the variable order, of the variable.
     pub fn level(&self) -> Level {
-        self.manager.inner.read().level_of(Some(self.var))
+        self.inner.read().level_of(Some(self.var))
     }
 
     /// Return the next variable in the variable order.
     ///
     /// Return the variable that is positioned immediately after the current one in the variable
     /// order, or [None] if the variable is the last one.
-    pub fn next(&self) -> Option<Var<'m>> {
-        let inner = self.manager.inner.read();
+    pub fn next(&self) -> Option<Var> {
+        let inner = self.inner.read();
         inner
             .var_at(inner.level_of(Some(self.var)) + 1)
-            .map(|id| Var::new(id, self.manager()))
+            .map(|id| Var::new(id, self.inner.0.clone()))
     }
 }
 
-impl PartialOrd for Var<'_> {
+impl PartialOrd for Var {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for Var<'_> {
+impl Ord for Var {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        assert_eq!(
-            self.manager, other.manager,
+        assert!(
+            self.inner == other.inner,
             "attempt to compare two `Var`s from different `Manager`s"
         );
-        let inner = self.manager.inner.read();
+        let inner = self.inner.read();
         inner
             .level_of(Some(self.var))
             .cmp(&inner.level_of(Some(other.var)))
@@ -184,9 +186,16 @@ impl Ord for Var<'_> {
 /// [Manager] keeps track of the current variable order against which the BDDs are constructed.
 /// The [swap()](Manager::swap()) and [swap_adjacent()](Manager::swap_adjacent()) methods are
 /// available to reorder the variables.
-#[derive(Default)]
 pub struct Manager {
-    inner: RwLock<Inner>,
+    inner: Arc<RwLock<Inner>>,
+}
+
+impl Default for Manager {
+    fn default() -> Self {
+        Manager {
+            inner: Inner::new(),
+        }
+    }
 }
 
 impl Debug for Manager {
@@ -202,32 +211,37 @@ impl Manager {
     }
 
     /// Create a new [variable](Var) positioned at the bottom of the current variable order.
-    pub fn add_var(&self) -> Var<'_> {
-        Var::new(self.inner.write().add_var(), self)
+    pub fn add_var(&self) -> Var {
+        Var::new(self.inner.write().add_var(), self.inner.clone())
     }
 
     /// Create a new [variable](Var) positioned immediately after the given one in the current
     /// variable order.
-    pub fn add_var_after(&self, preceeding: Var<'_>) -> Var<'_> {
-        Var::new(self.inner.write().add_var_after(preceeding.var), self)
+    pub fn add_var_after(&self, preceeding: &Var) -> Var {
+        Var::new(
+            self.inner.write().add_var_after(preceeding.var),
+            self.inner.clone(),
+        )
     }
 
     /// Create a given number of [variables](Var) positioned at the bottom of the current variable
     /// order.
-    pub fn add_vars(&self, n: u32) -> Vec<Var<'_>> {
+    pub fn add_vars(&self, n: u32) -> Vec<Var> {
         let vars = self.inner.write().add_vars(n);
 
-        vars.into_iter().map(|v| Var::new(v, self)).collect()
+        vars.into_iter()
+            .map(|v| Var::new(v, self.inner.clone()))
+            .collect()
     }
 
     /// Create a given number of [variables](Var) positioned immediately after the given one in the
     /// current variable order.
-    pub fn add_vars_after(&self, preceeding: Var<'_>, n: u32) -> Vec<Var<'_>> {
+    pub fn add_vars_after(&self, preceeding: &Var, n: u32) -> Vec<Var> {
         let ids = self.inner.write().add_vars_after(preceeding.var, n);
 
         let mut vars = Vec::with_capacity(n as usize);
         for id in ids {
-            vars.push(Var::new(id, self))
+            vars.push(Var::new(id, self.inner.clone()))
         }
 
         vars
@@ -239,27 +253,32 @@ impl Manager {
     }
 
     /// Return an iterator to all the variables currently managed by this [Manager].
-    pub fn vars(&self) -> impl ExactSizeIterator<Item = Var<'_>> {
+    pub fn vars(&self) -> impl ExactSizeIterator<Item = Var> {
         let n = self.n_vars();
-        (0..n).into_iter().map(|i| Var::new(VarID(i), self))
+        (0..n)
+            .into_iter()
+            .map(|i| Var::new(VarID(i), self.inner.clone()))
     }
 
     /// Return the [variable](Var) positioned at the given level of the current variable order, or
     /// [None] if there is no such variable.
-    pub fn var_at(&self, level: Level) -> Option<Var<'_>> {
-        self.inner.read().var_at(level).map(|v| Var::new(v, self))
+    pub fn var_at(&self, level: Level) -> Option<Var> {
+        self.inner
+            .read()
+            .var_at(level)
+            .map(|v| Var::new(v, self.inner.clone()))
     }
 
     /// Swap the position in the variable order of the given variable with the one positioned
     /// immediately after it.
-    pub fn swap_adjacent(&self, var: Var<'_>) {
+    pub fn swap_adjacent(&self, var: &Var) {
         let mut inner = self.inner.write();
         let level = inner.level_of(Some(var.var));
         inner.swap(level);
     }
 
     /// Swap the position of two variables in the current variable order.
-    pub fn swap(&self, v1: Var<'_>, v2: Var<'_>) {
+    pub fn swap(&self, v1: &Var, v2: &Var) {
         if v1 == v2 {
             return;
         }
@@ -282,14 +301,14 @@ impl Manager {
     }
 
     /// Intern a [Node] creating a new [BDD] from it.
-    pub fn make<'m>(&'m self, node: Node<'m>) -> BDD<'m> {
+    pub fn make(&self, node: Node) -> BDD {
         let inner = self.inner.read();
         let id = inner.make(inner::Node {
             var: node.var.var,
             high: node.high.id,
             low: node.low.id,
         });
-        BDD::new(&inner, id, self)
+        BDD::new(&inner, id)
     }
 
     /// Reclaim memory by discarding nodes that are not transitively referenced by any live [BDD]
@@ -301,155 +320,150 @@ impl Manager {
     }
 
     /// Return the [BDD] corresponding to the [true] function.
-    pub fn top(&self) -> BDD<'_> {
+    pub fn top(&self) -> BDD {
         BDD {
             id: SlotID::TOP,
-            manager: Nominal(self),
+            inner: Nominal(self.inner.clone()),
         }
     }
 
     /// Return the [BDD] corresponding to the [false] function.
-    pub fn bottom(&self) -> BDD<'_> {
+    pub fn bottom(&self) -> BDD {
         BDD {
             id: SlotID::BOTTOM,
-            manager: Nominal(self),
+            inner: Nominal(self.inner.clone()),
         }
     }
 
     /// Negate a [BDD].
-    pub fn not<'m>(&'m self, arg: impl Into<BDD<'m>>) -> BDD<'m> {
+    pub fn not(&self, arg: impl Into<BDD>) -> BDD {
         self.ite(arg, self.bottom(), self.top())
     }
 
     /// Return the conjunction of the given iterator of [BDD]s.
-    pub fn and<'m>(&'m self, args: impl IntoIterator<Item = impl Into<BDD<'m>>>) -> BDD<'m> {
+    pub fn and(&self, args: impl IntoIterator<Item = impl Into<BDD>>) -> BDD {
         args.into_iter()
             .fold(self.top(), |acc, arg| self.ite(acc, arg, self.bottom()))
     }
 
     /// Return the disjunction of the given iterator of [BDD]s.
-    pub fn or<'m>(&'m self, args: impl IntoIterator<Item = impl Into<BDD<'m>>>) -> BDD<'m> {
+    pub fn or(&self, args: impl IntoIterator<Item = impl Into<BDD>>) -> BDD {
         args.into_iter()
             .fold(self.bottom(), |acc, arg| self.ite(acc, self.top(), arg))
     }
 
     /// Return the exclusive disjunction of the given iterator of [BDD]s.
-    pub fn xor<'m>(&'m self, left: impl Into<BDD<'m>>, right: impl Into<BDD<'m>>) -> BDD<'m> {
+    pub fn xor(&self, left: impl Into<BDD>, right: impl Into<BDD>) -> BDD {
         let right = right.into();
         self.ite(left, self.not(right.clone()), right)
     }
 
     /// Return the implication between the two given [BDD]s.
-    pub fn implies<'m>(&'m self, left: impl Into<BDD<'m>>, right: impl Into<BDD<'m>>) -> BDD<'m> {
+    pub fn implies(&self, left: impl Into<BDD>, right: impl Into<BDD>) -> BDD {
         self.ite(left, right, self.top())
     }
 
     /// Return the existential quantification of the given [variable](Var) over the given [BDD].
-    pub fn exists<'m>(&'m self, var: Var<'m>, body: impl Into<BDD<'m>>) -> BDD<'m> {
+    pub fn exists(&self, var: Var, body: impl Into<BDD>) -> BDD {
         let body = body.into();
-        self.or([self.restrict(var, &body), self.restrict(!var, body)])
+        self.or([self.restrict(var.clone(), &body), self.restrict(!var, body)])
     }
 
     /// Return the universal quantification of the given [variable](Var) over the given [BDD].
-    pub fn forall<'m>(&'m self, var: Var<'m>, body: impl Into<BDD<'m>>) -> BDD<'m> {
+    pub fn forall(&self, var: Var, body: impl Into<BDD>) -> BDD {
         self.not(self.exists(var, self.not(body)))
     }
 
     /// Return the restriction of the given [BDD] over the given [literal](Lit).
-    pub fn restrict<'m>(&'m self, lit: impl Into<Lit<'m>>, body: impl Into<BDD<'m>>) -> BDD<'m> {
+    pub fn restrict<'m>(&'m self, lit: impl Into<Lit>, body: impl Into<BDD>) -> BDD {
         let lit = lit.into();
         let body = body.into();
-        assert_eq!(
-            Nominal(lit.manager()),
-            Nominal(body.manager()),
+        assert!(
+            Nominal(lit.manager().inner) == Nominal(body.manager().inner),
             "restrict() called on Lit and BDD from different managers"
         );
 
         let inner = self.inner.read();
         let restrict = inner.restrict(lit.var().var, lit.value(), body.id);
 
-        BDD::new(&inner, restrict, lit.manager())
+        BDD::new(&inner, restrict)
     }
 
     /// Return the conditional if-then-else function `ite(guard, then, else_)`.
-    pub fn ite<'m>(
-        &'m self,
-        guard: impl Into<BDD<'m>>,
-        then: impl Into<BDD<'m>>,
-        else_: impl Into<BDD<'m>>,
-    ) -> BDD<'m> {
+    pub fn ite(&self, guard: impl Into<BDD>, then: impl Into<BDD>, else_: impl Into<BDD>) -> BDD {
         let guard = guard.into();
         let then = then.into();
         let else_ = else_.into();
-
+        
         assert!(
-            [Nominal(self), guard.manager, then.manager, else_.manager]
-                .into_iter()
-                .all_equal(),
+            [
+                Nominal(&*self.inner),
+                Nominal(&guard.inner),
+                Nominal(&then.inner),
+                Nominal(&else_.inner)
+            ]
+            .into_iter()
+            .all_equal(),
             "BDD operation called on BDDs from different managers"
         );
 
         let inner = self.inner.read();
         let ite = inner.ite(guard.id, then.id, else_.id);
 
-        BDD::new(&inner, ite, guard.manager())
+        BDD::new(&inner, ite)
     }
 }
 
 /// Return the conditional if-then-else function `ite(guard, then, else_)`.
-pub fn ite<'m>(
-    guard: impl Into<BDD<'m>>,
-    then: impl Into<BDD<'m>>,
-    else_: impl Into<BDD<'m>>,
-) -> BDD<'m> {
+pub fn ite<'m>(guard: impl Into<BDD>, then: impl Into<BDD>, else_: impl Into<BDD>) -> BDD {
     let guard = guard.into();
 
-    guard.manager.ite(guard, then, else_)
+    guard.manager().ite(guard, then, else_)
 }
 
 /// Return the restriction of the given [BDD] over the given [literal](Lit).
-pub fn restrict<'m>(lit: impl Into<Lit<'m>>, body: impl Into<BDD<'m>>) -> BDD<'m> {
+pub fn restrict<'m>(lit: impl Into<Lit>, body: impl Into<BDD>) -> BDD {
     let lit = lit.into();
     lit.manager().restrict(lit, body)
 }
 
 /// Return the existential quantification of the given [variable](Var) over the given [BDD].
-pub fn exists<'m>(vars: impl IntoIterator<Item = Var<'m>>, body: impl Into<BDD<'m>>) -> BDD<'m> {
+pub fn exists<'m>(vars: impl IntoIterator<Item = Var>, body: impl Into<BDD>) -> BDD {
     vars.into_iter()
         .fold(body.into(), |acc, var| var.manager().exists(var, acc))
 }
 
 /// Return the universal quantification of the given [variable](Var) over the given [BDD].
-pub fn forall<'m>(vars: impl IntoIterator<Item = Var<'m>>, body: impl Into<BDD<'m>>) -> BDD<'m> {
+pub fn forall<'m>(vars: impl IntoIterator<Item = Var>, body: impl Into<BDD>) -> BDD {
     vars.into_iter()
         .fold(body.into(), |acc, var| var.manager().forall(var, acc))
 }
 
 /// Return the implication between the two given [BDD]s.
-pub fn implies<'m>(left: impl Into<BDD<'m>>, right: impl Into<BDD<'m>>) -> BDD<'m> {
+pub fn implies<'m>(left: impl Into<BDD>, right: impl Into<BDD>) -> BDD {
     let left = left.into();
     let right = right.into();
-    left.manager.implies(left, right)
+    left.manager().implies(left, right)
 }
 
 /// A literal.
 ///
 /// A literal represent a variable or its negation. It is the result of negating a [Var] with the
 /// negation operator and can be combined with other variables or [BDD]s with logical operators.
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub enum Lit<'m> {
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub enum Lit {
     /// An asserted variable.
-    Positive(Var<'m>),
+    Positive(Var),
     /// A negated variable.
-    Negative(Var<'m>),
+    Negative(Var),
 }
 
-impl<'m> Lit<'m> {
+impl Lit {
     /// Return the inner [variable](Var) of this literal.
-    pub fn var(&self) -> Var<'m> {
+    pub fn var(&self) -> Var {
         match self {
-            Lit::Positive(var) => *var,
-            Lit::Negative(var) => *var,
+            Lit::Positive(var) => var.clone(),
+            Lit::Negative(var) => var.clone(),
         }
     }
 
@@ -461,14 +475,13 @@ impl<'m> Lit<'m> {
         }
     }
 
-    /// Return the [Manager] used to create the inner variable of this literal.
-    pub fn manager(&self) -> &'m Manager {
+    fn manager(&self) -> Manager {
         self.var().manager()
     }
 }
 
-impl<'m> From<Var<'m>> for Lit<'m> {
-    fn from(var: Var<'m>) -> Self {
+impl From<Var> for Lit {
+    fn from(var: Var) -> Self {
         Lit::Positive(var)
     }
 }
@@ -481,11 +494,11 @@ impl<'m> From<Var<'m>> for Lit<'m> {
 /// A [Tree] can be either a terminal or a [Node]. The latter can be interned again as a [BDD] using
 /// [Manager::make()].
 #[derive(Clone, Hash, PartialEq, Eq)]
-pub enum Tree<'m> {
+pub enum Tree {
     /// A terminal BDD.
     Terminal(bool),
     /// An internal BDD node.
-    Node(Node<'m>),
+    Node(Node),
 }
 
 /// A BDD node.
@@ -496,10 +509,10 @@ pub enum Tree<'m> {
 ///
 /// A [Node] can be interned again as a [BDD] using [Manager::make()].
 #[derive(Clone, Hash, PartialEq, Eq)]
-pub struct Node<'m> {
-    pub var: Var<'m>,
-    pub high: BDD<'m>,
-    pub low: BDD<'m>,
+pub struct Node {
+    pub var: Var,
+    pub high: BDD,
+    pub low: BDD,
 }
 
 /// A handle to a BDD.
@@ -529,34 +542,36 @@ pub struct Node<'m> {
 ///
 /// Satisfying assignments of a [BDD] can be iterated over using the [BDD::models()] method.
 #[derive(Hash, PartialEq, Eq)]
-pub struct BDD<'m> {
+pub struct BDD {
     id: SlotID,
-    manager: Nominal<&'m Manager>,
+    inner: Nominal<Arc<RwLock<Inner>>>,
 }
 
-impl<'m> Clone for BDD<'m> {
+impl Clone for BDD {
     fn clone(&self) -> Self {
-        BDD::new(&self.manager().inner.read(), self.id, self.manager())
+        BDD::new(&self.inner.read(), self.id)
     }
 }
 
-impl Drop for BDD<'_> {
+impl Drop for BDD {
     fn drop(&mut self) {
-        self.manager.inner.read().dec_ref(self.id);
+        self.inner.read().dec_ref(self.id);
     }
 }
 
-impl<'m> BDD<'m> {
-    fn new(inner: &Inner, id: SlotID, manager: &'m Manager) -> BDD<'m> {
+impl BDD {
+    fn new(inner: &Inner, id: SlotID) -> BDD {
         BDD {
             id: inner.inc_ref(id),
-            manager: Nominal(manager),
+            inner: Nominal(inner.arc()),
         }
     }
 
     /// Return the [Manager] that is handling the lifetime of this [BDD].
-    pub fn manager(&self) -> &'m Manager {
-        self.manager.into_inner()
+    fn manager(&self) -> Manager {
+        Manager {
+            inner: self.inner.0.clone(),
+        }
     }
 
     /// Return an iterator over the satisfying assignments of this [BDD].
@@ -583,58 +598,58 @@ impl<'m> BDD<'m> {
     ///
     /// The [next()](ModelIterator::next()) method of the resulting iterator panics if the variable
     /// order of the underlying [Manager] changed after the construction of the iterator
-    pub fn models(&self) -> ModelIterator<'m> {
-        ModelIterator::new(self.manager(), self.clone())
+    pub fn models(&self) -> ModelIterator {
+        ModelIterator::new(self.manager().inner.clone(), self.clone())
     }
 
     /// Return a [Tree] to inspect the internal structure of this [BDD].
-    pub fn tree(&self) -> Tree<'m> {
-        let inner = self.manager().inner.read();
+    pub fn tree(&self) -> Tree {
+        let inner = self.inner.read();
         let tree = inner.tree(self.id);
 
         match tree {
             inner::Tree::Terminal(value) => Tree::Terminal(value),
             inner::Tree::Node(node) => Tree::Node(Node {
-                var: Var::new(node.var, self.manager()),
-                high: BDD::new(&inner, node.high, self.manager()),
-                low: BDD::new(&inner, node.low, self.manager()),
+                var: Var::new(node.var, self.inner.0.clone()),
+                high: BDD::new(&inner, node.high),
+                low: BDD::new(&inner, node.low),
             }),
         }
     }
 }
 
-impl Debug for BDD<'_> {
+impl Debug for BDD {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "BDD({})", self.id.0)
     }
 }
 
-impl<'m> From<&BDD<'m>> for BDD<'m> {
-    fn from(bdd: &BDD<'m>) -> Self {
+impl From<&BDD> for BDD {
+    fn from(bdd: &BDD) -> Self {
         bdd.clone()
     }
 }
 
-impl<'m> From<&Var<'m>> for BDD<'m> {
-    fn from(var: &Var<'m>) -> Self {
-        BDD::from(*var)
+impl From<&Var> for BDD {
+    fn from(var: &Var) -> Self {
+        BDD::from(var.clone())
     }
 }
 
-impl<'m> From<Var<'m>> for BDD<'m> {
-    fn from(var: Var<'m>) -> Self {
+impl From<Var> for BDD {
+    fn from(var: Var) -> Self {
         BDD::from(Lit::from(var))
     }
 }
 
-impl<'m> From<&Lit<'m>> for BDD<'m> {
-    fn from(lit: &Lit<'m>) -> Self {
-        BDD::from(*lit)
+impl From<&Lit> for BDD {
+    fn from(lit: &Lit) -> Self {
+        BDD::from(lit.clone())
     }
 }
 
-impl<'m> From<Lit<'m>> for BDD<'m> {
-    fn from(lit: Lit<'m>) -> Self {
+impl From<Lit> for BDD {
+    fn from(lit: Lit) -> Self {
         match lit {
             Lit::Positive(var) => {
                 let manager = var.manager();
@@ -644,7 +659,7 @@ impl<'m> From<Lit<'m>> for BDD<'m> {
                     high: SlotID::TOP,
                     low: SlotID::BOTTOM,
                 });
-                BDD::new(&inner, node, manager)
+                BDD::new(&inner, node)
             }
             Lit::Negative(var) => {
                 let manager = var.manager();
@@ -654,55 +669,55 @@ impl<'m> From<Lit<'m>> for BDD<'m> {
                     high: SlotID::BOTTOM,
                     low: SlotID::TOP,
                 });
-                BDD::new(&inner, node, manager)
+                BDD::new(&inner, node)
             }
         }
     }
 }
 
-impl<'m> PartialEq<bool> for BDD<'m> {
+impl PartialEq<bool> for BDD {
     fn eq(&self, other: &bool) -> bool {
-        match self.manager.inner.read().tree(self.id) {
+        match self.inner.read().tree(self.id) {
             inner::Tree::Terminal(b) => b == *other,
             inner::Tree::Node(_) => false,
         }
     }
 }
 
-impl<'m> Not for BDD<'m> {
-    type Output = BDD<'m>;
+impl Not for BDD {
+    type Output = BDD;
 
     fn not(self) -> Self::Output {
-        self.manager.not(self)
+        self.manager().not(self)
     }
 }
 
-impl<'m> Not for Var<'m> {
-    type Output = Lit<'m>;
+impl Not for Var {
+    type Output = Lit;
 
     fn not(self) -> Self::Output {
         Lit::Negative(self)
     }
 }
 
-impl<'m> Not for &BDD<'m> {
-    type Output = BDD<'m>;
+impl Not for &BDD {
+    type Output = BDD;
 
     fn not(self) -> Self::Output {
-        self.manager.not(self)
+        self.manager().not(self)
     }
 }
 
-impl<'m> Not for &Var<'m> {
-    type Output = Lit<'m>;
+impl Not for &Var {
+    type Output = Lit;
 
     fn not(self) -> Self::Output {
-        Lit::Negative(*self)
+        Lit::Negative(self.clone())
     }
 }
 
-impl<'m> Not for Lit<'m> {
-    type Output = Lit<'m>;
+impl Not for Lit {
+    type Output = Lit;
 
     fn not(self) -> Self::Output {
         match self {
@@ -712,122 +727,122 @@ impl<'m> Not for Lit<'m> {
     }
 }
 
-impl<'m> Not for &Lit<'m> {
-    type Output = Lit<'m>;
+impl Not for &Lit {
+    type Output = Lit;
 
     fn not(self) -> Self::Output {
-        (*self).not()
+        self.clone().not()
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitAnd<T> for BDD<'m> {
-    type Output = BDD<'m>;
+impl<T: Into<BDD>> BitAnd<T> for BDD {
+    type Output = BDD;
 
     fn bitand(self, rhs: T) -> Self::Output {
-        self.manager.and([self, rhs.into()])
+        self.manager().and([self, rhs.into()])
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitAnd<T> for Var<'m> {
-    type Output = BDD<'m>;
+impl<T: Into<BDD>> BitAnd<T> for Var {
+    type Output = BDD;
 
     fn bitand(self, rhs: T) -> Self::Output {
-        self.manager.and([BDD::from(self), rhs.into()])
+        self.manager().and([BDD::from(self), rhs.into()])
     }
 }
-impl<'m, T: Into<BDD<'m>>> BitAnd<T> for &BDD<'m> {
-    type Output = BDD<'m>;
+impl<T: Into<BDD>> BitAnd<T> for &BDD {
+    type Output = BDD;
 
     fn bitand(self, rhs: T) -> Self::Output {
-        self.manager.and([self, &rhs.into()])
+        self.manager().and([self, &rhs.into()])
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitAnd<T> for &Var<'m> {
-    type Output = BDD<'m>;
+impl<T: Into<BDD>> BitAnd<T> for &Var {
+    type Output = BDD;
 
     fn bitand(self, rhs: T) -> Self::Output {
-        self.manager.and([BDD::from(self), rhs.into()])
+        self.manager().and([BDD::from(self), rhs.into()])
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitAndAssign<T> for BDD<'m> {
+impl<T: Into<BDD>> BitAndAssign<T> for BDD {
     fn bitand_assign(&mut self, rhs: T) {
         *self = &*self & rhs.into();
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitOr<T> for BDD<'m> {
-    type Output = BDD<'m>;
+impl<T: Into<BDD>> BitOr<T> for BDD {
+    type Output = BDD;
 
     fn bitor(self, rhs: T) -> Self::Output {
-        self.manager.or([self, rhs.into()])
+        self.manager().or([self, rhs.into()])
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitOr<T> for Var<'m> {
-    type Output = BDD<'m>;
+impl<T: Into<BDD>> BitOr<T> for Var {
+    type Output = BDD;
 
     fn bitor(self, rhs: T) -> Self::Output {
-        self.manager.or([BDD::from(self), rhs.into()])
+        self.manager().or([BDD::from(self), rhs.into()])
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitOr<T> for &BDD<'m> {
-    type Output = BDD<'m>;
+impl<T: Into<BDD>> BitOr<T> for &BDD {
+    type Output = BDD;
 
     fn bitor(self, rhs: T) -> Self::Output {
-        self.manager.or([self, &rhs.into()])
+        self.manager().or([self, &rhs.into()])
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitOr<T> for &Var<'m> {
-    type Output = BDD<'m>;
+impl<T: Into<BDD>> BitOr<T> for &Var {
+    type Output = BDD;
 
     fn bitor(self, rhs: T) -> Self::Output {
-        self.manager.or([BDD::from(self), rhs.into()])
+        self.manager().or([BDD::from(self), rhs.into()])
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitOrAssign<T> for BDD<'m> {
+impl<T: Into<BDD>> BitOrAssign<T> for BDD {
     fn bitor_assign(&mut self, rhs: T) {
         *self = &*self | rhs.into();
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitXor<T> for BDD<'m> {
-    type Output = BDD<'m>;
+impl<T: Into<BDD>> BitXor<T> for BDD {
+    type Output = BDD;
 
     fn bitxor(self, rhs: T) -> Self::Output {
-        self.manager.xor(self, rhs.into())
+        self.manager().xor(self, rhs.into())
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitXor<T> for Var<'m> {
-    type Output = BDD<'m>;
+impl<T: Into<BDD>> BitXor<T> for Var {
+    type Output = BDD;
 
     fn bitxor(self, rhs: T) -> Self::Output {
-        self.manager.xor(BDD::from(self), rhs.into())
+        self.manager().xor(BDD::from(self), rhs.into())
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitXor<T> for &BDD<'m> {
-    type Output = BDD<'m>;
+impl<T: Into<BDD>> BitXor<T> for &BDD {
+    type Output = BDD;
 
     fn bitxor(self, rhs: T) -> Self::Output {
-        self.manager.xor(self, &rhs.into())
+        self.manager().xor(self, rhs.into())
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitXor<T> for &Var<'m> {
-    type Output = BDD<'m>;
+impl<T: Into<BDD>> BitXor<T> for &Var {
+    type Output = BDD;
 
     fn bitxor(self, rhs: T) -> Self::Output {
-        self.manager.xor(BDD::from(self), rhs.into())
+        self.manager().xor(BDD::from(self), rhs.into())
     }
 }
 
-impl<'m, T: Into<BDD<'m>>> BitXorAssign<T> for BDD<'m> {
+impl<T: Into<BDD>> BitXorAssign<T> for BDD {
     fn bitxor_assign(&mut self, rhs: T) {
         *self = &*self ^ rhs.into();
     }
@@ -845,28 +860,28 @@ mod tests {
         let third = manager.add_var();
         assert!(first < third);
 
-        let middle = manager.add_var_after(first);
+        let middle = manager.add_var_after(&first);
         assert!(first < middle);
         assert!(middle < third);
 
-        let seq = manager.add_vars_after(third, 4);
+        let seq = manager.add_vars_after(&third, 4);
 
         for (v1, v2) in seq.into_iter().tuple_windows() {
             assert!(third < v1);
             assert!(v1 < v2);
         }
 
-        manager.swap_adjacent(first);
+        manager.swap_adjacent(&first);
         assert!(middle < first);
 
-        manager.swap_adjacent(first);
+        manager.swap_adjacent(&first);
         assert!(third < first);
 
         for var in manager.vars() {
-            assert_eq!(Some(var), manager.var_at(var.level()))
+            assert_eq!(Some(var.clone()), manager.var_at(var.level()))
         }
 
-        manager.swap(first, middle);
+        manager.swap(&first, &middle);
         assert!(first < middle);
         assert!(third < middle);
     }
@@ -879,11 +894,11 @@ mod tests {
 
         std::thread::scope(|scope| {
             scope.spawn(|| {
-                let tautology = p | !p;
-                let ponens = implies(implies(p, q) & p, q);
-                let not = implies(p, q) & p & !q;
-                let something = p & q;
-                let xor = (p ^ q) & &something;
+                let tautology = &p | !&p;
+                let ponens = implies(implies(&p, &q) & &p, &q);
+                let not = implies(&p, &q) & &p & !&q;
+                let something = &p & &q;
+                let xor = (&p ^ &q) & &something;
 
                 manager.reclaim();
 
@@ -896,11 +911,11 @@ mod tests {
             });
 
             scope.spawn(|| {
-                let something = p & q;
+                let something = &p & &q;
 
-                manager.swap(p, q);
+                manager.swap(&p, &q);
 
-                let xor = (p ^ q) & &something;
+                let xor = (&p ^ &q) & &something;
 
                 assert_ne!(something, true);
                 assert_ne!(something, false);
@@ -909,12 +924,12 @@ mod tests {
 
             scope.spawn(|| {
                 let w = manager.add_var();
-                let something = p & (q | w);
+                let something = &p & (&q | &w);
 
-                manager.swap(p, w);
+                manager.swap(&p, &w);
 
-                let ep = exists([p], &something);
-                let ap = forall([p], &something);
+                let ep = exists([p.clone()], &something);
+                let ap = forall([p.clone()], &something);
 
                 assert_ne!(ep, true);
                 assert_ne!(ep, false);
@@ -929,11 +944,11 @@ mod tests {
         let p = manager.add_var();
         let q = manager.add_var();
 
-        let test = p ^ q;
+        let test = &p ^ &q;
 
         let models: Vec<_> = test.models().collect();
 
-        assert!(models == [[!p, q.into()], [p.into(), !q]]);
+        assert!(models == [[!&p, q.clone().into()], [p.into(), !q]]);
     }
 
     #[test]
@@ -965,13 +980,13 @@ mod tests {
         let p = manager.add_var();
         let q = manager.add_var();
 
-        let test = p ^ q;
+        let test = &p ^ &q;
 
         let mut models = test.models();
 
         models.next().unwrap();
 
-        manager.swap(p, q);
+        manager.swap(&p, &q);
 
         models.next().unwrap();
     }
