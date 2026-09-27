@@ -37,7 +37,8 @@ use formally::{
 };
 
 use oxidd::{
-    BooleanFunction as _, Function as _, HasLevel, LevelNo, Manager as _, ManagerRef, Node, VarNo,
+    BooleanFunction as _, Function as _, HasLevel, HasWorkers as _, LevelNo, Manager as _,
+    ManagerRef, Node, VarNo, WorkerPool,
     bdd::{BDDFunction, BDDManagerRef},
     error::OutOfMemory,
 };

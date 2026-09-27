@@ -143,7 +143,7 @@ impl BoundRef {
         };
 
         match prim.domain() {
-            [first, second, ..] if prim.associativity().is_some() => {
+            [first, second, ..] if nargs >= 2 && prim.associativity().is_some() => {
                 if *first == *second {
                     std::iter::repeat_n(first.clone(), nargs).collect()
                 } else {

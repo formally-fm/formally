@@ -28,6 +28,7 @@ use formally::{
     support::*,
 };
 
+use itertools::Itertools;
 use std::{
     cell::RefCell,
     collections::HashSet,
@@ -35,7 +36,6 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use itertools::Itertools;
 
 /// Configuration for SMT solvers.
 ///
@@ -669,22 +669,27 @@ impl Solver {
             note!(term.span(), "given term is of sort `{}`", sort);
             return Err(DiagnosticEmitted);
         }
-        
+
         self.qe_in(&term)
     }
-    
+
     fn qe_in(&self, term: &Term) -> Result<Term> {
         if term.is_quantifier_free() {
             return Ok(term.clone());
         }
-        
+
         match term.kind() {
             TermKind::Constant(_) => Ok(term.clone()),
             TermKind::Atom(atom) => Ok(Atom {
                 head: atom.head.clone(),
-                arguments: atom.arguments.iter().map(|arg| self.qe_in(arg)).try_collect()?,
+                arguments: atom
+                    .arguments
+                    .iter()
+                    .map(|arg| self.qe_in(arg))
+                    .try_collect()?,
                 span: atom.span(),
-            }.into_term_in(&*self.manager.pool)),
+            }
+            .into_term_in(&*self.manager.pool)),
             TermKind::Quantified(quant) => {
                 let quant = Quantified {
                     quantifier: quant.quantifier,
@@ -692,14 +697,15 @@ impl Solver {
                     body: self.qe_in(&quant.body)?,
                     span: quant.span(),
                 };
-                
+
                 Ok(self.backend_solver.qe(quant, &*self.manager.pool)?)
-            } 
+            }
             TermKind::Let(let_) => Ok(Let {
                 bindings: let_.bindings.clone(),
                 body: self.qe_in(&let_.body)?,
                 span: let_.span(),
-            }.into_term_in(&*self.manager.pool))
+            }
+            .into_term_in(&*self.manager.pool)),
         }
     }
 }
