@@ -38,7 +38,7 @@ use formally::{
         parse::Parsable as _,
         print::{Print, RenderTarget},
     },
-    smt::{self, Config, DashPool, ToTerm, backends::Backend, smtlib::ast, tbdd},
+    smt::{self, Config, DashPool, ToTerm, backends::Backend, smtlib::ast, tbdd_hm as tbdd},
     support::*,
 };
 
@@ -353,7 +353,7 @@ impl Interpreter {
         let qe = tbdd::QE::new(state.pool.clone(), &state.solver);
         let term = Interpreter::term_to_smt(&state.solver, getqe.term)?;
         let term = state.solver.lookup(term, Role::Function)?;
-        let term = qe.qe(&term)?;
+        let term = qe.qe(&term);
         let term = Box::new(ast::Term::from(term));
 
         Interpreter::response(

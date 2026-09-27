@@ -268,6 +268,10 @@ impl Manager {
             .var_at(level)
             .map(|v| Var::new(v, self.inner.clone()))
     }
+    
+    pub fn level_of(&self, var: &Var) -> Level {
+        self.inner.read().level_of(Some(var.var))
+    }
 
     /// Swap the position in the variable order of the given variable with the one positioned
     /// immediately after it.

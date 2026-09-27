@@ -411,8 +411,8 @@ pub mod theories;
 #[cfg(feature = "tbdd")]
 pub mod tbdd;
 
-// #[cfg(feature = "tbdd")]
-// pub mod tbdd_hm;
+#[cfg(feature = "tbdd")]
+pub mod tbdd_hm;
 
 mod base;
 pub use base::*;

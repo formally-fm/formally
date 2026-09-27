@@ -1,0 +1,367 @@
+//
+// ::formally - the open-source formal methods toolchain
+//
+// Copyright (c) 2026 Nicola Gigante
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+//
+
+mod utils;
+use utils::*;
+
+use crate::formally;
+
+use formally::{
+    dd::obdd::{BDD, Level, Manager, Node, Var},
+    smt::{
+        self, Function, FunctionRef, Let, Quantified, Quantifier, Solver, Sort, Term, TermKind,
+        TermPool, ToTerm, Variable,
+        theories::{Core, CoreAtom},
+    },
+    support::{Diagnosable, Located, Span},
+};
+
+use dashmap::DashMap;
+use itertools::{Itertools, partition};
+use thiserror::Error;
+use transitive::Transitive;
+
+use formally_dd::obdd::Tree;
+use std::{collections::HashMap, fmt::Debug, hash::Hash, ops::Deref, sync::Arc};
+
+//
+// Given an SMT formula and a set of variables to be existentially eliminated, things to do:
+// 1. ✓ collect the atoms to form the set of BDD variables
+//    - ✓ collect free variables for each atom/term
+// 2. ✓ build the BDD
+// 3. ✓ reorder according to the next variable to eliminate
+// 4. ✓ traverse to make the local QE calls
+// 5. ✓ rebuild (with possibly the new variables corresponding to new atoms)
+// 6. go to point 3
+// 7. ✓ build a Term out of the BDD
+//
+// when to make the BDD T-reduced?
+//
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct Atom(Term);
+
+impl Deref for Atom {
+    type Target = Term;
+
+    fn deref(&self) -> &Term {
+        &self.0
+    }
+}
+
+#[derive(Debug, Error, Located, Transitive)]
+#[error("{kind}")]
+struct Error {
+    pub kind: ErrorKind,
+    pub span: Option<Span>,
+}
+
+impl From<ErrorKind> for Error {
+    fn from(kind: ErrorKind) -> Self {
+        Error { kind, span: None }
+    }
+}
+
+#[derive(Debug, Error)]
+enum ErrorKind {
+    #[error("maximum memory usage limit reached for BDD nodes")]
+    OutOfMemory,
+    #[error("building T-BDDs for let expressions is not (yet) supported")]
+    UnsupportedLet,
+}
+
+impl Diagnosable for Error {}
+
+pub struct QE<'s> {
+    manager: Manager,
+    pool: Arc<dyn TermPool + Send + Sync>,
+    solver: &'s Solver,
+    atoms: SyncBiMap<Atom, Var>,
+    vars: SyncBiMap<Variable, usize>,
+    free: DashMap<Term, BitSet>,
+    bdds: DashMap<Term, BDD>,
+}
+
+impl<'s> QE<'s> {
+    pub fn new(pool: Arc<dyn TermPool + Send + Sync>, solver: &'s Solver) -> QE<'s> {
+        QE {
+            manager: Manager::new(),
+            pool: pool.clone(),
+            solver,
+            atoms: SyncBiMap::new(),
+            vars: SyncBiMap::new(),
+            free: DashMap::new(),
+            bdds: DashMap::new(),
+        }
+    }
+
+    pub fn qe(&self, term: &Term) -> Term {
+        if term.is_quantifier_free() {
+            return term.clone();
+        }
+
+        match term.kind() {
+            TermKind::Constant(_) => term.clone(),
+            TermKind::Atom(atom) => smt::Atom {
+                head: atom.head.clone(),
+                arguments: atom.arguments.iter().map(|arg| self.qe(arg)).collect(),
+                span: atom.span(),
+            }
+            .into_term_in(&*self.pool),
+            TermKind::Quantified(quant) => {
+                let quant = Quantified {
+                    quantifier: quant.quantifier,
+                    variables: quant.variables.clone(),
+                    body: self.qe(&quant.body),
+                    span: quant.span(),
+                };
+
+                self.qe_quant(quant)
+            }
+            TermKind::Let(let_) => Let {
+                bindings: let_.bindings.clone(),
+                body: self.qe(&let_.body),
+                span: let_.span(),
+            }
+            .into_term_in(&*self.pool),
+        }
+    }
+
+    fn qe_quant(&self, quant: Quantified) -> Term {
+        match quant.quantifier {
+            Quantifier::Exists => {
+                let mut result = self.bdd(&quant.body);
+                for var in &*quant.variables {
+                    let cutoff = self.reorder(var.clone());
+                    result = self.eliminate(var.clone(), cutoff, &result);
+                }
+
+                self.term(&result)
+            }
+            Quantifier::Forall => todo!(),
+        }
+    }
+
+    fn atom(&self, atom: Atom) -> Var {
+        self.atoms.by_key_or_insert(atom, || self.manager.add_var())
+    }
+
+    fn variable(&self, var: Variable) -> usize {
+        self.vars.by_key_or_insert(var, || self.vars.size())
+    }
+
+    fn reorder(&self, eliminate: Variable) -> Level {
+        let eliminate = self.variable(eliminate);
+        let mut bddvars = self.atoms.indexes().collect_vec();
+
+        let cutoff = partition(&mut bddvars, |var| {
+            !self.free(self.atoms.by_index(var).unwrap()).get(eliminate)
+        });
+
+        todo!()
+        // self.manager.with_manager_exclusive(|m| {
+        //     set_var_order(m, &bddvars);
+        //     m.var_to_level(bddvars[cutoff])
+        // })
+    }
+
+    fn eliminate(&self, var: Variable, cutoff: Level, bdd: &BDD) -> BDD {
+        match bdd.tree() {
+            Tree::Node(Node {
+                var: guard,
+                high,
+                low,
+            }) => {
+                let level = self.manager.level_of(&guard);
+
+                if level < cutoff {
+                    let high = self.eliminate(var.clone(), cutoff, &high);
+                    let low = self.eliminate(var.clone(), cutoff, &low);
+
+                    self.manager.ite(guard, high, low)
+                } else {
+                    let quant = Quantified {
+                        quantifier: Quantifier::Exists,
+                        variables: Arc::new([var]),
+                        body: self.term(bdd),
+                        span: None,
+                    }
+                    .into_term_in(&*self.pool);
+
+                    let eliminated = self.solver.qe(quant).unwrap();
+
+                    self.bdd(&eliminated)
+                }
+            }
+            Tree::Terminal(true) => self.manager.top(),
+            Tree::Terminal(false) => self.manager.top(),
+        }
+    }
+
+    fn bdd(&self, term: &Term) -> BDD {
+        if let Some(bdd) = self.bdds.get(term) {
+            return bdd.clone();
+        }
+
+        let bdd = match term.kind() {
+            TermKind::Atom(atom) => {
+                if let Ok(atom) = CoreAtom::try_from(atom) {
+                    match atom {
+                        CoreAtom::True => self.manager.top(),
+                        CoreAtom::False => self.manager.bottom(),
+                        CoreAtom::Not(arg) => !self.bdd(arg),
+                        CoreAtom::Implies(args) => {
+                            let bdds: Vec<_> = args.iter().map(|arg| self.bdd(arg)).collect();
+                            bdds.into_iter()
+                                .rev()
+                                .fold(self.manager.bottom(), |acc, arg| {
+                                    self.manager.implies(acc, arg)
+                                })
+                        }
+                        CoreAtom::And(args) => {
+                            let bdds: Vec<_> = args.iter().map(|arg| self.bdd(arg)).collect();
+                            bdds.into_iter()
+                                .fold(self.manager.top(), |acc, arg| acc & arg)
+                        }
+                        CoreAtom::Or(args) => {
+                            let bdds: Vec<_> = args.iter().map(|arg| self.bdd(arg)).collect();
+                            bdds.into_iter()
+                                .fold(self.manager.bottom(), |acc, arg| acc | arg)
+                        }
+                        CoreAtom::Xor(args) => {
+                            let bdds: Vec<_> = args.iter().map(|arg| self.bdd(arg)).collect();
+                            bdds.into_iter()
+                                .fold(self.manager.bottom(), |acc, arg| acc ^ arg)
+                        }
+                        CoreAtom::Ite(guard, then, else_) => {
+                            let guard = self.bdd(guard);
+                            let then = self.bdd(then);
+                            let else_ = self.bdd(else_);
+
+                            self.manager.ite(guard, then, else_)
+                        }
+                        CoreAtom::Equals(_) | CoreAtom::Distinct(_) => {
+                            BDD::from(self.atom(Atom(term.clone())))
+                        }
+                    }
+                } else if let Ok(sort) = Sort::of(term)
+                    && sort == Core::Bool()
+                {
+                    BDD::from(self.atom(Atom(term.clone())))
+                } else {
+                    unreachable!();
+                }
+            }
+            TermKind::Constant(_) => unreachable!(),
+            TermKind::Quantified(_) => unreachable!(),
+            TermKind::Let(_) => todo!(),
+        };
+
+        self.bdds.insert(term.clone(), bdd.clone());
+
+        bdd
+    }
+
+    fn term<'m>(&self, bdd: &BDD) -> Term {
+        let mut cache = HashMap::new();
+        self.term_in(bdd, &mut cache)
+    }
+
+    fn term_in(&self, bdd: &BDD, cache: &mut HashMap<BDD, Term>) -> Term {
+        if let Some(term) = cache.get(bdd) {
+            return term.clone();
+        }
+
+        let term = match bdd.tree() {
+            Tree::Node(Node { var, high, low }) => {
+                let guard = self.atoms.by_index(&var).unwrap().0;
+                let high = self.term_in(&high, cache);
+                let low = self.term_in(&low, cache);
+
+                if high == true && low == false {
+                    guard
+                } else if high == false && low == true {
+                    Core::not().call([guard]).into_term_in(&*self.pool)
+                } else if low == true {
+                    Core::implies()
+                        .call([guard, high])
+                        .into_term_in(&*self.pool)
+                } else if low == false {
+                    Core::and().call([guard, high]).into_term_in(&*self.pool)
+                } else if high == true {
+                    Core::or().call([guard, low]).into_term_in(&*self.pool)
+                } else {
+                    Core::ite()
+                        .call([guard, high, low])
+                        .into_term_in(&*self.pool)
+                }
+            }
+            Tree::Terminal(false) => Core::False().into_term_in(&*self.pool),
+            Tree::Terminal(true) => Core::True().into_term_in(&*self.pool),
+        };
+
+        cache.insert(bdd.clone(), term.clone());
+        term
+    }
+
+    fn free(&self, term: impl Deref<Target = Term>) -> BitSet {
+        if let Some(bits) = self.free.get(&term) {
+            return bits.clone();
+        }
+
+        let bits = match term.kind() {
+            TermKind::Constant(_) => BitSet::new(),
+            TermKind::Atom(atom) => {
+                let mut bits = BitSet::new();
+                if let FunctionRef::Bound(bound) = &atom.head
+                    && let Function::Variable(var) = &bound.function
+                {
+                    bits.set(self.variable(var.clone()), true);
+                }
+                for arg in &*atom.arguments {
+                    bits |= self.free(arg);
+                }
+
+                bits
+            }
+            TermKind::Quantified(quant) => {
+                let mut bits = self.free(&quant.body);
+                for var in &*quant.variables {
+                    bits.set(self.variable(var.clone()), false)
+                }
+                bits
+            }
+            TermKind::Let(let_) => {
+                let mut bits = self.free(&let_.body);
+                for bind in &*let_.bindings {
+                    bits.set(self.variable(bind.variable.clone()), false)
+                }
+                bits
+            }
+        };
+        self.free.insert(term.clone(), bits.clone());
+
+        bits
+    }
+}
