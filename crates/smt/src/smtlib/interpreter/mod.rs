@@ -350,10 +350,10 @@ impl Interpreter {
     }
 
     fn get_qe(state: &mut State, getqe: ast::GetQE) -> Result<()> {
-        let qe = tbdd::QE::new(state.pool.clone(), &state.solver);
+        //let qe = tbdd::QE::new(state.pool.clone(), &state.solver);
         let term = Interpreter::term_to_smt(&state.solver, getqe.term)?;
         let term = state.solver.lookup(term, smt::Role::Function)?;
-        let term = qe.qe(&term)?;
+        let term = state.solver.qe(&term)?;
         let term = Box::new(ast::Term::from(term));
 
         Interpreter::response(

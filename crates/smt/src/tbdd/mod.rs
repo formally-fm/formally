@@ -128,38 +128,53 @@ impl<'s> QE<'s> {
     }
 
     pub fn qe(&self, term: &Term) -> Result<Term, DiagnosticEmitted> {
-        if term.is_quantifier_free() {
-            return Ok(term.clone());
-        }
+        self.qe_in(term, &HashMap::new())
+    }
 
+    #[allow(clippy::mutable_key_type)]
+    fn qe_in(
+        &self,
+        term: &Term,
+        bindings: &HashMap<Variable, Term>,
+    ) -> Result<Term, DiagnosticEmitted> {
         match term.kind() {
             TermKind::Constant(_) => Ok(term.clone()),
-            TermKind::Atom(atom) => Ok(smt::Atom {
-                head: atom.head.clone(),
-                arguments: atom
-                    .arguments
-                    .iter()
-                    .map(|arg| self.qe(arg))
-                    .try_collect()?,
-                span: atom.span(),
+            TermKind::Atom(atom) => {
+                if let FunctionRef::Bound(bound) = &atom.head
+                    && let Function::Variable(var) = &bound.function
+                    && let Some(term) = bindings.get(var)
+                {
+                    self.qe_in(term, bindings)
+                } else {
+                    Ok(smt::Atom {
+                        head: atom.head.clone(),
+                        arguments: atom
+                            .arguments
+                            .iter()
+                            .map(|arg| self.qe_in(arg, bindings))
+                            .try_collect()?,
+                        span: atom.span(),
+                    }
+                    .into_term_in(&*self.pool))
+                }
             }
-            .into_term_in(&*self.pool)),
             TermKind::Quantified(quant) => {
                 let quant = Quantified {
                     quantifier: quant.quantifier,
                     variables: quant.variables.clone(),
-                    body: self.qe(&quant.body)?,
+                    body: self.qe_in(&quant.body, bindings)?,
                     span: quant.span(),
                 };
 
                 Ok(self.qe_quant(quant)?)
             }
-            TermKind::Let(let_) => Ok(Let {
-                bindings: let_.bindings.clone(),
-                body: self.qe(&let_.body)?,
-                span: let_.span(),
+            TermKind::Let(let_) => {
+                let mut bindings = bindings.clone();
+                for bind in &*let_.bindings {
+                    bindings.insert(bind.variable.clone(), bind.def.clone());
+                }
+                self.qe_in(&let_.body, &bindings)
             }
-            .into_term_in(&*self.pool)),
         }
     }
 
@@ -259,15 +274,6 @@ impl<'s> QE<'s> {
     }
 
     fn bdd(&self, term: &Term) -> Result<BCDDFunction, Error> {
-        self.bdd_in(term, &HashMap::new())
-    }
-
-    #[allow(clippy::mutable_key_type)]
-    fn bdd_in(
-        &self,
-        term: &Term,
-        bindings: &HashMap<Variable, Term>,
-    ) -> Result<BCDDFunction, Error> {
         if let Some(bdd) = self.bdds.get(term) {
             return Ok(bdd.clone());
         }
@@ -317,13 +323,6 @@ impl<'s> QE<'s> {
                                 .with_manager_shared(|m| BCDDFunction::var(m, var))?
                         }
                     }
-                } else if let FunctionRef::Bound(bound) = &atom.head
-                    && let Function::Variable(variable) = &bound.function
-                    && let Some(term) = bindings.get(variable)
-                {
-                    let mut bindings = bindings.clone();
-                    bindings.remove(variable);
-                    self.bdd_in(term, &bindings)?
                 } else if let Ok(sort) = Sort::of(term)
                     && sort == Core::Bool()
                 {
@@ -336,13 +335,7 @@ impl<'s> QE<'s> {
             }
             TermKind::Constant(_) => unreachable!(),
             TermKind::Quantified(_) => unreachable!(),
-            TermKind::Let(let_) => {
-                let mut bindings = bindings.clone();
-                for binding in &*let_.bindings {
-                    bindings.insert(binding.variable.clone(), binding.def.clone());
-                }
-                self.bdd_in(&let_.body, &bindings)?
-            }
+            TermKind::Let(_) => unreachable!(),
         };
 
         self.bdds.insert(term.clone(), bdd.clone());
