@@ -210,6 +210,10 @@ impl Manager {
         Manager::default()
     }
 
+    pub fn size(&self) -> usize {
+        self.inner.read().size()
+    }
+
     /// Create a new [variable](Var) positioned at the bottom of the current variable order.
     pub fn add_var(&self) -> Var {
         Var::new(self.inner.write().add_var(), self.inner.clone())
@@ -220,6 +224,15 @@ impl Manager {
     pub fn add_var_after(&self, preceeding: &Var) -> Var {
         Var::new(
             self.inner.write().add_var_after(preceeding.var),
+            self.inner.clone(),
+        )
+    }
+
+    /// Create a new [variable](Var) positioned immediately after the given level in the current
+    /// variable order.
+    pub fn add_var_at_level(&self, level: Level) -> Var {
+        Var::new(
+            self.inner.write().add_var_at_level(level),
             self.inner.clone(),
         )
     }
@@ -238,6 +251,19 @@ impl Manager {
     /// current variable order.
     pub fn add_vars_after(&self, preceeding: &Var, n: u32) -> Vec<Var> {
         let ids = self.inner.write().add_vars_after(preceeding.var, n);
+
+        let mut vars = Vec::with_capacity(n as usize);
+        for id in ids {
+            vars.push(Var::new(id, self.inner.clone()))
+        }
+
+        vars
+    }
+
+    /// Create a given number of [variables](Var) positioned immediately after the given level in
+    /// the current variable order.
+    pub fn add_vars_at_level(&self, level: Level, n: u32) -> Vec<Var> {
+        let ids = self.inner.write().add_vars_at_level(level, n);
 
         let mut vars = Vec::with_capacity(n as usize);
         for id in ids {
@@ -268,7 +294,7 @@ impl Manager {
             .var_at(level)
             .map(|v| Var::new(v, self.inner.clone()))
     }
-    
+
     pub fn level_of(&self, var: &Var) -> Level {
         self.inner.read().level_of(Some(var.var))
     }
@@ -398,7 +424,7 @@ impl Manager {
         let guard = guard.into();
         let then = then.into();
         let else_ = else_.into();
-        
+
         assert!(
             [
                 Nominal(&*self.inner),

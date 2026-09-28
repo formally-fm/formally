@@ -64,14 +64,25 @@ impl<K: Clone + Hash + Eq, I: Clone + Hash + Eq> SyncBiMap<K, I> {
         self.key_to_index.get(key).as_deref().cloned()
     }
 
+    pub fn insert(&self, key: K, index: I) {
+        let e1 = self.key_to_index.entry(key);
+        let e2 = self.index_to_key.entry(index);
+
+        let key = e1.key().clone();
+        let index = e2.key().clone();
+
+        e1.insert(index);
+        e2.insert(key);
+    }
+
     pub fn by_key_or_insert<F>(&self, key: K, f: F) -> I
     where
-        F: FnOnce() -> I,
+        F: FnOnce(&K) -> I,
     {
         match self.key_to_index.entry(key) {
             Entry::Occupied(entry) => entry.get().clone(),
             Entry::Vacant(entry) => {
-                let index = f();
+                let index = f(entry.key());
                 self.index_to_key.insert(index.clone(), entry.key().clone());
                 entry.insert(index.clone());
                 index
@@ -103,6 +114,12 @@ pub struct BitSet {
 impl BitSet {
     pub fn new() -> BitSet {
         BitSet::default()
+    }
+
+    pub fn repeat(value: bool, len: usize) -> BitSet {
+        BitSet {
+            bits: BitVec::repeat(value, len),
+        }
     }
 
     pub fn with_capacity(capacity: usize) -> BitSet {

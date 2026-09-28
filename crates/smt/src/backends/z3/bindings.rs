@@ -682,8 +682,12 @@ impl Ast {
                 1 => formulas[0],
                 n => Z3_mk_and(ctx, n, formulas.as_ptr()).unwrap()
             };
-            
+
             Z3_inc_ref(ctx, ast);
+
+            let simplified = Z3_simplify(ctx, ast).unwrap();
+            Z3_inc_ref(ctx, simplified);
+            Z3_dec_ref(ctx, ast);
             
             Z3_apply_result_dec_ref(ctx, result);
             Z3_tactic_dec_ref(ctx, qe);

@@ -705,7 +705,8 @@ impl Manager {
             children.push(self.export(child, pool, to_func.clone(), to_sort.clone())?);
         }
 
-        let head = match self.cvc5manager.get_term_kind(term) {
+        let kind = self.cvc5manager.get_term_kind(term);
+        let head = match kind {
             cvc5::Kind::Equal => Core::equals(),
             cvc5::Kind::Distinct => Core::distinct(),
             cvc5::Kind::Not => Core::not(),

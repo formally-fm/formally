@@ -36,6 +36,9 @@ use std::{
 pub struct Level(u32);
 
 impl Level {
+    /// The minimum possible level.
+    pub const MIN: Level = Level(0);
+    
     /// The maximum possible level.
     pub const MAX: Level = Level(u32::MAX);
 
@@ -155,20 +158,20 @@ impl Order {
         new
     }
 
-    pub fn add_var_after(&mut self, level: Level) -> VarID {
+    pub fn add_var_at_level(&mut self, level: Level) -> VarID {
         assert!(
             self.size() < u32::MAX,
             "maximum number of variables reached"
         );
 
-        assert!(level < Level(self.size()), "non-existent Level");
+        assert!(level <= Level(self.size()), "non-existent Level");
 
         let new = VarID(self.size());
-        for l in (level.index() + 1)..self.var_to_level.len() {
+        for l in level.index()..self.var_to_level.len() {
             self.var_to_level[self.level_to_var[l].index()] += 1;
         }
-        self.var_to_level.push(level + 1);
-        self.level_to_var.insert(level.index() + 1, new);
+        self.var_to_level.push(level);
+        self.level_to_var.insert(level.index(), new);
 
         new
     }
@@ -185,15 +188,15 @@ impl Order {
         vars
     }
 
-    pub fn add_vars_after(&mut self, level: Level, n: u32) -> Vec<VarID> {
+    pub fn add_vars_at_level(&mut self, level: Level, n: u32) -> Vec<VarID> {
         assert!(
             self.size() < u32::MAX - n,
             "maximum number of variables reached"
         );
 
-        assert!(level < Level(self.size()), "non-existent Level");
+        assert!(level <= Level(self.size()), "non-existent Level");
 
-        let pos = level.index() + 1;
+        let pos = level.index();
 
         let vars: Vec<_> = (self.size()..self.size() + n).map(VarID).collect();
         for l in pos..self.var_to_level.len() {

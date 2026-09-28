@@ -350,8 +350,8 @@ impl<'s> QE<'s> {
                     .unwrap()
                     .0;
                 let (high, low) = BDDFunction::cofactors_edge(m, edge).unwrap();
-                let high = self.term_in(m, &BDDFunction::from_edge_ref(m, &high), cache);
-                let low = self.term_in(m, &BDDFunction::from_edge_ref(m, &low), cache);
+                let high = self.term_in(m, &BDDFunction::from_edge_ref(m, high), cache);
+                let low = self.term_in(m, &BDDFunction::from_edge_ref(m, low), cache);
 
                 if high == true && low == false {
                     guard

@@ -129,6 +129,10 @@ impl Inner {
     pub fn seq(&self) -> usize {
         self.order.seq()
     }
+    
+    pub fn size(&self) -> usize {
+        self.slots.len()
+    }
 
     pub fn add_var(&mut self) -> VarID {
         let var = self.order.add_var();
@@ -139,7 +143,11 @@ impl Inner {
 
     pub fn add_var_after(&mut self, prec: VarID) -> VarID {
         let level = self.order.level_of(prec);
-        let var = self.order.add_var_after(level);
+        self.add_var_at_level(level + 1)
+    }
+    
+    pub fn add_var_at_level(&mut self, level: Level) -> VarID {
+        let var = self.order.add_var_at_level(level);
 
         self.varinfo.push(VarInfo::default());
 
@@ -159,7 +167,11 @@ impl Inner {
 
     pub fn add_vars_after(&mut self, prec: VarID, n: u32) -> Vec<VarID> {
         let level = self.order.level_of(prec);
-        let vars = self.order.add_vars_after(level, n);
+        self.add_vars_at_level(level + 1, n)
+    }
+    
+    pub fn add_vars_at_level(&mut self, level: Level, n: u32) -> Vec<VarID> {
+        let vars = self.order.add_vars_at_level(level, n);
 
         self.varinfo
             .resize(self.varinfo.len() + n as usize, VarInfo::default());

@@ -1,0 +1,152 @@
+(set-logic LIA)
+
+(declare-const x Int)
+(declare-const y Int)
+(declare-const z Int)
+(declare-const w Int)
+
+(assert
+  (and
+    (and
+      (>= x (- 10))
+      (<= x 30)
+      (and
+        (>= y (- 15))
+        (<= y 25))
+      (or
+        (and (>= z 0) (<= z 40))
+        (and (>= w 5) (<= w 15))))
+
+    (or
+      (and
+        (>= (+ (* 2 x) y (- z)) 5)
+        (or
+          (and
+            (<= (+ x w) 9)
+            (>= (- z y) 4))
+          (and
+            (> (+ y z) 20)
+            (< (- x w) 3)))
+        (or
+          (and
+            (>= (+ x y z) 10)
+            (or
+              (<= (+ (* 3 w) y) 15)
+              (>= (- z (* 2 x)) 1)))
+          (and
+            (= (+ x y) (+ z w))
+            (not (= x w)))))
+      (and
+        (<= (+ (* 3 x) (* 2 y)) 18)
+        (or
+          (>= (+ z w) 25)
+          (and
+            (< x y)
+            (> z w)))))
+
+    (or
+      (and
+        (or
+          (= x y)
+          (and
+            (> z x)
+            (< w y)))
+        (or
+          (and
+            (<= (+ x y w) 12)
+            (>= (+ z (- w)) 3))
+          (and
+            (> (+ (* 2 z) y) 10)
+            (or
+              (<= (- x z) 0)
+              (>= (+ w y) 8)))))
+      (and
+        (not (= z w))
+        (or
+          (and
+            (>= (+ x z) 20)
+            (<= (+ y w) 5))
+          (and
+            (<= (+ x y z w) 40)
+            (> (- z x) 0)))))
+
+    (or
+      (and
+        (<= (+ (* 2 x) (* 3 y) (- w)) 25)
+        (or
+          (and
+            (>= (+ z (* 2 w)) 11)
+            (or
+              (< (+ x y) 15)
+              (> (- z y) 10)))
+          (and
+            (= (+ x w) (- z y))
+            (not
+              (or
+                (= x 0)
+                (= z 0))))))
+      (and
+        (> (+ x z) (+ y w))
+        (or
+          (<= (* 2 x) (+ z w))
+          (and
+            (>= y 0)
+            (<= (+ y w) z)))))
+
+    (not
+      (or
+        (and
+          (> x 20)
+          (or
+            (< y (- 10))
+            (> z 35)))
+        (and
+          (= (+ x y) 0)
+          (or
+            (= (+ z w) 0)
+            (and
+              (< w 0)
+              (> z 0))))))
+
+    (or
+      (and
+        (or
+          (and
+            (>= (- (* 3 x) y) 8)
+            (<= (+ z w) 12))
+          (and
+            (< (+ x y) 0)
+            (> (- z w) 5)))
+        (or
+          (<= (+ x (* 2 y) z) 20)
+          (and
+            (>= (+ x z) 12)
+            (<= (- y w) 4))))
+      (and
+        (or
+          (> (+ x y z w) 50)
+          (and
+            (< (+ x y) 10)
+            (> (+ z w) 5)))
+        (not
+          (and
+            (= x z)
+            (= y w)))))
+
+    (or
+      (and
+        (>= (+ (* 2 x) y z (- w)) 15)
+        (or
+          (<= (+ x y) (+ z w))
+          (and
+            (> x w)
+            (> z y))))
+      (and
+        (<= (+ x y z w) 25)
+        (or
+          (>= (- x y) 2)
+          (and
+            (<= (- z w) 5)
+            (not (= (+ x w) (+ y z)))))))))
+
+(check-sat)
