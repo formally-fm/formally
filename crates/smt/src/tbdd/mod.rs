@@ -37,20 +37,20 @@ use formally::{
 };
 
 use oxidd::{
-    BooleanFunction as _, Function as _, HasLevel, HasWorkers as _, LevelNo, Manager as _,
-    ManagerRef, Node, VarNo, WorkerPool,
-    bdd::{BDDFunction, BDDManagerRef},
+    BooleanFunction as _, Function as _, HasLevel, LevelNo, Manager as _, ManagerRef, Node, VarNo,
+    bcdd::{BCDDFunction, BCDDManagerRef},
     error::OutOfMemory,
 };
 
 use oxidd_reorder::set_var_order;
-use oxidd_rules_bdd::simple::BDDTerminal;
+use oxidd_rules_bdd::complement_edge::EdgeTag;
 
 use dashmap::DashMap;
 use itertools::{Itertools, partition};
 use thiserror::Error;
 use transitive::Transitive;
 
+use formally_io::print::Print;
 use std::{collections::HashMap, fmt::Debug, hash::Hash, ops::Deref, sync::Arc};
 //
 // Given an SMT formula and a set of variables to be existentially eliminated, things to do:
@@ -66,8 +66,8 @@ use std::{collections::HashMap, fmt::Debug, hash::Hash, ops::Deref, sync::Arc};
 // when to make the BDD T-reduced?
 //
 
-type Manager<'m> = <BDDFunction as oxidd::Function>::Manager<'m>;
-type Edge<'m> = <<BDDFunction as oxidd::Function>::Manager<'m> as oxidd::Manager>::Edge;
+type Manager<'m> = <BCDDFunction as oxidd::Function>::Manager<'m>;
+type Edge<'m> = <<BCDDFunction as oxidd::Function>::Manager<'m> as oxidd::Manager>::Edge;
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 struct Atom(Term);
@@ -105,19 +105,19 @@ enum ErrorKind {
 impl Diagnosable for Error {}
 
 pub struct QE<'s> {
-    manager: BDDManagerRef,
+    manager: BCDDManagerRef,
     pool: Arc<dyn TermPool + Send + Sync>,
     solver: &'s Solver,
     atoms: SyncBiMap<Atom, VarNo>,
     vars: SyncBiMap<Variable, usize>,
     free: DashMap<Term, BitSet>,
-    bdds: DashMap<Term, BDDFunction>,
+    bdds: DashMap<Term, BCDDFunction>,
 }
 
 impl<'s> QE<'s> {
     pub fn new(pool: Arc<dyn TermPool + Send + Sync>, solver: &'s Solver) -> QE<'s> {
         QE {
-            manager: oxidd::bdd::new_manager(65_536, 65_536, 1),
+            manager: oxidd::bcdd::new_manager(268_435_456, 1_048_576, 8),
             pool: pool.clone(),
             solver,
             atoms: SyncBiMap::new(),
@@ -166,9 +166,12 @@ impl<'s> QE<'s> {
     fn qe_quant(&self, quant: Quantified) -> Result<Term, Error> {
         match quant.quantifier {
             Quantifier::Exists => {
+                eprintln!("computing the initial bdd...");
                 let mut result = self.bdd(&quant.body)?;
                 for var in &*quant.variables {
+                    eprintln!("reordering...");
                     let cutoff = self.reorder(var.clone());
+                    eprintln!("eliminate {}..", var.name());
                     result = self.eliminate(var.clone(), cutoff, &result)?;
                 }
 
@@ -179,20 +182,25 @@ impl<'s> QE<'s> {
     }
 
     fn atom(&self, atom: Atom) -> VarNo {
-        self.manager
-            .with_manager_exclusive(|m| self.atoms.by_key_or_insert(atom, || m.add_vars(1).start))
+        self.manager.with_manager_exclusive(|m| {
+            self.atoms.by_key_or_insert(atom, |atom| {
+                eprint!(" - new atom: ");
+                atom.println(&mut std::io::stderr()).ok();
+                m.add_vars(1).start
+            })
+        })
     }
 
     fn variable(&self, var: Variable) -> usize {
-        self.vars.by_key_or_insert(var, || self.vars.size())
+        self.vars.by_key_or_insert(var, |_| self.vars.size())
     }
 
-    fn top(&self) -> BDDFunction {
-        self.manager.with_manager_shared(|m| BDDFunction::t(m))
+    fn top(&self) -> BCDDFunction {
+        self.manager.with_manager_shared(|m| BCDDFunction::t(m))
     }
 
-    fn bottom(&self) -> BDDFunction {
-        self.manager.with_manager_shared(|m| BDDFunction::f(m))
+    fn bottom(&self) -> BCDDFunction {
+        self.manager.with_manager_shared(|m| BCDDFunction::f(m))
     }
 
     fn reorder(&self, eliminate: Variable) -> LevelNo {
@@ -213,8 +221,8 @@ impl<'s> QE<'s> {
         &self,
         var: Variable,
         cutoff: LevelNo,
-        bdd: &BDDFunction,
-    ) -> Result<BDDFunction, Error> {
+        bdd: &BCDDFunction,
+    ) -> Result<BCDDFunction, Error> {
         match bdd.cofactors() {
             Some((high, low)) => {
                 let (level, guard) = bdd.with_manager_shared(|m, edge| -> Result<_, Error> {
@@ -224,7 +232,7 @@ impl<'s> QE<'s> {
                     let level = node.level();
                     let var = m.level_to_var(level);
 
-                    Ok((level, BDDFunction::var(m, var)?))
+                    Ok((level, BCDDFunction::var(m, var)?))
                 })?;
 
                 if level < cutoff {
@@ -250,7 +258,16 @@ impl<'s> QE<'s> {
         }
     }
 
-    fn bdd(&self, term: &Term) -> Result<BDDFunction, Error> {
+    fn bdd(&self, term: &Term) -> Result<BCDDFunction, Error> {
+        self.bdd_in(term, &HashMap::new())
+    }
+
+    #[allow(clippy::mutable_key_type)]
+    fn bdd_in(
+        &self,
+        term: &Term,
+        bindings: &HashMap<Variable, Term>,
+    ) -> Result<BCDDFunction, Error> {
         if let Some(bdd) = self.bdds.get(term) {
             return Ok(bdd.clone());
         }
@@ -297,26 +314,34 @@ impl<'s> QE<'s> {
                         CoreAtom::Equals(_) | CoreAtom::Distinct(_) => {
                             let var = self.atom(Atom(term.clone()));
                             self.manager
-                                .with_manager_shared(|m| BDDFunction::var(m, var))?
+                                .with_manager_shared(|m| BCDDFunction::var(m, var))?
                         }
                     }
+                } else if let FunctionRef::Bound(bound) = &atom.head
+                    && let Function::Variable(variable) = &bound.function
+                    && let Some(term) = bindings.get(variable)
+                {
+                    let mut bindings = bindings.clone();
+                    bindings.remove(variable);
+                    self.bdd_in(term, &bindings)?
                 } else if let Ok(sort) = Sort::of(term)
                     && sort == Core::Bool()
                 {
                     let var = self.atom(Atom(term.clone()));
                     self.manager
-                        .with_manager_shared(|m| BDDFunction::var(m, var))?
+                        .with_manager_shared(|m| BCDDFunction::var(m, var))?
                 } else {
                     unreachable!();
                 }
             }
             TermKind::Constant(_) => unreachable!(),
             TermKind::Quantified(_) => unreachable!(),
-            TermKind::Let(_) => {
-                return Err(Error {
-                    kind: ErrorKind::UnsupportedLet,
-                    span: None,
-                });
+            TermKind::Let(let_) => {
+                let mut bindings = bindings.clone();
+                for binding in &*let_.bindings {
+                    bindings.insert(binding.variable.clone(), binding.def.clone());
+                }
+                self.bdd_in(&let_.body, &bindings)?
             }
         };
 
@@ -325,7 +350,7 @@ impl<'s> QE<'s> {
         Ok(bdd)
     }
 
-    fn term<'m>(&self, bdd: &BDDFunction) -> Term {
+    fn term<'m>(&self, bdd: &BCDDFunction) -> Term {
         let mut cache = HashMap::new();
         self.manager
             .with_manager_shared(|m| self.term_in(m, bdd, &mut cache))
@@ -334,8 +359,8 @@ impl<'s> QE<'s> {
     fn term_in<'m>(
         &self,
         m: &Manager<'m>,
-        bdd: &BDDFunction,
-        cache: &mut HashMap<BDDFunction, Term>,
+        bdd: &BCDDFunction,
+        cache: &mut HashMap<BCDDFunction, Term>,
     ) -> Term {
         if let Some(term) = cache.get(bdd) {
             return term.clone();
@@ -349,9 +374,9 @@ impl<'s> QE<'s> {
                     .by_index(&m.level_to_var(node.level()))
                     .unwrap()
                     .0;
-                let (high, low) = BDDFunction::cofactors_edge(m, edge).unwrap();
-                let high = self.term_in(m, &BDDFunction::from_edge_ref(m, high), cache);
-                let low = self.term_in(m, &BDDFunction::from_edge_ref(m, low), cache);
+                let (high, low) = BCDDFunction::cofactors(bdd).unwrap();
+                let high = self.term_in(m, &high, cache);
+                let low = self.term_in(m, &low, cache);
 
                 if high == true && low == false {
                     guard
@@ -371,9 +396,9 @@ impl<'s> QE<'s> {
                         .into_term_in(&*self.pool)
                 }
             }
-            Node::Terminal(t) => match t {
-                BDDTerminal::False => Core::False().into_term_in(&*self.pool),
-                BDDTerminal::True => Core::True().into_term_in(&*self.pool),
+            Node::Terminal(_) => match edge.tag() {
+                EdgeTag::None => Core::True().into_term_in(&*self.pool),
+                EdgeTag::Complemented => Core::False().into_term_in(&*self.pool),
             },
         };
 

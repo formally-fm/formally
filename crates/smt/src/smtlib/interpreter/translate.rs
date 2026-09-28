@@ -119,16 +119,19 @@ impl Interpreter {
             }
             ast::Term::Let(let_) => {
                 let mut bindings = Vec::new();
+                let infer = smt::Sort {
+                    head: smt::SortHead::Unbound("inferred".into()),
+                    arguments: SArc::default(),
+                };
                 for bind in let_.bindings {
-                    bindings.push(
-                        solver.lookup_binding(
-                            smt::Binding::new(
-                                Identifier::new(bind.name.inner()),
-                                Interpreter::term_to_smt(solver, bind.body)?,
-                            )
-                            .over(bind.span.clone()),
-                        )?,
-                    )
+                    bindings.push(smt::Binding {
+                        variable: smt::Variable::new(
+                            Identifier::new(bind.name.inner()),
+                            infer.clone(),
+                        ),
+                        def: Interpreter::term_to_smt(solver, bind.body)?,
+                        span: bind.span,
+                    })
                 }
                 let body = Interpreter::term_to_smt(solver, *let_.body)?;
                 let term = smt::Let {

@@ -263,7 +263,13 @@ impl<'s> QE<'s> {
                     }
                     .into_term_in(&*self.pool);
 
+                    eprint!("calling the QE backend on term:");
+                    quant.println(&mut std::io::stderr()).ok();
+                    
                     let eliminated = self.solver.qe(quant).unwrap();
+                    
+                    eprint!("QE backend result: ");
+                    eliminated.println(&mut std::io::stderr()).ok();
 
                     self.bdd(&eliminated)
                 }

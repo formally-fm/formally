@@ -194,17 +194,25 @@ impl Term {
     fn resolve_let(let_: &Let, env: &Env, role: Role, pool: &dyn TermPool) -> Result<Let> {
         let mut nested = Env::new().with_parent(env.clone());
 
+        let mut bindings = Vec::with_capacity(let_.bindings.len());
         for bind in &*let_.bindings {
-            nested.functions.add(
-                bind.variable.name().name(),
-                Function::from(bind.variable.clone()),
-            );
+            let def = bind.def.resolve(env, pool, role)?;
+            let variable = Variable::new(bind.variable.name().name(), Sort::of(&def)?);
+
+            nested
+                .functions
+                .add(bind.variable.name().name(), variable.clone().into());
+            bindings.push(Binding {
+                variable,
+                def,
+                span: bind.span(),
+            })
         }
 
         let body = let_.body.resolve(&nested, pool, role)?;
 
         Ok(Let {
-            bindings: let_.bindings.clone(),
+            bindings: Arc::from(bindings.into_boxed_slice()),
             body,
             span: let_.span.clone(),
         })

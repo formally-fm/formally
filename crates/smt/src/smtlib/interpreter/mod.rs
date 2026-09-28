@@ -31,14 +31,14 @@
 //!
 //! The module also provides [SMTLibEmitter], an [Emitter] that prints diagnostics to the terminal
 //! in the format specified by the SMT-LIBv2 syntax for responses.
-use crate::{formally, Role};
+use crate::formally;
 
 use formally::{
     io::{
         parse::Parsable as _,
         print::{Print, RenderTarget},
     },
-    smt::{self, Config, DashPool, ToTerm, backends::Backend, smtlib::ast, tbdd_hm as tbdd},
+    smt::{self, Config, DashPool, ToTerm, backends::Backend, smtlib::ast, tbdd},
     support::*,
 };
 
@@ -350,9 +350,10 @@ impl Interpreter {
     }
 
     fn get_qe(state: &mut State, getqe: ast::GetQE) -> Result<()> {
+        let qe = tbdd::QE::new(state.pool.clone(), &state.solver);
         let term = Interpreter::term_to_smt(&state.solver, getqe.term)?;
-        let term = state.solver.lookup(term, Role::Function)?;
-        let term = tbdd::qe(&term, state.pool.clone(), &state.solver);
+        let term = state.solver.lookup(term, smt::Role::Function)?;
+        let term = qe.qe(&term)?;
         let term = Box::new(ast::Term::from(term));
 
         Interpreter::response(

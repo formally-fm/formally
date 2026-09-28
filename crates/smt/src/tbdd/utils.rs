@@ -66,12 +66,12 @@ impl<K: Clone + Hash + Eq, I: Clone + Hash + Eq> SyncBiMap<K, I> {
 
     pub fn by_key_or_insert<F>(&self, key: K, f: F) -> I
     where
-        F: FnOnce() -> I,
+        F: FnOnce(&K) -> I,
     {
         match self.key_to_index.entry(key) {
             Entry::Occupied(entry) => entry.get().clone(),
             Entry::Vacant(entry) => {
-                let index = f();
+                let index = f(entry.key());
                 self.index_to_key.insert(index.clone(), entry.key().clone());
                 entry.insert(index.clone());
                 index

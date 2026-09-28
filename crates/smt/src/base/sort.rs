@@ -26,8 +26,8 @@ use crate::*;
 use formally::support::*;
 
 use derive_more::From;
-use transitive::Transitive;
 use thiserror::Error;
+use transitive::Transitive;
 
 use std::{
     collections::HashMap,
