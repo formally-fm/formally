@@ -53,7 +53,7 @@ struct Solve {
     backend: Option<String>,
     /// The level of parallelism, if supported by the backend
     #[arg(short = 'j', long, value_name = "jobs", num_args = 0..=1)]
-    jobs: Option<Option<NonZero<usize>>>,
+    jobs: Option<Option<NonZero<u32>>>,
     /// The path to the SMT-LIB script to solve
     filename: PathBuf,
 }

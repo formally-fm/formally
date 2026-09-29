@@ -30,6 +30,7 @@ use transitive::Transitive;
 
 pub use rug::{Integer, Rational};
 use std::{
+    collections::{HashMap, HashSet},
     fmt::{Display, Formatter},
     hash::{Hash, Hasher},
     sync::{Arc, OnceLock},
@@ -297,29 +298,35 @@ pub(crate) struct TermInner {
     pub(crate) sort: OnceLock<Result<Sort, TypeCheckError>>,
     pub(crate) resolved: bool,
     pub(crate) qf: bool,
+    pub(crate) size: usize,
 }
 
 impl TermInner {
     pub(crate) fn new(kind: TermKind) -> TermInner {
         let resolved;
         let qf;
-        match &kind {
+        let size = match &kind {
             TermKind::Constant(_) => {
                 resolved = true;
                 qf = true;
+                1
             }
             TermKind::Atom(atom) => {
                 resolved = matches!(&atom.head, FunctionRef::Bound(_))
                     && atom.arguments.iter().all(Term::is_resolved);
-                qf = atom.arguments.iter().all(Term::is_quantifier_free)
+                qf = atom.arguments.iter().all(Term::is_quantifier_free);
+
+                1 + atom.arguments.iter().map(|t| t.size()).sum::<usize>()
             }
             TermKind::Quantified(quant) => {
                 resolved = quant.body.is_resolved();
                 qf = false;
+                1 + quant.body.size()
             }
             TermKind::Let(let_) => {
                 resolved = let_.body.is_resolved();
                 qf = let_.body.is_quantifier_free();
+                1 + let_.bindings.iter().map(|b| b.def.size()).sum::<usize>() + let_.body.size()
             }
         };
 
@@ -328,6 +335,7 @@ impl TermInner {
             sort: OnceLock::new(),
             resolved,
             qf,
+            size,
         }
     }
 }
@@ -343,6 +351,11 @@ impl Term {
     /// subterms).
     pub fn is_quantifier_free(&self) -> bool {
         self.0.qf
+    }
+
+    /// The number of nodes (atoms and other kinds) that recursively compose this [Term].
+    pub fn size(&self) -> usize {
+        self.0.size
     }
 }
 
@@ -419,6 +432,100 @@ impl PartialEq<Rational> for Term {
             **value == *other
         } else {
             false
+        }
+    }
+}
+
+#[allow(clippy::mutable_key_type)]
+impl Let {
+    pub fn collect(term: &Term, pool: &dyn TermPool) -> Result<Term> {
+        let mut count = HashMap::new();
+        Self::count(term, &mut count);
+
+        let mut vars = HashMap::new();
+        let mut bindings = Vec::new();
+
+        let mut body = Self::emit(term, &count, &mut vars, &mut bindings, pool)?;
+
+        for binding in bindings.into_iter().rev() {
+            body = Let {
+                bindings: Arc::new([binding]),
+                body,
+                span: None,
+            }
+            .into_term_in(pool);
+        }
+
+        Ok(body)
+    }
+
+    fn count(term: &Term, count: &mut HashMap<Term, usize>) {
+        if let Some(count) = count.get_mut(term) {
+            *count += 1;
+            return;
+        }
+
+        count.insert(term.clone(), 1);
+
+        if let TermKind::Atom(Atom { arguments, .. }) = term.kind() {
+            for arg in &**arguments {
+                Self::count(arg, count)
+            }
+        }
+    }
+
+    fn emit(
+        term: &Term,
+        count: &HashMap<Term, usize>,
+        vars: &mut HashMap<Term, Variable>,
+        bindings: &mut Vec<Binding>,
+        pool: &dyn TermPool,
+    ) -> Result<Term> {
+        let TermKind::Atom(atom) = term.kind() else {
+            return Ok(term.clone());
+        };
+
+        if let Some(c) = count.get(term)
+            && *c > 1
+            && term.size() > 10
+        {
+            if let Some(var) = vars.get(term) {
+                return Ok(var.into_term_in(pool));
+            }
+
+            let variable = Variable::new(format!("let_{}", vars.len()), Sort::of(term)?);
+
+            let mut arguments = Vec::with_capacity(atom.arguments.len());
+            for arg in atom.arguments.iter() {
+                arguments.push(Self::emit(arg, count, vars, bindings, pool)?)
+            }
+
+            let def = Atom {
+                head: atom.head.clone(),
+                arguments: Arc::from(arguments.into_boxed_slice()),
+                span: atom.span(),
+            }
+            .into_term_in(pool);
+
+            vars.insert(term.clone(), variable.clone());
+            bindings.push(Binding {
+                variable: variable.clone(),
+                def,
+                span: None,
+            });
+
+            Ok(variable.into_term_in(pool))
+        } else {
+            let mut arguments = Vec::with_capacity(atom.arguments.len());
+            for arg in atom.arguments.iter() {
+                arguments.push(Self::emit(arg, count, vars, bindings, pool)?)
+            }
+            Ok(Atom {
+                head: atom.head.clone(),
+                arguments: Arc::from(arguments.into_boxed_slice()),
+                span: atom.span(),
+            }
+            .into_term_in(pool))
         }
     }
 }

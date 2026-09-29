@@ -29,15 +29,17 @@ use crate::formally;
 
 use formally::{
     smt::{
-        self, Function, FunctionRef, Quantified, Quantifier, Solver, Sort, Term, TermKind,
-        TermPool, ToTerm, Variable,
+        self, Config, Env, Function, FunctionRef, Quantified, Quantifier, Solver, Sort, Term,
+        TermKind, TermPool, ToTerm, Variable,
+        backends::Backend,
         theories::{Core, CoreAtom},
     },
     support::{Diagnosable, DiagnosticEmitted, Located, Span},
 };
 
 use oxidd::{
-    BooleanFunction as _, Function as _, HasLevel, LevelNo, Manager as _, ManagerRef, Node, VarNo,
+    BooleanFunction as _, Function as _, HasLevel, HasWorkers, LevelNo, Manager as _, ManagerRef,
+    Node, VarNo, WorkerPool,
     bcdd::{BCDDFunction, BCDDManagerRef},
     error::OutOfMemory,
 };
@@ -50,8 +52,7 @@ use itertools::{Itertools, partition};
 use thiserror::Error;
 use transitive::Transitive;
 
-use formally_io::print::Print;
-use std::{collections::HashMap, fmt::Debug, hash::Hash, ops::Deref, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, hash::Hash, num::NonZero, ops::Deref, sync::Arc};
 //
 // Given an SMT formula and a set of variables to be existentially eliminated, things to do:
 // 1. ✓ collect the atoms to form the set of BDD variables
@@ -80,7 +81,9 @@ impl Deref for Atom {
 }
 
 #[derive(Debug, Error, Located, Transitive)]
+#[allow(clippy::duplicated_attributes)]
 #[transitive(from(OutOfMemory, ErrorKind))]
+#[transitive(from(DiagnosticEmitted, ErrorKind))]
 #[error("{kind}")]
 struct Error {
     pub kind: ErrorKind,
@@ -97,26 +100,40 @@ impl From<ErrorKind> for Error {
 enum ErrorKind {
     #[error("maximum memory usage limit reached for BDD nodes")]
     OutOfMemory(#[from] OutOfMemory),
+    #[error("unable to instantiate a new SMT backend")]
+    BackendError(#[from] DiagnosticEmitted),
 }
 
 impl Diagnosable for Error {}
 
-pub struct QE<'s> {
+pub struct QE {
     manager: BCDDManagerRef,
     pool: Arc<dyn TermPool + Send + Sync>,
-    solver: &'s Solver,
+    env: Env,
+    backend: &'static dyn Backend,
     atoms: SyncBiMap<Atom, VarNo>,
     vars: SyncBiMap<Variable, usize>,
     free: DashMap<Term, BitSet>,
     bdds: DashMap<Term, BCDDFunction>,
 }
 
-impl<'s> QE<'s> {
-    pub fn new(pool: Arc<dyn TermPool + Send + Sync>, solver: &'s Solver) -> QE<'s> {
+impl QE {
+    pub fn new(
+        pool: Arc<dyn TermPool + Send + Sync>,
+        env: Env,
+        backend: &'static dyn Backend,
+        jobs: Option<NonZero<u32>>,
+    ) -> QE {
+        let jobs = jobs.map(NonZero::get).unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(NonZero::get)
+                .unwrap_or(1) as u32
+        });
         QE {
-            manager: oxidd::bcdd::new_manager(268_435_456, 1_048_576, 8),
+            manager: oxidd::bcdd::new_manager(268_435_456, 1_048_576, jobs),
             pool: pool.clone(),
-            solver,
+            env,
+            backend,
             atoms: SyncBiMap::new(),
             vars: SyncBiMap::new(),
             free: DashMap::new(),
@@ -155,12 +172,22 @@ impl<'s> QE<'s> {
                     .into_term_in(&*self.pool))
                 }
             }
-            TermKind::Quantified(quant) => {
+            TermKind::Quantified(Quantified { quantifier, .. }) => {
+                let mut variables = Vec::new();
+                let mut body = term.clone();
+
+                while let TermKind::Quantified(quant) = body.kind()
+                    && quant.quantifier == *quantifier
+                {
+                    variables.extend(quant.variables.iter().cloned());
+                    body = quant.body.clone();
+                }
+
                 let quant = Quantified {
-                    quantifier: quant.quantifier,
-                    variables: quant.variables.clone(),
-                    body: self.qe_in(&quant.body, bindings)?,
-                    span: quant.span(),
+                    quantifier: *quantifier,
+                    variables: Arc::from(variables.into_boxed_slice()),
+                    body: self.qe_in(&body, bindings)?,
+                    span: term.span(),
                 };
 
                 Ok(self.qe_quant(quant)?)
@@ -177,30 +204,49 @@ impl<'s> QE<'s> {
 
     fn qe_quant(&self, quant: Quantified) -> Result<Term, Error> {
         match quant.quantifier {
-            Quantifier::Exists => {
-                eprintln!("computing the initial bdd...");
-                let mut result = self.bdd(&quant.body)?;
-                for var in &*quant.variables {
-                    eprintln!("reordering...");
-                    let cutoff = self.reorder(var.clone());
-                    eprintln!("eliminate {}..", var.name());
-                    result = self.eliminate(var.clone(), cutoff, &result)?;
-                }
-
-                Ok(self.term(&result))
-            }
-            Quantifier::Forall => todo!(),
+            Quantifier::Exists => self.qe_exists(&quant.variables, &quant.body),
+            Quantifier::Forall => self.qe_forall(&quant.variables, &quant.body),
         }
     }
 
-    fn atom(&self, atom: Atom) -> VarNo {
-        self.manager.with_manager_exclusive(|m| {
-            self.atoms.by_key_or_insert(atom, |atom| {
-                eprint!(" - new atom: ");
-                atom.println(&mut std::io::stderr()).ok();
-                m.add_vars(1).start
-            })
+    fn qe_exists(&self, variables: &[Variable], body: &Term) -> Result<Term, Error> {
+        self.manager.workers().install(|| {
+            eprintln!("building initial BDD...");
+            let mut result = self.bdd(body)?;
+            eprintln!("initial BDD built!");
+            for var in variables {
+                eprintln!("reordering...");
+                let cutoff = self.reorder(var.clone());
+                eprintln!("eliminating variable {}", var.name());
+                result = self.eliminate(var.clone(), cutoff, &result)?;
+                eprintln!("variable {} eliminated!", var.name());
+            }
+
+            eprintln!("exporting result...");
+            let term = self.term(&result);
+            eprintln!("result exported!");
+
+            let size = term.size();
+
+            eprintln!("QE finished ({size} nodes), collecting shared subterms...");
+
+            let term = smt::Let::collect(&term, &*self.pool)?;
+
+            let size_after = term.size();
+            eprintln!("shared subterms collected! (size {size_after})");
+            
+            Ok(term)
         })
+    }
+
+    #[allow(unused)]
+    fn qe_forall(&self, variables: &[Variable], body: &Term) -> Result<Term, Error> {
+        todo!()
+    }
+
+    fn atom(&self, atom: Atom) -> VarNo {
+        self.manager
+            .with_manager_exclusive(|m| self.atoms.by_key_or_insert(atom, |_| m.add_vars(1).start))
     }
 
     fn variable(&self, var: Variable) -> usize {
@@ -236,8 +282,8 @@ impl<'s> QE<'s> {
         cutoff: LevelNo,
         bdd: &BCDDFunction,
     ) -> Result<BCDDFunction, Error> {
-        let mut cache = HashMap::new();
-        self.eliminate_in(var, cutoff, bdd, &mut cache)
+        let cache = DashMap::new();
+        self.eliminate_in(var, cutoff, bdd, &cache)
     }
 
     #[allow(clippy::mutable_key_type)]
@@ -246,7 +292,7 @@ impl<'s> QE<'s> {
         var: Variable,
         cutoff: LevelNo,
         bdd: &BCDDFunction,
-        cache: &mut HashMap<BCDDFunction, BCDDFunction>,
+        cache: &DashMap<BCDDFunction, BCDDFunction>,
     ) -> Result<BCDDFunction, Error> {
         if let Some(result) = cache.get(bdd) {
             return Ok(result.clone());
@@ -265,8 +311,12 @@ impl<'s> QE<'s> {
                 })?;
 
                 if level < cutoff {
-                    let high = self.eliminate_in(var.clone(), cutoff, &high, cache)?;
-                    let low = self.eliminate_in(var, cutoff, &low, cache)?;
+                    let (high, low) = self.manager.workers().join(
+                        || self.eliminate_in(var.clone(), cutoff, &high, cache),
+                        || self.eliminate_in(var.clone(), cutoff, &low, cache),
+                    );
+                    let high = high?;
+                    let low = low?;
 
                     guard.ite(&high, &low)?
                 } else {
@@ -278,13 +328,12 @@ impl<'s> QE<'s> {
                     }
                     .into_term_in(&*self.pool);
 
-                    eprint!(" - calling QE backend on: ");
-                    quant.println(&mut std::io::stderr()).ok();
+                    let mut solver = Solver::with_backend(&Config::default(), self.backend)?;
+                    solver.import(self.env.clone())?;
 
-                    let eliminated = self.solver.qe(quant).unwrap();
-
-                    eprint!(" - QE backend result: ");
-                    eliminated.println(&mut std::io::stderr()).ok();
+                    eprintln!("invoking QE backend...");
+                    let eliminated = solver.qe(quant)?;
+                    eprintln!("QE backend invoked!");
 
                     self.bdd(&eliminated)?
                 }

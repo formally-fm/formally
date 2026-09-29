@@ -123,13 +123,14 @@ pub trait Print {
     /// Prints an object to the given [RenderTarget] by calling [render()](Print::render) with an
     /// automatically detected `width` parameter if a terminal is attached.
     fn print(&self, target: &mut dyn RenderTarget) -> io::Result<()> {
-        if target.is_terminal()
-            && let Some(size) = termsize::get()
-        {
-            self.render(target, size.cols)
-        } else {
-            self.render(target, u16::MAX)
-        }
+        self.render(target, u16::MAX)
+        // if target.is_terminal()
+        //     && let Some(size) = termsize::get()
+        // {
+        //     self.render(target, size.cols)
+        // } else {
+        //     self.render(target, u16::MAX)    
+        // }
     }
 
     /// As [print()](Print::print) but appends a new line at the end.

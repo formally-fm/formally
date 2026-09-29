@@ -115,7 +115,7 @@ pub struct Settings {
     /// handled by the global emitter).
     pub output: Box<dyn RenderTarget>,
     /// The level of parallelism to use, if supported by the backend
-    pub jobs: Option<Option<NonZero<usize>>>,
+    pub jobs: Option<Option<NonZero<u32>>>,
 }
 
 impl Settings {
@@ -329,6 +329,7 @@ impl Interpreter {
 
     // TODO: supporting setting the output stream through the `Config`
     fn response(output: &mut dyn RenderTarget, response: impl Print) -> Result<()> {
+        eprintln!("printing response...");
         match response.println(output) {
             Ok(_) => Ok(()),
             Err(err) => {
@@ -363,14 +364,21 @@ impl Interpreter {
         let term = Interpreter::term_to_smt(&state.solver, getqe.term)?;
         let term = state.solver.lookup(term, smt::Role::Function)?;
 
-        let term = if let Some(_) = state.settings.jobs {
-            let qe = tbdd::QE::new(state.pool.clone(), &state.solver);
+        let term = if let Some(jobs) = state.settings.jobs {
+            let qe = tbdd::QE::new(
+                state.pool.clone(),
+                state.solver.env().clone(),
+                state.settings.backend,
+                jobs,
+            );
             qe.qe(&term)?
         } else {
             state.solver.qe(term)?
         };
 
+        eprintln!("converting to AST...");
         let term = Box::new(ast::Term::from(term));
+        eprintln!("converted to AST!");
 
         Interpreter::response(
             &mut *state.settings.output,
