@@ -436,50 +436,48 @@ impl api::Manager for Manager {
         term: cvc5::Term,
         pool: &dyn smt::TermPool,
         to_func: impl Clone + Fn(cvc5::Term) -> Option<smt::UserFunction>,
+        to_var: impl Clone + Fn(cvc5::Term) -> Option<smt::Variable>,
         to_sort: impl Clone + Fn(cvc5::Sort) -> Option<smt::Sort>,
-    ) -> Option<smt::Term> {
+    ) -> Result<smt::Term, cvc5::Term> {
         use smt::theories::*;
 
         match self.cvc5manager.get_term_kind(term) {
-            cvc5::Kind::Constant => to_func(term).map(|f| f.into_term_in(pool)),
-            cvc5::Kind::Variable => to_func(term).map(|f| f.into_term_in(pool)),
+            cvc5::Kind::Constant => Ok(to_func(term).map(|f| f.into_term_in(pool)).unwrap()),
+            cvc5::Kind::Variable => Ok(to_func(term).map(|f| f.into_term_in(pool)).unwrap()),
             cvc5::Kind::ApplyUf => {
                 let mut children = Vec::new();
-                let head = to_func(self.cvc5manager.get_term_child(term, 0))?;
+                let head = to_func(self.cvc5manager.get_term_child(term, 0)).unwrap();
                 for child in 1..self.cvc5manager.get_term_num_children(term) {
                     children.push(self.export(
                         self.cvc5manager.get_term_child(term, child),
                         pool,
                         to_func.clone(),
+                        to_var.clone(),
                         to_sort.clone(),
                     )?)
                 }
 
-                Some(smt::term!(#head #(#children)*).into_term_in(pool))
+                Ok(smt::term!(#head #(#children)*).into_term_in(pool))
             }
             cvc5::Kind::ConstBoolean => {
                 if self.cvc5manager.get_boolean_value(term).unwrap() {
-                    Some(Core::True().into_term_in(pool))
+                    Ok(Core::True().into_term_in(pool))
                 } else {
-                    Some(Core::False().into_term_in(pool))
+                    Ok(Core::False().into_term_in(pool))
                 }
             }
-            cvc5::Kind::ConstRational => Some(
-                smt::Constant::Rational {
-                    value: Arc::new(self.cvc5manager.get_real_value(term).unwrap()),
-                    span: None,
-                }
-                .into_term_in(pool),
-            ),
-            cvc5::Kind::ConstInteger => Some(
-                smt::Constant::Integer {
-                    value: Arc::new(self.cvc5manager.get_integer_value(term).unwrap()),
-                    span: None,
-                }
-                .into_term_in(pool),
-            ),
+            cvc5::Kind::ConstRational => Ok(smt::Constant::Rational {
+                value: Arc::new(self.cvc5manager.get_real_value(term).unwrap()),
+                span: None,
+            }
+            .into_term_in(pool)),
+            cvc5::Kind::ConstInteger => Ok(smt::Constant::Integer {
+                value: Arc::new(self.cvc5manager.get_integer_value(term).unwrap()),
+                span: None,
+            }
+            .into_term_in(pool)),
             cvc5::Kind::Forall | cvc5::Kind::Exists => todo!(),
-            _ => self.export_app(term, pool, to_func, to_sort),
+            _ => self.export_app(term, pool, to_func, to_var, to_sort),
         }
     }
 }
@@ -686,8 +684,9 @@ impl Manager {
         term: cvc5::Term,
         pool: &dyn smt::TermPool,
         to_func: impl Clone + Fn(cvc5::Term) -> Option<smt::UserFunction>,
+        to_var: impl Clone + Fn(cvc5::Term) -> Option<smt::Variable>,
         to_sort: impl Clone + Fn(cvc5::Sort) -> Option<smt::Sort>,
-    ) -> Option<smt::Term> {
+    ) -> Result<smt::Term, cvc5::Term> {
         use smt::theories::*;
 
         let mut intargs = true;
@@ -702,7 +701,13 @@ impl Manager {
             intargs = intargs && self.cvc5manager.sort_is_integer(sort);
             realargs = realargs && self.cvc5manager.sort_is_real(sort);
 
-            children.push(self.export(child, pool, to_func.clone(), to_sort.clone())?);
+            children.push(self.export(
+                child,
+                pool,
+                to_func.clone(),
+                to_var.clone(),
+                to_sort.clone(),
+            )?);
         }
 
         let kind = self.cvc5manager.get_term_kind(term);
@@ -740,9 +745,9 @@ impl Manager {
             cvc5::Kind::ToReal => RealsInts::to_real(),
             cvc5::Kind::Select => Arrays::select(),
             cvc5::Kind::Store => Arrays::store(),
-            _ => return None,
+            _ => return Err(term),
         };
 
-        Some(smt::term!(#head #(#children)*).into_term_in(pool))
+        Ok(smt::term!(#head #(#children)*).into_term_in(pool))
     }
 }

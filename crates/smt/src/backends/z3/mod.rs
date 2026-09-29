@@ -335,9 +335,10 @@ impl api::Manager for Manager {
         term: z3::Ast,
         pool: &dyn smt::TermPool,
         to_func: impl Clone + Fn(z3::FuncDecl) -> Option<smt::UserFunction>,
+        to_var: impl Clone + Fn(z3::Ast) -> Option<smt::Variable>,
         to_sort: impl Clone + Fn(z3::Sort) -> Option<smt::Sort>,
-    ) -> Option<smt::Term> {
-        self.export(term, &[], pool, to_func, to_sort)
+    ) -> Result<smt::Term, z3::Ast> {
+        self.export(term, &[], pool, to_func, to_var, to_sort)
     }
 }
 
@@ -346,21 +347,21 @@ impl Manager {
         &self,
         sort: z3::Sort,
         to_sort: impl Clone + Fn(z3::Sort) -> Option<smt::Sort>,
-    ) -> Option<smt::Sort> {
+    ) -> Result<smt::Sort, z3::Ast> {
         use smt::theories::*;
 
         match sort.kind() {
-            z3::SortKind::Uninterpreted => to_sort(sort),
-            z3::SortKind::Bool => Some(Core::Bool()),
-            z3::SortKind::Int => Some(Ints::Int()),
-            z3::SortKind::Real => Some(Reals::Real()),
+            z3::SortKind::Uninterpreted => Ok(to_sort(sort).unwrap()),
+            z3::SortKind::Bool => Ok(Core::Bool()),
+            z3::SortKind::Int => Ok(Ints::Int()),
+            z3::SortKind::Real => Ok(Reals::Real()),
             z3::SortKind::Array => {
                 let index = self.export_sort(sort.get_array_sort_domain(), to_sort.clone())?;
                 let element = self.export_sort(sort.get_array_sort_range(), to_sort.clone())?;
 
-                Some(Arrays::Array(&index, &element))
+                Ok(Arrays::Array(&index, &element))
             }
-            _ => None,
+            _ => Err(z3::Ast::from(sort)),
         }
     }
 
@@ -370,29 +371,41 @@ impl Manager {
         vars: &[smt::Variable],
         pool: &dyn smt::TermPool,
         to_func: impl Clone + Fn(z3::FuncDecl) -> Option<smt::UserFunction>,
+        to_var: impl Clone + Fn(z3::Ast) -> Option<smt::Variable>,
         to_sort: impl Clone + Fn(z3::Sort) -> Option<smt::Sort>,
-    ) -> Option<smt::Term> {
-        match term.kind() {
+    ) -> Result<smt::Term, z3::Ast> {
+        if let Some(var) = to_var(term.clone()) {
+            return Ok(var.into_term_in(pool))
+        }
+        
+        let kind = term.kind();
+        match kind {
             z3::AstKind::Numeral => self.export_numeral(term, pool),
             z3::AstKind::App => {
-                self.export_app(term.to_app().unwrap(), vars, pool, to_func, to_sort)
+                self.export_app(term.to_app().unwrap(), vars, pool, to_func, to_var, to_sort)
             }
-            z3::AstKind::Var => Some(vars[term.var_index().unwrap()].clone().into_term_in(pool)),
-            z3::AstKind::Quantifier => self.export_quant(term, vars, pool, to_func, to_sort),
-            _ => None,
+            z3::AstKind::Var => Ok(vars[term.var_index().unwrap()].clone().into_term_in(pool)),
+            z3::AstKind::Quantifier => {
+                self.export_quant(term, vars, pool, to_func, to_var, to_sort)
+            }
+            _ => Err(term),
         }
     }
 
-    fn export_numeral(&self, term: z3::Ast, pool: &dyn smt::TermPool) -> Option<smt::Term> {
+    fn export_numeral(
+        &self,
+        term: z3::Ast,
+        pool: &dyn smt::TermPool,
+    ) -> Result<smt::Term, z3::Ast> {
         assert!(term.is_numeral());
 
         let string = term.get_numeral_string();
 
         match rug::Integer::from_str_radix(&string, 10) {
-            Ok(int) => Some(smt::Constant::from(int).into_term_in(pool)),
+            Ok(int) => Ok(smt::Constant::from(int).into_term_in(pool)),
             Err(_) => match rug::Rational::from_str_radix(&string, 10) {
-                Ok(rat) => Some(smt::Constant::from(rat).into_term_in(pool)),
-                Err(_) => None,
+                Ok(rat) => Ok(smt::Constant::from(rat).into_term_in(pool)),
+                Err(_) => Err(term),
             },
         }
     }
@@ -403,8 +416,9 @@ impl Manager {
         vars: &[smt::Variable],
         pool: &dyn smt::TermPool,
         to_func: impl Clone + Fn(z3::FuncDecl) -> Option<smt::UserFunction>,
+        to_var: impl Clone + Fn(z3::Ast) -> Option<smt::Variable>,
         to_sort: impl Clone + Fn(z3::Sort) -> Option<smt::Sort>,
-    ) -> Option<smt::Term> {
+    ) -> Result<smt::Term, z3::Ast> {
         let mut vars = vars.iter().cloned().collect_vec();
 
         for i in 0..term.get_quantifier_num_bound() {
@@ -413,14 +427,21 @@ impl Manager {
             vars.push(smt::Variable::new(name, sort))
         }
 
-        let body = self.export(term.get_quantifier_body(), &vars, pool, to_func, to_sort)?;
+        let body = self.export(
+            term.get_quantifier_body(),
+            &vars,
+            pool,
+            to_func,
+            to_var,
+            to_sort,
+        )?;
 
         if term.is_quantifier_forall() {
-            Some(smt::term!(forall #(#vars)* #body).into_term_in(pool))
+            Ok(smt::term!(forall #(#vars)* #body).into_term_in(pool))
         } else if term.is_quantifier_exists() {
-            Some(smt::term!(exists #(#vars)* #body).into_term_in(pool))
+            Ok(smt::term!(exists #(#vars)* #body).into_term_in(pool))
         } else {
-            None
+            Err(term)
         }
     }
 
@@ -430,8 +451,9 @@ impl Manager {
         vars: &[smt::Variable],
         pool: &dyn smt::TermPool,
         to_func: impl Clone + Fn(z3::FuncDecl) -> Option<smt::UserFunction>,
+        to_var: impl Clone + Fn(z3::Ast) -> Option<smt::Variable>,
         to_sort: impl Clone + Fn(z3::Sort) -> Option<smt::Sort>,
-    ) -> Option<smt::Term> {
+    ) -> Result<smt::Term, z3::Ast> {
         let mut intargs = true;
         let mut realargs = true;
 
@@ -441,17 +463,25 @@ impl Manager {
             intargs = intargs && arg.sort().kind() == z3::SortKind::Int;
             realargs = realargs && arg.sort().kind() == z3::SortKind::Real;
 
-            args.push(self.export(app.arg(i), vars, pool, to_func.clone(), to_sort.clone())?)
+            args.push(self.export(
+                app.arg(i),
+                vars,
+                pool,
+                to_func.clone(),
+                to_var.clone(),
+                to_sort.clone(),
+            )?)
         }
 
         let decl = app.decl();
         if let Some(decl) = to_func(decl.clone()) {
-            return Some(smt::term!(#decl #(#args)*).into_term_in(pool));
+            return Ok(smt::term!(#decl #(#args)*).into_term_in(pool));
         }
 
         use smt::theories::*;
 
-        let head = match decl.kind() {
+        let kind = decl.kind();
+        let head = match kind {
             z3::DeclKind::True => Core::True(),
             z3::DeclKind::False => Core::False(),
             z3::DeclKind::Eq => Core::equals(),
@@ -488,10 +518,10 @@ impl Manager {
             z3::DeclKind::Abs if intargs => Ints::abs(),
             z3::DeclKind::Store => Arrays::store(),
             z3::DeclKind::Select => Arrays::select(),
-            _ => return None,
+            _ => return Err(z3::Ast::from(app)),
         };
 
-        Some(smt::term!(#head #(#args)*).into_term_in(pool))
+        Ok(smt::term!(#head #(#args)*).into_term_in(pool))
     }
 }
 

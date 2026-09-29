@@ -232,13 +232,25 @@ impl<'s> QE<'s> {
         })
     }
 
-    fn eliminate(
+    #[allow(clippy::mutable_key_type)]
+    fn eliminate(&self, var: Variable, cutoff: LevelNo, bdd: &BCDDFunction) -> Result<BCDDFunction, Error> {
+        let mut cache = HashMap::new();
+        self.eliminate_in(var, cutoff, bdd, &mut cache)
+    }
+    
+    #[allow(clippy::mutable_key_type)]
+    fn eliminate_in(
         &self,
         var: Variable,
         cutoff: LevelNo,
         bdd: &BCDDFunction,
+        cache: &mut HashMap<BCDDFunction, BCDDFunction>
     ) -> Result<BCDDFunction, Error> {
-        match bdd.cofactors() {
+        if let Some(result) = cache.get(bdd) {
+            return Ok(result.clone())
+        }
+        
+        let result = match bdd.cofactors() {
             Some((high, low)) => {
                 let (level, guard) = bdd.with_manager_shared(|m, edge| -> Result<_, Error> {
                     let Node::Inner(node) = m.get_node(edge) else {
@@ -251,10 +263,10 @@ impl<'s> QE<'s> {
                 })?;
 
                 if level < cutoff {
-                    let high = self.eliminate(var.clone(), cutoff, &high)?;
-                    let low = self.eliminate(var, cutoff, &low)?;
+                    let high = self.eliminate_in(var.clone(), cutoff, &high, cache)?;
+                    let low = self.eliminate_in(var, cutoff, &low, cache)?;
 
-                    Ok(guard.ite(&high, &low)?)
+                    guard.ite(&high, &low)?
                 } else {
                     let quant = Quantified {
                         quantifier: Quantifier::Exists,
@@ -264,13 +276,23 @@ impl<'s> QE<'s> {
                     }
                     .into_term_in(&*self.pool);
 
+                    eprint!(" - calling QE backend on: ");
+                    quant.println(&mut std::io::stderr()).ok();
+                    
                     let eliminated = self.solver.qe(quant).unwrap();
+                    
+                    eprint!(" - QE backend result: ");
+                    eliminated.println(&mut std::io::stderr()).ok();
 
-                    Ok(self.bdd(&eliminated)?)
+                    self.bdd(&eliminated)?
                 }
             }
-            None => Ok(bdd.clone()),
-        }
+            None => bdd.clone()
+        };
+        
+        cache.insert(bdd.clone(), result.clone());
+        
+        Ok(result)
     }
 
     fn bdd(&self, term: &Term) -> Result<BCDDFunction, Error> {
@@ -343,12 +365,14 @@ impl<'s> QE<'s> {
         Ok(bdd)
     }
 
-    fn term<'m>(&self, bdd: &BCDDFunction) -> Term {
+    #[allow(clippy::mutable_key_type)]
+    fn term(&self, bdd: &BCDDFunction) -> Term {
         let mut cache = HashMap::new();
         self.manager
             .with_manager_shared(|m| self.term_in(m, bdd, &mut cache))
     }
 
+    #[allow(clippy::mutable_key_type)]
     fn term_in<'m>(
         &self,
         m: &Manager<'m>,

@@ -57,7 +57,7 @@ use formally::smt::{
     logics::{Logic, LogicEx},
 };
 
-use std::{hash::Hash, rc::Rc, sync::Arc};
+use std::{fmt::Debug, hash::Hash, rc::Rc};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -92,7 +92,7 @@ pub trait Manager: Default + Sized {
     type Sort: Clone + Hash + PartialEq + Eq;
 
     /// The type of the backend's API representing a term.
-    type Term: Clone + Hash + PartialEq + Eq;
+    type Term: Debug + Clone + Hash + PartialEq + Eq;
 
     /// A Boolean constant telling whether your API supports directly the definition of functions.
     ///
@@ -210,9 +210,10 @@ pub trait Manager: Default + Sized {
         term: Self::Term,
         pool: &dyn smt::TermPool,
         to_func: impl Clone + Fn(Self::FuncDecl) -> Option<smt::UserFunction>,
+        to_var: impl Clone + Fn(Self::Term) -> Option<smt::Variable>,
         to_sort: impl Clone + Fn(Self::Sort) -> Option<smt::Sort>,
-    ) -> Option<smt::Term> {
-        None
+    ) -> Result<smt::Term, Self::Term> {
+        Err(term)
     }
 }
 

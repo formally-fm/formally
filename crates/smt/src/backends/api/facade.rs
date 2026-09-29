@@ -49,6 +49,7 @@ pub struct ApiManager<M: Manager> {
     sorts_rev: RefCell<HashMap<M::Sort, smt::Sort>>,
     terms: RefCell<HashMap<smt::Term, M::Term>>,
     variables: RefCell<HashMap<smt::Variable, M::Term>>,
+    variables_rev: RefCell<HashMap<M::Term, smt::Variable>>,
 }
 
 /// A type that helps to implement instances of the [backends::Solver] trait.
@@ -250,6 +251,7 @@ impl<M: Manager> ApiManager<M> {
             sorts_rev: RefCell::default(),
             terms: RefCell::default(),
             variables: RefCell::default(),
+            variables_rev: RefCell::default(),
         }
     }
 
@@ -427,6 +429,9 @@ impl<M: Manager> ApiManager<M> {
         self.variables
             .borrow_mut()
             .insert(variable.clone(), t.clone());
+        self.variables_rev
+            .borrow_mut()
+            .insert(t.clone(), variable.clone());
 
         Ok(t)
     }
@@ -587,13 +592,14 @@ impl<M: Manager> ApiManager<M> {
 
     fn export(&self, term: M::Term, pool: &dyn smt::TermPool) -> Result<smt::Term> {
         let to_func = |decl| self.funcs.borrow().get(&decl).cloned();
+        let to_var = |ast| self.variables_rev.borrow().get(&ast).cloned();
         let to_sort = |decl| self.sorts_rev.borrow().get(&decl).cloned();
-        match self.manager.export(term, pool, to_func, to_sort) {
-            Some(t) => Ok(t),
-            None => Err(backends::Error::new(
+        match self.manager.export(term, pool, to_func, to_var, to_sort) {
+            Ok(t) => Ok(t),
+            Err(t) => Err(backends::Error::new(
                 self.manager.backend().name()?,
                 backends::ErrorKind::Unsupported {
-                    msg: "unsupported term handle in conversion to Term".into(),
+                    msg: format!("unsupported term handle in conversion to Term: {t:?}"),
                     span: None,
                 },
             )),

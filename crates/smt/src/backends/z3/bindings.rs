@@ -676,23 +676,19 @@ impl Ast {
             for i in 0..size {
                 formulas.push(Z3_goal_formula(ctx, output, i).unwrap())
             }
-            
+
             let ast = match size {
                 0 => Z3_mk_true(ctx).unwrap(),
                 1 => formulas[0],
-                n => Z3_mk_and(ctx, n, formulas.as_ptr()).unwrap()
+                n => Z3_mk_and(ctx, n, formulas.as_ptr()).unwrap(),
             };
 
             Z3_inc_ref(ctx, ast);
 
-            let simplified = Z3_simplify(ctx, ast).unwrap();
-            Z3_inc_ref(ctx, simplified);
-            Z3_dec_ref(ctx, ast);
-            
             Z3_apply_result_dec_ref(ctx, result);
             Z3_tactic_dec_ref(ctx, qe);
             Z3_goal_dec_ref(ctx, goal);
-            
+
             Ast::new(&self.ctx, ast)
         }
     }
@@ -772,6 +768,15 @@ impl Clone for App {
         App {
             ctx: self.ctx.clone(),
             app: self.app,
+        }
+    }
+}
+
+impl From<App> for Ast {
+    fn from(app: App) -> Self {
+        Ast {
+            ctx: app.ctx.clone(),
+            ast: app.app.cast(),
         }
     }
 }

@@ -30,7 +30,7 @@ use formally::{
 use clap::{Args, Parser, Subcommand};
 use itertools::*;
 
-use std::{path::*, process::ExitCode};
+use std::{num::NonZero, path::*, process::ExitCode};
 
 fn backend_opt_help() -> String {
     let mut backends = Vec::new();
@@ -48,8 +48,12 @@ fn backend_opt_help() -> String {
 
 #[derive(Args)]
 struct Solve {
+    /// The SMT backend to use
     #[arg(short = 'B', long, help = backend_opt_help())]
     backend: Option<String>,
+    /// The level of parallelism, if supported by the backend
+    #[arg(short = 'j', long, value_name = "jobs", num_args = 0..=1)]
+    jobs: Option<Option<NonZero<usize>>>,
     /// The path to the SMT-LIB script to solve
     filename: PathBuf,
 }
@@ -86,7 +90,12 @@ fn solve(args: Solve) -> Result<(), DiagnosticEmitted> {
             None => &backends::Default,
         };
 
-        let mut interpreter = Interpreter::with_backend(Config::default(), backend);
+        let settings = Settings {
+            backend,
+            jobs: args.jobs,
+            ..Settings::default()
+        };
+        let mut interpreter = Interpreter::new(settings);
 
         interpreter.run(&args.filename)?;
 
