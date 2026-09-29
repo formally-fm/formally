@@ -285,6 +285,14 @@ impl TermManager {
 
         Defined(Nominal(arc))
     }
+
+    fn import_declared(&self, decl: Declared) {
+        self.decls.borrow_mut().insert((*decl.0).clone());
+    }
+
+    fn import_defined(&self, def: Defined) {
+        self.defs.borrow_mut().insert((*def.0).clone());
+    }
 }
 
 /// Main interface to SMT solvers.
@@ -346,6 +354,36 @@ impl Solver {
     /// Create a [Solver] with a default backend and a dedicated [TermManager].
     pub fn new(config: &Config) -> Result<Solver> {
         Solver::with_manager(config, TermManager::new()?)
+    }
+
+    /// Import into this [Solver] the declarations and definitions of an existing [Env].
+    ///
+    /// Only the topmost frame in the [Env]'s stack is considered. The stack frames are ignored.
+    pub fn import(&mut self, env: Env) -> Result<()> {
+        for sort in env.sorts.elements() {
+            self.env.sorts.add(sort.name(), sort.clone());
+        }
+        
+        for func in env.functions.elements() {
+            self.env.functions.add(func.name(), func.clone());
+        }
+        
+        for func in std::iter::chain(env.sorts.elements(), env.functions.elements()) {
+            if let Function::User(func) = func {
+                match func {
+                    UserFunction::Declared(decl) => {
+                        self.manager.import_declared(decl.clone());
+                        self.backend_solver.declare(decl.clone())?;
+                    }
+                    UserFunction::Defined(def) => {
+                        self.manager.import_defined(def.clone());
+                        self.backend_solver.define(def.clone())?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Get the [TermManager] of this [Solver].

@@ -319,6 +319,9 @@ impl<T: Hash + Eq> Scope<T> {
         self.elements.get_mut(name).unwrap().insert_mut(element);
     }
 
+    /// Look up elements in this [Scope] by name.
+    ///
+    /// Returns a [LookupSet] representing all the elements with the same name in the [Scope].
     pub fn lookup<'i>(&self, name: impl Into<Identifier<'i>>) -> LookupSet<'_, 'i, T, &'_ T> {
         let name = name.into();
         if let Some(elements) = self.elements.get(name.name()) {
@@ -328,6 +331,23 @@ impl<T: Hash + Eq> Scope<T> {
         } else {
             LookupSet::new(name, self, std::iter::empty(), |t| Ok(Some(t)))
         }
+    }
+
+    /// Iterate over all the name/element pairs in the [Scope].
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &T)> {
+        self.elements
+            .iter()
+            .flat_map(|(name, items)| items.iter().map(|it| (name.as_str(), it)))
+    }
+
+    /// Iterate over all the names registered in the [Scope].
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.elements.keys().map(|s| s.as_str())
+    }
+
+    /// Iterate over all the elements registered in the [Scope].
+    pub fn elements(&self) -> impl Iterator<Item = &T> {
+        self.iter().map(|(_, v)| v)
     }
 }
 
