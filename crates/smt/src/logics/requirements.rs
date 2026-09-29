@@ -100,26 +100,10 @@ impl LogicRequirement for Linear {
                     if let Function::Primitive(prim) = &bound.function
                         && forbidden.contains(prim)
                     {
-                        fn is_constant(kind: &TermKind) -> bool {
-                            match kind {
-                                TermKind::Constant(Constant::Integer { .. }) => true,
-                                TermKind::Atom(atom)
-                                    if let FunctionRef::Bound(bound) = &atom.head
-                                        && let Function::Primitive(prim) = &bound.function
-                                        && (*prim == Ints::unary_minus()
-                                            || *prim == Reals::unary_minus())
-                                        && atom.arguments.len() == 1
-                                        && is_constant(atom.arguments[0].kind()) =>
-                                {
-                                    true
-                                }
-                                _ => false,
-                            }
-                        }
                         let nonlinear = atom
                             .arguments
                             .iter()
-                            .filter(|arg| is_constant(arg.kind()))
+                            .filter(|t| t.is_constant())
                             .count();
                         if nonlinear > 1 {
                             error!(

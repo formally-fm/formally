@@ -22,8 +22,14 @@
 // SOFTWARE.
 //
 
-use crate::*;
-use formally::support::*;
+use crate::formally;
+use formally::{
+    smt::{
+        theories::{Ints, Reals},
+        *,
+    },
+    support::*,
+};
 
 use std::{collections::HashMap, iter::zip};
 
@@ -118,6 +124,9 @@ impl BoundRef {
             let argsort = Sort::of(arg)?;
 
             if !sort.matches_with(&argsort, &mut matches) {
+                if argsort == Ints::Int() && sort.matches_with(&Reals::Real(), &mut matches) {
+                    continue;
+                }
                 return Err(TypeCheckError {
                     kind: Box::new(TypeCheckErrorKind::SortMismatch {
                         argument: argsort,

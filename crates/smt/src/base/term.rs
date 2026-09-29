@@ -22,15 +22,21 @@
 // SOFTWARE.
 //
 
-use crate::*;
-use formally::support::*;
+use crate::formally;
+use formally::{
+    smt::{
+        theories::{Ints, Reals},
+        *,
+    },
+    support::*,
+};
 
 use derive_more::From;
 use transitive::Transitive;
 
 pub use rug::{Integer, Rational};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::{Display, Formatter},
     hash::{Hash, Hasher},
     sync::{Arc, OnceLock},
@@ -356,6 +362,22 @@ impl Term {
     /// The number of nodes (atoms and other kinds) that recursively compose this [Term].
     pub fn size(&self) -> usize {
         self.0.size
+    }
+
+    /// Tell whether this [Term] represents a numeric constant, possibly negated.
+    pub fn is_constant(&self) -> bool {
+        match self.kind() {
+            TermKind::Constant(_) => true,
+            TermKind::Atom(atom)
+                if let FunctionRef::Bound(bound) = &atom.head
+                    && let Function::Primitive(prim) = &bound.function =>
+            {
+                (*prim == Ints::unary_minus() || *prim == Reals::unary_minus())
+                    && atom.arguments.len() == 1
+                    && atom.arguments[0].is_constant()
+            }
+            _ => false,
+        }
     }
 }
 

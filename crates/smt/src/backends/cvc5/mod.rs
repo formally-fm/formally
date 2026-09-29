@@ -443,7 +443,7 @@ impl api::Manager for Manager {
 
         match self.cvc5manager.get_term_kind(term) {
             cvc5::Kind::Constant => Ok(to_func(term).map(|f| f.into_term_in(pool)).unwrap()),
-            cvc5::Kind::Variable => Ok(to_func(term).map(|f| f.into_term_in(pool)).unwrap()),
+            cvc5::Kind::Variable => Ok(to_var(term).map(|v| v.into_term_in(pool)).unwrap()),
             cvc5::Kind::ApplyUf => {
                 let mut children = Vec::new();
                 let head = to_func(self.cvc5manager.get_term_child(term, 0)).unwrap();

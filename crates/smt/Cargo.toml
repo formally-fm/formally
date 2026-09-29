@@ -48,6 +48,3 @@ bitvec = "1.1.1"
 
 [dev-dependencies]
 rstest = "0.26.0"
-
-[profile.dev.package.oxidd]
-opt-level = 3

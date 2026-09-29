@@ -266,12 +266,12 @@ impl api::Manager for Manager {
 
     fn constant(&self, cnst: &smt::Constant) -> Result<z3::Ast> {
         match cnst {
-            smt::Constant::Integer { value, .. } => {
-                Ok(self.z3context.mk_numeral(&value.to_string()))
-            }
-            smt::Constant::Rational { value, .. } => {
-                Ok(self.z3context.mk_numeral(&value.to_string()))
-            }
+            smt::Constant::Integer { value, .. } => Ok(self
+                .z3context
+                .mk_numeral(&value.to_string(), self.z3context.mk_int_sort())),
+            smt::Constant::Rational { value, .. } => Ok(self
+                .z3context
+                .mk_numeral(&value.to_string(), self.z3context.mk_real_sort())),
         }
     }
 
@@ -375,9 +375,9 @@ impl Manager {
         to_sort: impl Clone + Fn(z3::Sort) -> Option<smt::Sort>,
     ) -> Result<smt::Term, z3::Ast> {
         if let Some(var) = to_var(term.clone()) {
-            return Ok(var.into_term_in(pool))
+            return Ok(var.into_term_in(pool));
         }
-        
+
         let kind = term.kind();
         match kind {
             z3::AstKind::Numeral => self.export_numeral(term, pool),

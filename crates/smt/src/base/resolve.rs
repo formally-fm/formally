@@ -22,8 +22,14 @@
 // SOFTWARE.
 //
 
-use crate::*;
-use formally::support::*;
+use crate::formally;
+use formally::{
+    smt::{
+        theories::{Ints, Reals},
+        *,
+    },
+    support::*,
+};
 
 use std::{collections::HashMap, iter::zip, sync::Arc};
 
@@ -155,8 +161,11 @@ impl Term {
         #[allow(clippy::mutable_key_type)]
         let mut matches = HashMap::new();
         let domain = bound.domain(arguments.len());
-        for (sort, arg) in zip(domain, argsorts) {
-            if !sort.matches_with(arg, &mut matches) {
+        for (sort, argsort) in zip(domain, argsorts) {
+            if *argsort == Ints::Int() && sort.matches_with(&Reals::Real(), &mut matches) {
+                continue;
+            }
+            if !sort.matches_with(argsort, &mut matches) {
                 return None;
             }
         }

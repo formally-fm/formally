@@ -173,13 +173,13 @@ impl Context {
         })
     }
 
-    pub fn mk_numeral(&self, value: &str) -> Ast {
+    pub fn mk_numeral(&self, value: &str, sort: Sort) -> Ast {
         let numeral = CString::new(value.as_bytes()).unwrap();
         Ast::new(self, unsafe {
             Z3_mk_numeral(
                 self.ctx,
                 numeral.as_ptr(),
-                Z3_mk_int_sort(self.ctx).unwrap(),
+                sort.sort,
             )
             .unwrap()
         })
