@@ -55,6 +55,7 @@ impl<K: Hash + Eq, I: Hash + Eq> SyncBiMap<K, I> {
     }
 }
 
+#[allow(unused)]
 impl<K: Clone + Hash + Eq, I: Clone + Hash + Eq> SyncBiMap<K, I> {
     pub fn by_index(&self, index: &I) -> Option<K> {
         self.index_to_key.get(index).as_deref().cloned()
@@ -100,6 +101,7 @@ pub struct BitSet {
     bits: BitVec,
 }
 
+#[allow(unused)]
 impl BitSet {
     pub fn new() -> BitSet {
         BitSet::default()

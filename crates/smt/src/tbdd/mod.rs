@@ -29,11 +29,11 @@ use crate::formally;
 
 use formally::{
     smt::{
-        self, Function, FunctionRef, Let, Quantified, Quantifier, Solver, Sort, Term, TermKind,
+        self, Function, FunctionRef, Quantified, Quantifier, Solver, Sort, Term, TermKind,
         TermPool, ToTerm, Variable,
         theories::{Core, CoreAtom},
     },
-    support::{Diagnosable, DiagnosticEmitted, Level, Located, Span},
+    support::{Diagnosable, DiagnosticEmitted, Located, Span},
 };
 
 use oxidd::{
@@ -67,7 +67,6 @@ use std::{collections::HashMap, fmt::Debug, hash::Hash, ops::Deref, sync::Arc};
 //
 
 type Manager<'m> = <BCDDFunction as oxidd::Function>::Manager<'m>;
-type Edge<'m> = <<BCDDFunction as oxidd::Function>::Manager<'m> as oxidd::Manager>::Edge;
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 struct Atom(Term);
@@ -98,8 +97,6 @@ impl From<ErrorKind> for Error {
 enum ErrorKind {
     #[error("maximum memory usage limit reached for BDD nodes")]
     OutOfMemory(#[from] OutOfMemory),
-    #[error("building T-BDDs for let expressions is not (yet) supported")]
-    UnsupportedLet,
 }
 
 impl Diagnosable for Error {}
@@ -233,23 +230,28 @@ impl<'s> QE<'s> {
     }
 
     #[allow(clippy::mutable_key_type)]
-    fn eliminate(&self, var: Variable, cutoff: LevelNo, bdd: &BCDDFunction) -> Result<BCDDFunction, Error> {
+    fn eliminate(
+        &self,
+        var: Variable,
+        cutoff: LevelNo,
+        bdd: &BCDDFunction,
+    ) -> Result<BCDDFunction, Error> {
         let mut cache = HashMap::new();
         self.eliminate_in(var, cutoff, bdd, &mut cache)
     }
-    
+
     #[allow(clippy::mutable_key_type)]
     fn eliminate_in(
         &self,
         var: Variable,
         cutoff: LevelNo,
         bdd: &BCDDFunction,
-        cache: &mut HashMap<BCDDFunction, BCDDFunction>
+        cache: &mut HashMap<BCDDFunction, BCDDFunction>,
     ) -> Result<BCDDFunction, Error> {
         if let Some(result) = cache.get(bdd) {
-            return Ok(result.clone())
+            return Ok(result.clone());
         }
-        
+
         let result = match bdd.cofactors() {
             Some((high, low)) => {
                 let (level, guard) = bdd.with_manager_shared(|m, edge| -> Result<_, Error> {
@@ -278,20 +280,20 @@ impl<'s> QE<'s> {
 
                     eprint!(" - calling QE backend on: ");
                     quant.println(&mut std::io::stderr()).ok();
-                    
+
                     let eliminated = self.solver.qe(quant).unwrap();
-                    
+
                     eprint!(" - QE backend result: ");
                     eliminated.println(&mut std::io::stderr()).ok();
 
                     self.bdd(&eliminated)?
                 }
             }
-            None => bdd.clone()
+            None => bdd.clone(),
         };
-        
+
         cache.insert(bdd.clone(), result.clone());
-        
+
         Ok(result)
     }
 

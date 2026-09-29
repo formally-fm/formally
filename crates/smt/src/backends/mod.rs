@@ -158,7 +158,7 @@ use formally::{
     smt::{self, Config, Declared, Defined, ModelProvider, logics},
     support::{Diagnosable, Identifier, Level, Located, Span},
 };
-use std::{any::Any, fmt::Debug, fmt::Formatter, io, rc::Rc, sync::Arc};
+use std::{any::Any, fmt::Debug, fmt::Formatter, io, rc::Rc};
 
 use derive_more::Display;
 use thiserror::Error;

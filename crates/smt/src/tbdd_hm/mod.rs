@@ -37,8 +37,7 @@ use formally::{
     support::Located,
 };
 
-use dashmap::{DashMap, Entry};
-use itertools::Itertools;
+use dashmap::DashMap;
 use parking_lot::RwLock;
 
 use formally_io::print::Print;
@@ -265,9 +264,9 @@ impl<'s> QE<'s> {
 
                     eprint!("calling the QE backend on term:");
                     quant.println(&mut std::io::stderr()).ok();
-                    
+
                     let eliminated = self.solver.qe(quant).unwrap();
-                    
+
                     eprint!("QE backend result: ");
                     eliminated.println(&mut std::io::stderr()).ok();
 

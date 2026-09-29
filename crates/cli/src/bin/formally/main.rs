@@ -23,7 +23,7 @@
 //
 
 use formally::{
-    smt::{Config, backends, smtlib::interpreter::*},
+    smt::{backends, smtlib::interpreter::*},
     support::{Diagnostic, DiagnosticEmitted},
 };
 

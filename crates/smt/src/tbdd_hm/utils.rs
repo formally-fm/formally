@@ -94,6 +94,7 @@ impl<K: Clone + Hash + Eq, I: Clone + Hash + Eq> SyncBiMap<K, I> {
         self.key_to_index.iter().map(|r| r.key().clone())
     }
 
+    #[expect(unused)]
     pub fn indexes(&self) -> impl Iterator<Item = I> {
         self.index_to_key.iter().map(|r| r.key().clone())
     }
@@ -111,6 +112,7 @@ pub struct BitSet {
     bits: BitVec,
 }
 
+#[allow(unused)]
 impl BitSet {
     pub fn new() -> BitSet {
         BitSet::default()

@@ -32,7 +32,7 @@ use formally::smt::{
     logics::{Logic, LogicEx, standard_logic},
 };
 
-use std::{any::Any, cell::RefCell, collections::HashMap, iter::zip, rc::Rc, sync::Arc};
+use std::{any::Any, cell::RefCell, collections::HashMap, iter::zip, rc::Rc};
 
 type Result<T, E = backends::Error> = std::result::Result<T, E>;
 
