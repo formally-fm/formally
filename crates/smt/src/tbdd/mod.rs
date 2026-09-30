@@ -47,8 +47,8 @@ use oxidd::{
 use oxidd_reorder::set_var_order;
 use oxidd_rules_bdd::complement_edge::EdgeTag;
 
-use dashmap::DashMap;
-use itertools::{Itertools, partition};
+use dashmap::{DashMap, Entry};
+use itertools::Itertools;
 use thiserror::Error;
 use transitive::Transitive;
 
@@ -86,7 +86,7 @@ impl Deref for Atom {
 #[transitive(from(OutOfMemory, ErrorKind))]
 #[transitive(from(DiagnosticEmitted, ErrorKind))]
 #[error("{kind}")]
-struct Error {
+pub struct Error {
     pub kind: ErrorKind,
     pub span: Option<Span>,
 }
@@ -98,7 +98,7 @@ impl From<ErrorKind> for Error {
 }
 
 #[derive(Debug, Error)]
-enum ErrorKind {
+pub enum ErrorKind {
     #[error("maximum memory usage limit reached for BDD nodes")]
     OutOfMemory(#[from] OutOfMemory),
     #[error("unable to instantiate a new SMT backend")]
@@ -107,24 +107,98 @@ enum ErrorKind {
 
 impl Diagnosable for Error {}
 
-pub struct QE {
+pub fn qe(
+    term: &Term,
+    pool: &(dyn TermPool + Send + Sync),
+    env: Env,
+    backend: &'static dyn Backend,
+    jobs: Option<NonZero<u32>>,
+) -> Result<Term, Error> {
+    qe_in(term, pool, env, backend, jobs, &HashMap::new())
+}
+
+#[allow(clippy::mutable_key_type)]
+fn qe_in(
+    term: &Term,
+    pool: &(dyn TermPool + Send + Sync),
+    env: Env,
+    backend: &'static dyn Backend,
+    jobs: Option<NonZero<u32>>,
+    bindings: &HashMap<Variable, Term>,
+) -> Result<Term, Error> {
+    match term.kind() {
+        TermKind::Constant(_) => Ok(term.clone()),
+        TermKind::Atom(atom) => {
+            if let FunctionRef::Bound(bound) = &atom.head
+                && let Function::Variable(var) = &bound.function
+                && let Some(term) = bindings.get(var)
+            {
+                qe_in(term, pool, env, backend, jobs, bindings)
+            } else {
+                Ok(smt::Atom {
+                    head: atom.head.clone(),
+                    arguments: atom
+                        .arguments
+                        .iter()
+                        .map(|arg| qe_in(arg, pool, env.clone(), backend, jobs, bindings))
+                        .try_collect()?,
+                    span: atom.span(),
+                }
+                .into_term_in(pool))
+            }
+        }
+        TermKind::Quantified(Quantified { quantifier, .. }) => {
+            let mut variables = Vec::new();
+            let mut body = term.clone();
+
+            while let TermKind::Quantified(quant) = body.kind()
+                && quant.quantifier == *quantifier
+            {
+                variables.extend(quant.variables.iter().cloned());
+                body = quant.body.clone();
+            }
+
+            let quant = Quantified {
+                quantifier: *quantifier,
+                variables: Arc::from(variables.into_boxed_slice()),
+                body: qe_in(&body, pool, env.clone(), backend, jobs, bindings)?,
+                span: term.span(),
+            };
+
+            QE::new(pool, env, backend, jobs).qe(quant)
+        }
+        TermKind::Let(let_) => {
+            let mut nested = bindings.clone();
+            for bind in &*let_.bindings {
+                nested.insert(
+                    bind.variable.clone(),
+                    qe_in(&bind.def, pool, env.clone(), backend, jobs, bindings)?,
+                );
+            }
+            qe_in(&let_.body, pool, env, backend, jobs, &nested)
+        }
+    }
+}
+
+struct QE<'p> {
     manager: BCDDManagerRef,
-    pool: Arc<dyn TermPool + Send + Sync>,
+    pool: &'p (dyn TermPool + Send + Sync),
     env: Env,
     backend: &'static dyn Backend,
     atoms: SyncBiMap<Atom, VarNo>,
-    vars: SyncBiMap<Variable, usize>,
+    variables: SyncBiMap<Variable, usize>,
     free: DashMap<Term, BitSet>,
+    mentions: DashMap<(Atom, Variable), bool>,
     bdds: DashMap<Term, BCDDFunction>,
 }
 
-impl QE {
+impl<'p> QE<'p> {
     pub fn new(
-        pool: Arc<dyn TermPool + Send + Sync>,
+        pool: &'p (dyn TermPool + Send + Sync),
         env: Env,
         backend: &'static dyn Backend,
         jobs: Option<NonZero<u32>>,
-    ) -> QE {
+    ) -> QE<'p> {
         let jobs = jobs.map(NonZero::get).unwrap_or_else(|| {
             std::thread::available_parallelism()
                 .map(NonZero::get)
@@ -132,98 +206,32 @@ impl QE {
         });
         QE {
             manager: oxidd::bcdd::new_manager(268_435_456, 1_048_576, jobs),
-            pool: pool.clone(),
+            pool,
             env,
             backend,
             atoms: SyncBiMap::new(),
-            vars: SyncBiMap::new(),
+            variables: SyncBiMap::new(),
             free: DashMap::new(),
+            mentions: DashMap::new(),
             bdds: DashMap::new(),
         }
     }
 
-    pub fn qe(&self, term: &Term) -> Result<Term, DiagnosticEmitted> {
-        self.qe_in(term, &HashMap::new())
-    }
-
-    #[allow(clippy::mutable_key_type)]
-    fn qe_in(
-        &self,
-        term: &Term,
-        bindings: &HashMap<Variable, Term>,
-    ) -> Result<Term, DiagnosticEmitted> {
-        match term.kind() {
-            TermKind::Constant(_) => Ok(term.clone()),
-            TermKind::Atom(atom) => {
-                if let FunctionRef::Bound(bound) = &atom.head
-                    && let Function::Variable(var) = &bound.function
-                    && let Some(term) = bindings.get(var)
-                {
-                    self.qe_in(term, bindings)
-                } else {
-                    Ok(smt::Atom {
-                        head: atom.head.clone(),
-                        arguments: atom
-                            .arguments
-                            .iter()
-                            .map(|arg| self.qe_in(arg, bindings))
-                            .try_collect()?,
-                        span: atom.span(),
-                    }
-                    .into_term_in(&*self.pool))
-                }
-            }
-            TermKind::Quantified(Quantified { quantifier, .. }) => {
-                let mut variables = Vec::new();
-                let mut body = term.clone();
-
-                while let TermKind::Quantified(quant) = body.kind()
-                    && quant.quantifier == *quantifier
-                {
-                    variables.extend(quant.variables.iter().cloned());
-                    body = quant.body.clone();
-                }
-
-                let quant = Quantified {
-                    quantifier: *quantifier,
-                    variables: Arc::from(variables.into_boxed_slice()),
-                    body: self.qe_in(&body, bindings)?,
-                    span: term.span(),
-                };
-
-                Ok(self.qe_quant(quant)?)
-            }
-            TermKind::Let(let_) => {
-                let mut nested = bindings.clone();
-                for bind in &*let_.bindings {
-                    nested.insert(bind.variable.clone(), self.qe_in(&bind.def, bindings)?);
-                }
-                self.qe_in(&let_.body, &nested)
-            }
+    fn qe(self, quant: Quantified) -> Result<Term, Error> {
+        for (index, var) in quant.variables.iter().cloned().enumerate() {
+            self.variables.insert(var, index)
         }
-    }
 
-    fn qe_quant(&self, quant: Quantified) -> Result<Term, Error> {
-        match quant.quantifier {
-            Quantifier::Exists => self.qe_exists(&quant.variables, &quant.body),
-            Quantifier::Forall => self.qe_forall(&quant.variables, &quant.body),
-        }
-    }
+        eprintln!("building initial BDD...");
+        let bdd = self.bdd(&quant.body)?;
+        eprintln!("initial BDD built!");
 
-    fn qe_exists(&self, variables: &[Variable], body: &Term) -> Result<Term, Error> {
-        let result = self.manager.workers().install(|| -> Result<_, Error> {
-            eprintln!("building initial BDD...");
-            let mut result = self.bdd(body)?;
-            eprintln!("initial BDD built!");
-            for var in variables {
-                eprintln!("reordering...");
-                let cutoff = self.reorder(var.clone());
-                eprintln!("eliminating variable {}", var.name());
-                result = self.eliminate(var.clone(), cutoff, &result)?;
-                eprintln!("variable {} eliminated!", var.name());
-            }
-            Ok(result)
-        })?;
+        self.stats();
+
+        let result = match quant.quantifier {
+            Quantifier::Exists => self.qe_exists(&quant.variables, bdd)?,
+            Quantifier::Forall => self.qe_forall(&quant.variables, bdd)?,
+        };
 
         eprintln!("exporting result...");
         let term = self.term(&result);
@@ -233,7 +241,7 @@ impl QE {
 
         eprintln!("QE finished ({size} nodes), collecting shared subterms...");
 
-        let term = smt::Let::collect(&term, &*self.pool)?;
+        let term = smt::Let::collect(&term, self.pool)?;
 
         let size_after = term.size();
         eprintln!("shared subterms collected! (size {size_after})");
@@ -241,22 +249,98 @@ impl QE {
         Ok(term)
     }
 
-    #[allow(unused)]
-    fn qe_forall(&self, variables: &[Variable], body: &Term) -> Result<Term, Error> {
-        let neg = Core::not().call([body.clone()]).into_term_in(&*self.pool);
-        let elim = self.qe_exists(variables, &neg)?;
-        let result = Core::not().call([elim.clone()]).into_term_in(&*self.pool);
+    fn qe_exists(
+        &self,
+        variables: &[Variable],
+        mut body: BCDDFunction,
+    ) -> Result<BCDDFunction, Error> {
+        self.manager.workers().install(|| {
+            for variable in variables {
+                // eprintln!("reordering...");
+                // let cutoff = self.reorder(var.clone());
+                let cutoff = self.cutoff(variable);
+                eprintln!(
+                    "eliminating variable {} (cutoff {})",
+                    variable.name(),
+                    cutoff
+                );
+                body = self.eliminate(variable.clone(), cutoff, &body)?;
+                eprintln!("variable {} eliminated!", variable.name());
+            }
+            Ok(body)
+        })
+    }
 
-        Ok(result)
+    #[allow(unused)]
+    fn qe_forall(&self, variables: &[Variable], body: BCDDFunction) -> Result<BCDDFunction, Error> {
+        Ok(self.qe_exists(variables, body.not()?)?.not()?)
+    }
+
+    fn earliest_mention(&self, atom: &Atom) -> Option<Variable> {
+        let index = self.free(&atom.0).first_one()?;
+        Some(self.variables.by_index(&index).unwrap())
+    }
+
+    fn insertion_level(&self, atom: &Atom, vars: &[VarNo]) -> LevelNo {
+        match self.earliest_mention(atom) {
+            Some(earliest) => {
+                for (level, var) in vars.iter().enumerate() {
+                    let atom = self.atoms.by_index(var).unwrap();
+                    if self.mentions(atom, &earliest) {
+                        return level as LevelNo;
+                    }
+                }
+                vars.len() as LevelNo
+            }
+            None => 0,
+        }
+    }
+
+    fn mentions(&self, atom: Atom, variable: &Variable) -> bool {
+        match self.mentions.entry((atom.clone(), variable.clone())) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let free = self.free(atom.clone());
+                let index = self.variables.by_key(variable).unwrap();
+                let mentions = free.get(index);
+
+                entry.insert(mentions);
+
+                mentions
+            }
+        }
     }
 
     fn atom(&self, atom: Atom) -> VarNo {
-        self.manager
-            .with_manager_exclusive(|m| self.atoms.by_key_or_insert(atom, |_| m.add_vars(1).start))
+        self.manager.with_manager_exclusive(|m| {
+            self.atoms.by_key_or_insert(atom, |atom| {
+                let mut vars: Vec<_> = (0..m.num_levels())
+                    .into_iter()
+                    .map(|l| m.level_to_var(l))
+                    .collect();
+                let var = m.add_vars(1).start;
+                let level = self.insertion_level(atom, &vars);
+                vars.insert(level as usize, var);
+
+                set_var_order(m, &vars);
+
+                var
+            })
+        })
     }
 
-    fn variable(&self, var: Variable) -> usize {
-        self.vars.by_key_or_insert(var, |_| self.vars.size())
+    fn cutoff(&self, variable: &Variable) -> LevelNo {
+        self.manager.with_manager_shared(|m| {
+            let levels = m.num_levels();
+            for level in 0..levels {
+                let var = m.level_to_var(level);
+                let atom = self.atoms.by_index(&var).unwrap();
+                if self.mentions(atom, variable) {
+                    return level;
+                }
+            }
+            m.num_levels()
+        })
     }
 
     fn top(&self) -> BCDDFunction {
@@ -267,17 +351,31 @@ impl QE {
         self.manager.with_manager_shared(|m| BCDDFunction::f(m))
     }
 
-    fn reorder(&self, eliminate: Variable) -> LevelNo {
-        let eliminate = self.variable(eliminate);
-        let mut bddvars = self.atoms.indexes().collect_vec();
+    fn stats(&self) {
+        eprintln!("stats:");
+        eprintln!(" - variables: ");
+        eprint!("   -");
+        for index in 0..self.variables.size() {
+            let var = self.variables.by_index(&index).unwrap();
+            print!(" {}", var.name());
+        }
+        println!();
+        eprintln!(" - atoms ({}):", self.atoms.size());
+        self.manager.with_manager_shared(|m| {
+            for level in 0..m.num_levels() {
+                eprint!("   {}.", level);
+                let var = m.level_to_var(level);
+                let atom = self.atoms.by_index(&var).unwrap();
 
-        let cutoff = partition(&mut bddvars, |var| {
-            !self.free(self.atoms.by_index(var).unwrap()).get(eliminate)
-        });
-
-        self.manager.with_manager_exclusive(|m| {
-            set_var_order(m, &bddvars);
-            m.var_to_level(bddvars[cutoff])
+                let free = self.free(atom.clone());
+                for index in 0..free.len() {
+                    if free.get(index) {
+                        let variable = self.variables.by_index(&index).unwrap();
+                        eprint!(" {} ", variable.name());
+                    }
+                }
+                eprintln!()
+            }
         })
     }
 
@@ -316,7 +414,7 @@ impl QE {
                     Ok((level, BCDDFunction::var(m, var)?))
                 })?;
 
-                if level < cutoff {
+                if level <= cutoff {
                     let (high, low) = self.manager.workers().join(
                         || self.eliminate_in(var.clone(), cutoff, &high, cache),
                         || self.eliminate_in(var.clone(), cutoff, &low, cache),
@@ -332,7 +430,7 @@ impl QE {
                         body: self.term(bdd),
                         span: None,
                     }
-                    .into_term_in(&*self.pool);
+                    .into_term_in(self.pool);
 
                     let mut solver = Solver::with_backend(&Config::default(), self.backend)?;
                     solver.import(self.env.clone())?;
@@ -489,8 +587,9 @@ impl QE {
                 let mut bits = BitSet::new();
                 if let FunctionRef::Bound(bound) = &atom.head
                     && let Function::Variable(var) = &bound.function
+                    && let Some(index) = self.variables.by_key(var)
                 {
-                    bits.set(self.variable(var.clone()), true);
+                    bits.set(index, true);
                 }
                 for arg in &*atom.arguments {
                     bits |= self.free(arg);
@@ -498,17 +597,13 @@ impl QE {
 
                 bits
             }
-            TermKind::Quantified(quant) => {
-                let mut bits = self.free(&quant.body);
-                for var in &*quant.variables {
-                    bits.set(self.variable(var.clone()), false)
-                }
-                bits
-            }
+            TermKind::Quantified(_) => unreachable!(),
             TermKind::Let(let_) => {
                 let mut bits = self.free(&let_.body);
                 for bind in &*let_.bindings {
-                    bits.set(self.variable(bind.variable.clone()), false)
+                    if let Some(index) = self.variables.by_key(&bind.variable) {
+                        bits.set(index, false)
+                    }
                 }
                 bits
             }

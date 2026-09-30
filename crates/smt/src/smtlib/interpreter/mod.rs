@@ -368,13 +368,13 @@ impl Interpreter {
         let term = state.solver.lookup(term, smt::Role::Function)?;
 
         let term = if let Some(jobs) = state.settings.jobs {
-            let qe = tbdd::QE::new(
-                state.pool.clone(),
+            tbdd::qe(
+                &term,
+                &*state.pool,
                 state.solver.env().clone(),
                 state.settings.backend,
                 jobs,
-            );
-            qe.qe(&term)?
+            )?
         } else {
             state.solver.qe(term)?
         };

@@ -42,6 +42,7 @@ impl<K: Hash + Eq, I: Hash + Eq> Default for SyncBiMap<K, I> {
     }
 }
 
+#[allow(unused)]
 impl<K: Hash + Eq, I: Hash + Eq> SyncBiMap<K, I> {
     pub fn new() -> Self {
         SyncBiMap {
@@ -63,6 +64,17 @@ impl<K: Clone + Hash + Eq, I: Clone + Hash + Eq> SyncBiMap<K, I> {
 
     pub fn by_key(&self, key: &K) -> Option<I> {
         self.key_to_index.get(key).as_deref().cloned()
+    }
+
+    pub fn insert(&self, key: K, index: I) {
+        let e1 = self.key_to_index.entry(key);
+        let e2 = self.index_to_key.entry(index);
+
+        let key = e1.key().clone();
+        let index = e2.key().clone();
+
+        e1.insert(index);
+        e2.insert(key);
     }
 
     pub fn by_key_or_insert<F>(&self, key: K, f: F) -> I
