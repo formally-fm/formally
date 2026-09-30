@@ -444,8 +444,9 @@ impl Emitter for NullEmitter {
 /// [BatchEmitter] works by relaying all the received diagnostics to an inner [Emitter] instance,
 /// but only after a call to [BatchEmitter::commit]. If the object is destroyed before a call to
 /// [BatchEmitter::commit], the pending dianostics are discarded.
+#[derive(Default)]
 pub struct BatchEmitter<'e> {
-    emitter: &'e dyn Emitter,
+    emitter: Option<&'e dyn Emitter>,
     emitted: RefCell<Vec<Emitted>>,
 }
 
@@ -477,13 +478,13 @@ impl Emit for Vec<Emitted> {
 impl<'e> BatchEmitter<'e> {
     /// Construct a new [BatchEmitter] relaying to the global [Emitter].
     pub fn new() -> BatchEmitter<'static> {
-        BatchEmitter::with_emitter(&GlobalEmitter)
+        BatchEmitter::default()
     }
 
     /// Construct a new [BatchEmitter] relaying to the provided [Emitter] instance.
     pub fn with_emitter(emitter: &'e dyn Emitter) -> BatchEmitter<'e> {
         BatchEmitter {
-            emitter,
+            emitter: Some(emitter),
             emitted: RefCell::default(),
         }
     }
@@ -493,7 +494,10 @@ impl<'e> BatchEmitter<'e> {
     /// The method returns `Ok(())` if no diagnostics were collected, or `Err(DiagnosticEmitted)`
     /// otherwise.
     pub fn commit(self) -> Result<(), DiagnosticEmitted> {
-        Diagnostic::with(self.emitter, || Ok(self.ok()?))
+        match self.emitter {
+            Some(emitter) => Diagnostic::with(emitter, || Ok(self.ok()?)),
+            None => Ok(self.ok()?),
+        }
     }
 
     /// Return the collected emitted diagnostics as an `Err(Vec<Emitted>)` if any, or `Ok(())` if no

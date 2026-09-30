@@ -78,11 +78,13 @@ impl<'c> Parsable<'c> for Decimal {
             .map(|((int, _), frac)| format!("{int}.{frac}"))
             .skipping(nothing())
             .map(|s| Decimal {
-                value: Arc::new(rug::Float::parse(s)
-                    .unwrap()
-                    .complete(53)
-                    .to_rational()
-                    .unwrap()),
+                value: Arc::new(
+                    rug::Float::parse(s)
+                        .unwrap()
+                        .complete(53)
+                        .to_rational()
+                        .unwrap(),
+                ),
                 span: None,
             })
             .located()
@@ -615,7 +617,12 @@ impl<'c> Parsable<'c> for Command {
             succeed().map(|_| Command::ResetAssertions(None)),
         ))
         .or(command("reset", succeed().map(|_| Command::Reset(None))))
-        // .or(keyword("set-info").then(Attribute::ast()).map(SetInfo))
+        .or(command("set-info", Attribute::parser()).map(|attribute| {
+            Command::SetInfo(SetInfo {
+                attribute,
+                span: None,
+            })
+        }))
         .or(command(
             "set-logic",
             Symbol::parser().map(|logic| Command::SetLogic(SetLogic { logic, span: None })),
@@ -624,6 +631,7 @@ impl<'c> Parsable<'c> for Command {
             "set-option",
             AstOption::parser().map(|option| Command::SetOption(SetOption { option, span: None })),
         ))
+        .or(command("exit", succeed().map(|_| Command::Exit(None))))
         .located()
         .named("SMT-LIBv2 command", "SMT-LIBv2 commands")
         .parens()

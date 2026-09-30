@@ -209,7 +209,7 @@ impl Interpreter {
                 GetOption(_) => Self::unsupported(&mut **output),
                 Reset(_) => Self::unsupported(&mut **output),
                 ResetAssertions(_) => Self::unsupported(&mut **output),
-                SetInfo(_) => Self::unsupported(&mut **output),
+                SetInfo(_) => Self::ignore(),
                 SetLogic(sl) => Self::set_logic(self, sl),
                 SetOption(so) => Self::set_option_start(config, &mut **output, so),
                 command => Self::fail(config, RequiredMode::Started, command),
@@ -239,7 +239,7 @@ impl Interpreter {
                 Push(push) => Self::push(state, push),
                 Reset(_) => Self::unsupported(&mut *state.settings.output),
                 ResetAssertions(_) => Self::unsupported(&mut *state.settings.output),
-                SetInfo(_) => Self::unsupported(&mut *state.settings.output),
+                SetInfo(_) => Self::ignore(),
                 SetOption(so) => Self::set_option_started(state, so),
                 _ => match (command, state.mode) {
                     (GetAssignments(_), Mode::Sat) => {
@@ -323,13 +323,16 @@ impl Interpreter {
         Err(DiagnosticEmitted)
     }
 
+    fn ignore() -> Result<()> {
+        Ok(())
+    }
+
     fn unsupported(output: &mut dyn RenderTarget) -> Result<()> {
         Interpreter::response(output, ast::Response::Unsupported)
     }
 
     // TODO: supporting setting the output stream through the `Config`
     fn response(output: &mut dyn RenderTarget, response: impl Print) -> Result<()> {
-        eprintln!("printing response...");
         match response.println(output) {
             Ok(_) => Ok(()),
             Err(err) => {
@@ -376,9 +379,7 @@ impl Interpreter {
             state.solver.qe(term)?
         };
 
-        eprintln!("converting to AST...");
         let term = Box::new(ast::Term::from(term));
-        eprintln!("converted to AST!");
 
         Interpreter::response(
             &mut *state.settings.output,
