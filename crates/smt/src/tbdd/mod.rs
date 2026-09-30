@@ -44,7 +44,7 @@ use oxidd::{
     error::OutOfMemory,
 };
 
-use oxidd_reorder::set_var_order;
+use oxidd_reorder::set_var_order_seq;
 use oxidd_rules_bdd::complement_edge::EdgeTag;
 
 use dashmap::{DashMap, Entry};
@@ -322,7 +322,7 @@ impl<'p> QE<'p> {
                 let level = self.insertion_level(atom, &vars);
                 vars.insert(level as usize, var);
 
-                set_var_order(m, &vars);
+                set_var_order_seq(m, &vars);
 
                 var
             })
