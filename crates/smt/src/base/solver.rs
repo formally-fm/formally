@@ -738,12 +738,22 @@ impl Solver {
 
                 Ok(self.backend_solver.qe(quant, &*self.manager.pool)?)
             }
-            TermKind::Let(let_) => Ok(Let {
-                bindings: let_.bindings.clone(),
-                body: self.qe_in(&let_.body)?,
-                span: let_.span(),
-            }
-            .into_term_in(&*self.manager.pool)),
+            TermKind::Let(let_) => {
+                let mut bindings = Vec::with_capacity(let_.bindings.len());
+                for bind in &*let_.bindings {
+                    bindings.push(Binding {
+                        variable: bind.variable.clone(),
+                        def: self.qe_in(&bind.def)?,
+                        span: bind.span(),
+                    })
+                }
+                Ok(Let {
+                    bindings: Arc::from(bindings.into_boxed_slice()),
+                    body: self.qe_in(&let_.body)?,
+                    span: let_.span(),
+                }
+                    .into_term_in(&*self.manager.pool))
+            },
         }
     }
 }

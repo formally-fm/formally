@@ -67,7 +67,8 @@ use std::{collections::HashMap, fmt::Debug, hash::Hash, num::NonZero, ops::Deref
 // when to make the BDD T-reduced?
 //
 
-type Manager<'m> = <BCDDFunction as oxidd::Function>::Manager<'m>;
+// type Manager<'m> = <BCDDFunction as oxidd::Function>::Manager<'m>;
+// type Edge<'m> = <<BCDDFunction as oxidd::Function>::Manager<'m> as oxidd::Manager>::Edge;
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 struct Atom(Term);
@@ -193,11 +194,11 @@ impl QE {
                 Ok(self.qe_quant(quant)?)
             }
             TermKind::Let(let_) => {
-                let mut bindings = bindings.clone();
+                let mut nested = bindings.clone();
                 for bind in &*let_.bindings {
-                    bindings.insert(bind.variable.clone(), bind.def.clone());
+                    nested.insert(bind.variable.clone(), self.qe_in(&bind.def, bindings)?);
                 }
-                self.qe_in(&let_.body, &bindings)
+                self.qe_in(&let_.body, &nested)
             }
         }
     }
@@ -210,7 +211,7 @@ impl QE {
     }
 
     fn qe_exists(&self, variables: &[Variable], body: &Term) -> Result<Term, Error> {
-        self.manager.workers().install(|| {
+        let result = self.manager.workers().install(|| -> Result<_, Error> {
             eprintln!("building initial BDD...");
             let mut result = self.bdd(body)?;
             eprintln!("initial BDD built!");
@@ -221,27 +222,32 @@ impl QE {
                 result = self.eliminate(var.clone(), cutoff, &result)?;
                 eprintln!("variable {} eliminated!", var.name());
             }
+            Ok(result)
+        })?;
 
-            eprintln!("exporting result...");
-            let term = self.term(&result);
-            eprintln!("result exported!");
+        eprintln!("exporting result...");
+        let term = self.term(&result);
+        eprintln!("result exported!");
 
-            let size = term.size();
+        let size = term.size();
 
-            eprintln!("QE finished ({size} nodes), collecting shared subterms...");
+        eprintln!("QE finished ({size} nodes), collecting shared subterms...");
 
-            let term = smt::Let::collect(&term, &*self.pool)?;
+        let term = smt::Let::collect(&term, &*self.pool)?;
 
-            let size_after = term.size();
-            eprintln!("shared subterms collected! (size {size_after})");
-            
-            Ok(term)
-        })
+        let size_after = term.size();
+        eprintln!("shared subterms collected! (size {size_after})");
+
+        Ok(term)
     }
 
     #[allow(unused)]
     fn qe_forall(&self, variables: &[Variable], body: &Term) -> Result<Term, Error> {
-        todo!()
+        let neg = Core::not().call([body.clone()]).into_term_in(&*self.pool);
+        let elim = self.qe_exists(variables, &neg)?;
+        let result = Core::not().call([elim.clone()]).into_term_in(&*self.pool);
+
+        Ok(result)
     }
 
     fn atom(&self, atom: Atom) -> VarNo {
@@ -419,32 +425,30 @@ impl QE {
     #[allow(clippy::mutable_key_type)]
     fn term(&self, bdd: &BCDDFunction) -> Term {
         let mut cache = HashMap::new();
-        self.manager
-            .with_manager_shared(|m| self.term_in(m, bdd, &mut cache))
+        self.term_in(bdd, &mut cache)
     }
 
     #[allow(clippy::mutable_key_type)]
-    fn term_in<'m>(
-        &self,
-        m: &Manager<'m>,
-        bdd: &BCDDFunction,
-        cache: &mut HashMap<BCDDFunction, Term>,
-    ) -> Term {
+    fn term_in<'m>(&self, bdd: &BCDDFunction, cache: &mut HashMap<BCDDFunction, Term>) -> Term {
         if let Some(term) = cache.get(bdd) {
             return term.clone();
         }
 
-        let edge = bdd.as_edge(m);
-        let term = match m.get_node(edge) {
-            Node::Inner(node) => {
-                let guard = self
-                    .atoms
-                    .by_index(&m.level_to_var(node.level()))
-                    .unwrap()
-                    .0;
-                let (high, low) = BCDDFunction::cofactors(bdd).unwrap();
-                let high = self.term_in(m, &high, cache);
-                let low = self.term_in(m, &low, cache);
+        let term = match bdd.cofactors() {
+            Some((high, low)) => {
+                let guard = self.manager.with_manager_shared(|m| {
+                    let edge = bdd.as_edge(m);
+                    let Node::Inner(node) = m.get_node(edge) else {
+                        unreachable!()
+                    };
+                    self.atoms
+                        .by_index(&m.level_to_var(node.level()))
+                        .unwrap()
+                        .0
+                });
+
+                let high = self.term_in(&high, cache);
+                let low = self.term_in(&low, cache);
 
                 if high == true && low == false {
                     guard
@@ -464,10 +468,10 @@ impl QE {
                         .into_term_in(&*self.pool)
                 }
             }
-            Node::Terminal(_) => match edge.tag() {
+            None => bdd.with_manager_shared(|_, edge| match edge.tag() {
                 EdgeTag::None => Core::True().into_term_in(&*self.pool),
                 EdgeTag::Complemented => Core::False().into_term_in(&*self.pool),
-            },
+            }),
         };
 
         cache.insert(bdd.clone(), term.clone());

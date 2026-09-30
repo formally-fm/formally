@@ -331,7 +331,11 @@ impl TermInner {
             }
             TermKind::Let(let_) => {
                 resolved = let_.body.is_resolved();
-                qf = let_.body.is_quantifier_free();
+                qf = let_.body.is_quantifier_free()
+                    && let_
+                        .bindings
+                        .iter()
+                        .all(|b| b.def.is_quantifier_free());
                 1 + let_.bindings.iter().map(|b| b.def.size()).sum::<usize>() + let_.body.size()
             }
         };
