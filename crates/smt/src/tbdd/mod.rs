@@ -52,7 +52,7 @@ use itertools::Itertools;
 use thiserror::Error;
 use transitive::Transitive;
 
-use std::{collections::HashMap, fmt::Debug, hash::Hash, num::NonZero, ops::Deref, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, num::NonZero, ops::Deref, sync::Arc};
 
 // type Manager<'m> = <BCDDFunction as oxidd::Function>::Manager<'m>;
 // type Edge<'m> = <<BCDDFunction as oxidd::Function>::Manager<'m> as oxidd::Manager>::Edge;
