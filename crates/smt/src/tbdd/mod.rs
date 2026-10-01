@@ -53,33 +53,9 @@ use thiserror::Error;
 use transitive::Transitive;
 
 use std::{collections::HashMap, fmt::Debug, hash::Hash, num::NonZero, ops::Deref, sync::Arc};
-//
-// Given an SMT formula and a set of variables to be existentially eliminated, things to do:
-// 1. ✓ collect the atoms to form the set of BDD variables
-//    - ✓ collect free variables for each atom/term
-// 2. ✓ build the BDD
-// 3. ✓ reorder according to the next variable to eliminate
-// 4. ✓ traverse to make the local QE calls
-// 5. ✓ rebuild (with possibly the new variables corresponding to new atoms)
-// 6. go to point 3
-// 7. ✓ build a Term out of the BDD
-//
-// when to make the BDD T-reduced?
-//
 
 // type Manager<'m> = <BCDDFunction as oxidd::Function>::Manager<'m>;
 // type Edge<'m> = <<BCDDFunction as oxidd::Function>::Manager<'m> as oxidd::Manager>::Edge;
-
-#[derive(Clone, Hash, PartialEq, Eq)]
-struct Atom(Term);
-
-impl Deref for Atom {
-    type Target = Term;
-
-    fn deref(&self) -> &Term {
-        &self.0
-    }
-}
 
 #[derive(Debug, Error, Located, Transitive)]
 #[allow(clippy::duplicated_attributes)]
@@ -185,10 +161,10 @@ struct QE<'p> {
     pool: &'p (dyn TermPool + Send + Sync),
     env: Env,
     backend: &'static dyn Backend,
-    atoms: SyncBiMap<Atom, VarNo>,
+    atoms: SyncBiMap<Term, VarNo>,
     variables: SyncBiMap<Variable, usize>,
     free: DashMap<Term, BitSet>,
-    mentions: DashMap<(Atom, Variable), bool>,
+    mentions: DashMap<(Term, Variable), bool>,
     bdds: DashMap<Term, BCDDFunction>,
 }
 
@@ -276,17 +252,17 @@ impl<'p> QE<'p> {
         Ok(self.qe_exists(variables, body.not()?)?.not()?)
     }
 
-    fn earliest_mention(&self, atom: &Atom) -> Option<Variable> {
-        let index = self.free(&atom.0).first_one()?;
+    fn earliest_mention(&self, term: &Term) -> Option<Variable> {
+        let index = self.free(term).first_one()?;
         Some(self.variables.by_index(&index).unwrap())
     }
 
-    fn insertion_level(&self, atom: &Atom, vars: &[VarNo]) -> LevelNo {
-        match self.earliest_mention(atom) {
+    fn insertion_level(&self, term: &Term, vars: &[VarNo]) -> LevelNo {
+        match self.earliest_mention(term) {
             Some(earliest) => {
                 for (level, var) in vars.iter().enumerate() {
                     let atom = self.atoms.by_index(var).unwrap();
-                    if self.mentions(atom, &earliest) {
+                    if self.mentions(&atom, &earliest) {
                         return level as LevelNo;
                     }
                 }
@@ -296,11 +272,11 @@ impl<'p> QE<'p> {
         }
     }
 
-    fn mentions(&self, atom: Atom, variable: &Variable) -> bool {
-        match self.mentions.entry((atom.clone(), variable.clone())) {
+    fn mentions(&self, term: &Term, variable: &Variable) -> bool {
+        match self.mentions.entry((term.clone(), variable.clone())) {
             Entry::Occupied(entry) => *entry.get(),
             Entry::Vacant(entry) => {
-                let free = self.free(atom.clone());
+                let free = self.free(term);
                 let index = self.variables.by_key(variable).unwrap();
                 let mentions = free.get(index);
 
@@ -311,7 +287,7 @@ impl<'p> QE<'p> {
         }
     }
 
-    fn atom(&self, atom: Atom) -> VarNo {
+    fn atom(&self, atom: Term) -> VarNo {
         self.manager.with_manager_exclusive(|m| {
             self.atoms.by_key_or_insert(atom, |atom| {
                 let mut vars: Vec<_> = (0..m.num_levels())
@@ -335,7 +311,7 @@ impl<'p> QE<'p> {
             for level in 0..levels {
                 let var = m.level_to_var(level);
                 let atom = self.atoms.by_index(&var).unwrap();
-                if self.mentions(atom, variable) {
+                if self.mentions(&atom, variable) {
                     return level;
                 }
             }
@@ -367,7 +343,7 @@ impl<'p> QE<'p> {
                 let var = m.level_to_var(level);
                 let atom = self.atoms.by_index(&var).unwrap();
 
-                let free = self.free(atom.clone());
+                let free = self.free(&atom);
                 for index in 0..free.len() {
                     if free.get(index) {
                         let variable = self.variables.by_index(&index).unwrap();
@@ -390,6 +366,48 @@ impl<'p> QE<'p> {
         self.eliminate_in(var, cutoff, bdd, &cache)
     }
 
+    // Idea.
+    //
+    // Coalescing into single vars the subdags that do not mention the variable being eliminated.
+    // Ideal solution:
+    // - a single traversal eliminates the current variable and rebuilds the BDD coalescing for the
+    //   next variable
+    // - how do we coalesce after the last variable has been eliminated?
+    //   - we do not coalesce anything, obtaining the final result
+    // - new definition of "atom": a maximal Boolean subterm that does not mention the target
+    //   variable
+    // - the two main functions are bdd() and eliminate():
+    //   - bdd() takes a Term and compiles it into a coalesced BDD. Going top down:
+    //     - if a term does not mention the target variable, make it a unique atom
+    //     - if a term does mention the target variable, recurse on it to make it a BDD
+    //   - eliminate() traverses a BDD to eliminate a variable:
+    //     - it returns either a BDD or a Term
+    //     - after the local QE call:
+    //       - if the result mentions the next target variable, call bdd() on it
+    //       - if the result does not mention the next target variable, return it as a term
+    //     - on a cofactors split:
+    //       - if both subcalls return BDDs, combine them into a BDD
+    //       - if both subcalls return a Term, combine them with a Term ITE into a term
+    //       - if one subcall returns a BDD and the other a Term, give the latter to bdd() and
+    //         combine the BDDs.
+    // - structure of the main algorithm:
+    //   - result := initial term
+    //   - for each target variable in elimination order
+    //     - if result is a term, call bdd() on it on the current target variable
+    //     - result := eliminate(var, result)
+    // - how to deal with variable order in all this:
+    //   - ideally each iteration is talking about a different (but not disjoint) set of variables
+    //   - the apply cache will not help much
+    //   - I cannot cache the result of bdd() across iterations because the definition of which
+    //     terms are atoms changes
+    //   - so we just start over at each iteration
+    //     - new manager with its own new order
+    //       - new cache term -> bdd
+    //       - new map atom -> var
+    //       - we need to use the thread pool of the new manager at each iteration
+    //     - we can keep: the free cache, the mentions cache, the variables index
+    //     - inserting a new atom in the order is easier because it's just for a single pass
+    //       - we just keep the "mentioning" atoms low, and the others high
     #[allow(clippy::mutable_key_type)]
     fn eliminate_in(
         &self,
@@ -437,7 +455,7 @@ impl<'p> QE<'p> {
 
                     eprintln!("invoking QE backend...");
                     let eliminated = solver.qe(quant)?;
-                    eprintln!("QE backend invoked!");
+                    eprintln!("QE backend invocation succeeded!");
 
                     self.bdd(&eliminated)?
                 }
@@ -495,7 +513,7 @@ impl<'p> QE<'p> {
                             guard.ite(&then, &else_)?
                         }
                         CoreAtom::Equals(_) | CoreAtom::Distinct(_) => {
-                            let var = self.atom(Atom(term.clone()));
+                            let var = self.atom(term.clone());
                             self.manager
                                 .with_manager_shared(|m| BCDDFunction::var(m, var))?
                         }
@@ -503,7 +521,7 @@ impl<'p> QE<'p> {
                 } else if let Ok(sort) = Sort::of(term)
                     && sort == Core::Bool()
                 {
-                    let var = self.atom(Atom(term.clone()));
+                    let var = self.atom(term.clone());
                     self.manager
                         .with_manager_shared(|m| BCDDFunction::var(m, var))?
                 } else {
@@ -527,7 +545,7 @@ impl<'p> QE<'p> {
     }
 
     #[allow(clippy::mutable_key_type)]
-    fn term_in<'m>(&self, bdd: &BCDDFunction, cache: &mut HashMap<BCDDFunction, Term>) -> Term {
+    fn term_in(&self, bdd: &BCDDFunction, cache: &mut HashMap<BCDDFunction, Term>) -> Term {
         if let Some(term) = cache.get(bdd) {
             return term.clone();
         }
@@ -539,10 +557,7 @@ impl<'p> QE<'p> {
                     let Node::Inner(node) = m.get_node(edge) else {
                         unreachable!()
                     };
-                    self.atoms
-                        .by_index(&m.level_to_var(node.level()))
-                        .unwrap()
-                        .0
+                    self.atoms.by_index(&m.level_to_var(node.level())).unwrap()
                 });
 
                 let high = self.term_in(&high, cache);
@@ -551,24 +566,20 @@ impl<'p> QE<'p> {
                 if high == true && low == false {
                     guard
                 } else if high == false && low == true {
-                    Core::not().call([guard]).into_term_in(&*self.pool)
+                    Core::not().call([guard]).into_term_in(self.pool)
                 } else if low == true {
-                    Core::implies()
-                        .call([guard, high])
-                        .into_term_in(&*self.pool)
+                    Core::implies().call([guard, high]).into_term_in(self.pool)
                 } else if low == false {
-                    Core::and().call([guard, high]).into_term_in(&*self.pool)
+                    Core::and().call([guard, high]).into_term_in(self.pool)
                 } else if high == true {
-                    Core::or().call([guard, low]).into_term_in(&*self.pool)
+                    Core::or().call([guard, low]).into_term_in(self.pool)
                 } else {
-                    Core::ite()
-                        .call([guard, high, low])
-                        .into_term_in(&*self.pool)
+                    Core::ite().call([guard, high, low]).into_term_in(self.pool)
                 }
             }
             None => bdd.with_manager_shared(|_, edge| match edge.tag() {
-                EdgeTag::None => Core::True().into_term_in(&*self.pool),
-                EdgeTag::Complemented => Core::False().into_term_in(&*self.pool),
+                EdgeTag::None => Core::True().into_term_in(self.pool),
+                EdgeTag::Complemented => Core::False().into_term_in(self.pool),
             }),
         };
 
