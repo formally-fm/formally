@@ -29,7 +29,7 @@ use crate::formally;
 
 use formally::{
     smt::{
-        self, Config, Env, Function, FunctionRef, Quantified, Quantifier, Solver, Sort, Term,
+        self, Config, Env, Function, FunctionRef, Let, Quantified, Quantifier, Solver, Sort, Term,
         TermKind, TermPool, ToTerm, Variable,
         backends::Backend,
         theories::{Core, CoreAtom},
@@ -47,15 +47,17 @@ use oxidd::{
 use oxidd_reorder::set_var_order_seq;
 use oxidd_rules_bdd::complement_edge::EdgeTag;
 
-use dashmap::{DashMap, Entry};
+use dashmap::DashMap;
+use either::Either;
 use itertools::Itertools;
+use parking_lot::RwLock;
 use thiserror::Error;
 use transitive::Transitive;
 
-use std::{collections::HashMap, fmt::Debug, num::NonZero, ops::Deref, sync::Arc};
+use formally_io::print::Print;
+use std::{collections::HashMap, fmt::Debug, iter, num::NonZero, sync::Arc};
 
-// type Manager<'m> = <BCDDFunction as oxidd::Function>::Manager<'m>;
-// type Edge<'m> = <<BCDDFunction as oxidd::Function>::Manager<'m> as oxidd::Manager>::Edge;
+type Manager<'m> = <BCDDFunction as oxidd::Function>::Manager<'m>;
 
 #[derive(Debug, Error, Located, Transitive)]
 #[allow(clippy::duplicated_attributes)]
@@ -158,14 +160,14 @@ fn qe_in(
 
 struct QE<'p> {
     manager: BCDDManagerRef,
+    top: BCDDFunction,
+    bottom: BCDDFunction,
     pool: &'p (dyn TermPool + Send + Sync),
     env: Env,
     backend: &'static dyn Backend,
     atoms: SyncBiMap<Term, VarNo>,
-    variables: SyncBiMap<Variable, usize>,
-    free: DashMap<Term, BitSet>,
     mentions: DashMap<(Term, Variable), bool>,
-    bdds: DashMap<Term, BCDDFunction>,
+    cutoff: RwLock<Option<VarNo>>,
 }
 
 impl<'p> QE<'p> {
@@ -180,190 +182,18 @@ impl<'p> QE<'p> {
                 .map(NonZero::get)
                 .unwrap_or(1) as u32
         });
+        let manager = oxidd::bcdd::new_manager(1_073_741_824, 1_048_576, jobs);
         QE {
-            manager: oxidd::bcdd::new_manager(268_435_456, 1_048_576, jobs),
+            top: manager.with_manager_shared(|m| BCDDFunction::t(m)),
+            bottom: manager.with_manager_shared(|m| BCDDFunction::f(m)),
+            manager,
             pool,
             env,
             backend,
             atoms: SyncBiMap::new(),
-            variables: SyncBiMap::new(),
-            free: DashMap::new(),
             mentions: DashMap::new(),
-            bdds: DashMap::new(),
+            cutoff: RwLock::default(),
         }
-    }
-
-    fn qe(self, quant: Quantified) -> Result<Term, Error> {
-        for (index, var) in quant.variables.iter().cloned().enumerate() {
-            self.variables.insert(var, index)
-        }
-
-        eprintln!("building initial BDD...");
-        let bdd = self.bdd(&quant.body)?;
-        eprintln!("initial BDD built!");
-
-        self.stats();
-
-        let result = match quant.quantifier {
-            Quantifier::Exists => self.qe_exists(&quant.variables, bdd)?,
-            Quantifier::Forall => self.qe_forall(&quant.variables, bdd)?,
-        };
-
-        eprintln!("exporting result...");
-        let term = self.term(&result);
-        eprintln!("result exported!");
-
-        let size = term.size();
-
-        eprintln!("QE finished ({size} nodes), collecting shared subterms...");
-
-        let term = smt::Let::collect(&term, self.pool)?;
-
-        let size_after = term.size();
-        eprintln!("shared subterms collected! (size {size_after})");
-
-        Ok(term)
-    }
-
-    fn qe_exists(
-        &self,
-        variables: &[Variable],
-        mut body: BCDDFunction,
-    ) -> Result<BCDDFunction, Error> {
-        self.manager.workers().install(|| {
-            for variable in variables {
-                // eprintln!("reordering...");
-                // let cutoff = self.reorder(var.clone());
-                let cutoff = self.cutoff(variable);
-                eprintln!(
-                    "eliminating variable {} (cutoff {})",
-                    variable.name(),
-                    cutoff
-                );
-                body = self.eliminate(variable.clone(), cutoff, &body)?;
-                eprintln!("variable {} eliminated!", variable.name());
-            }
-            Ok(body)
-        })
-    }
-
-    #[allow(unused)]
-    fn qe_forall(&self, variables: &[Variable], body: BCDDFunction) -> Result<BCDDFunction, Error> {
-        Ok(self.qe_exists(variables, body.not()?)?.not()?)
-    }
-
-    fn earliest_mention(&self, term: &Term) -> Option<Variable> {
-        let index = self.free(term).first_one()?;
-        Some(self.variables.by_index(&index).unwrap())
-    }
-
-    fn insertion_level(&self, term: &Term, vars: &[VarNo]) -> LevelNo {
-        match self.earliest_mention(term) {
-            Some(earliest) => {
-                for (level, var) in vars.iter().enumerate() {
-                    let atom = self.atoms.by_index(var).unwrap();
-                    if self.mentions(&atom, &earliest) {
-                        return level as LevelNo;
-                    }
-                }
-                vars.len() as LevelNo
-            }
-            None => 0,
-        }
-    }
-
-    fn mentions(&self, term: &Term, variable: &Variable) -> bool {
-        match self.mentions.entry((term.clone(), variable.clone())) {
-            Entry::Occupied(entry) => *entry.get(),
-            Entry::Vacant(entry) => {
-                let free = self.free(term);
-                let index = self.variables.by_key(variable).unwrap();
-                let mentions = free.get(index);
-
-                entry.insert(mentions);
-
-                mentions
-            }
-        }
-    }
-
-    fn atom(&self, atom: Term) -> VarNo {
-        self.manager.with_manager_exclusive(|m| {
-            self.atoms.by_key_or_insert(atom, |atom| {
-                let mut vars: Vec<_> = (0..m.num_levels())
-                    .into_iter()
-                    .map(|l| m.level_to_var(l))
-                    .collect();
-                let var = m.add_vars(1).start;
-                let level = self.insertion_level(atom, &vars);
-                vars.insert(level as usize, var);
-
-                set_var_order_seq(m, &vars);
-
-                var
-            })
-        })
-    }
-
-    fn cutoff(&self, variable: &Variable) -> LevelNo {
-        self.manager.with_manager_shared(|m| {
-            let levels = m.num_levels();
-            for level in 0..levels {
-                let var = m.level_to_var(level);
-                let atom = self.atoms.by_index(&var).unwrap();
-                if self.mentions(&atom, variable) {
-                    return level;
-                }
-            }
-            m.num_levels()
-        })
-    }
-
-    fn top(&self) -> BCDDFunction {
-        self.manager.with_manager_shared(|m| BCDDFunction::t(m))
-    }
-
-    fn bottom(&self) -> BCDDFunction {
-        self.manager.with_manager_shared(|m| BCDDFunction::f(m))
-    }
-
-    fn stats(&self) {
-        eprintln!("stats:");
-        eprintln!(" - variables: ");
-        eprint!("   -");
-        for index in 0..self.variables.size() {
-            let var = self.variables.by_index(&index).unwrap();
-            print!(" {}", var.name());
-        }
-        println!();
-        eprintln!(" - atoms ({}):", self.atoms.size());
-        self.manager.with_manager_shared(|m| {
-            for level in 0..m.num_levels() {
-                eprint!("   {}.", level);
-                let var = m.level_to_var(level);
-                let atom = self.atoms.by_index(&var).unwrap();
-
-                let free = self.free(&atom);
-                for index in 0..free.len() {
-                    if free.get(index) {
-                        let variable = self.variables.by_index(&index).unwrap();
-                        eprint!(" {} ", variable.name());
-                    }
-                }
-                eprintln!()
-            }
-        })
-    }
-
-    #[allow(clippy::mutable_key_type)]
-    fn eliminate(
-        &self,
-        var: Variable,
-        cutoff: LevelNo,
-        bdd: &BCDDFunction,
-    ) -> Result<BCDDFunction, Error> {
-        let cache = DashMap::new();
-        self.eliminate_in(var, cutoff, bdd, &cache)
     }
 
     // Idea.
@@ -394,58 +224,201 @@ impl<'p> QE<'p> {
     //   - result := initial term
     //   - for each target variable in elimination order
     //     - if result is a term, call bdd() on it on the current target variable
-    //     - result := eliminate(var, result)
+    //     - result := eliminate(var, next_var, result)
+    // - what is `next_var` at the end?
+    //   - `None` which will be interpreted by eliminate() as 'always pass it up as a term', so the
+    //     final result will be a term as expected.
     // - how to deal with variable order in all this:
-    //   - ideally each iteration is talking about a different (but not disjoint) set of variables
-    //   - the apply cache will not help much
-    //   - I cannot cache the result of bdd() across iterations because the definition of which
-    //     terms are atoms changes
-    //   - so we just start over at each iteration
-    //     - new manager with its own new order
-    //       - new cache term -> bdd
-    //       - new map atom -> var
-    //       - we need to use the thread pool of the new manager at each iteration
-    //     - we can keep: the free cache, the mentions cache, the variables index
-    //     - inserting a new atom in the order is easier because it's just for a single pass
-    //       - we just keep the "mentioning" atoms low, and the others high
-    #[allow(clippy::mutable_key_type)]
+    //   - new atoms are easy to insert:
+    //     - those that mention the current target variable go down, the others go up.
+    //   - at each iteration we reset the list of "relevant" atoms and call `set_var_order_seq` only
+    //     on those.
+    //   - atoms not involved in the current iteration are forgotten
+    //   - the VarNo is still there, but it adds negligible overhead if the BDDs do not use it
+    //   - we should make sure unused BDDs from old iterations can be garbage-collected
+    fn qe(self, quant: Quantified) -> Result<Term, Error> {
+        match quant.quantifier {
+            Quantifier::Forall => self.qe_forall(&quant.variables, quant.body),
+            Quantifier::Exists => self.qe_exists(&quant.variables, quant.body),
+        }
+    }
+
+    fn qe_exists(&self, variables: &[Variable], body: Term) -> Result<Term, Error> {
+        if body == true {
+            eprintln!("body is true");
+        }
+
+        let mut body = Either::Left(body);
+        for i in 0..variables.len() {
+            let target = &variables[i];
+            let next = variables.get(i + 1);
+
+            eprintln!("eliminating {}", target.name());
+
+            body = match body {
+                Either::Left(term) => {
+                    eprintln!("partial result is a term, compiling the bdd...");
+                    let body = self.bdd(target, &term)?;
+                    eprintln!("bdd compiled! traversing...");
+                    self.eliminate(target, next, body)?
+                }
+                Either::Right(body) => {
+                    eprintln!("partial result is a bdd already, traversing...");
+                    self.eliminate(target, next, body)?
+                }
+            };
+            eprintln!("traversed!");
+        }
+
+        let term = match body {
+            Either::Left(term) => term,
+            Either::Right(bdd) => self.term(&bdd),
+        };
+
+        Ok(term)
+    }
+
+    fn qe_forall(&self, variables: &[Variable], body: Term) -> Result<Term, Error> {
+        let neg = Core::not().call([body]).into_term_in(self.pool);
+        let eliminated = self.qe_exists(variables, neg)?;
+        let neg = self.simplify(&Core::not().call([eliminated]).into_term_in(self.pool));
+
+        Ok(neg)
+    }
+
+    #[allow(unused)]
+    fn stats(&self, m: &Manager<'_>, target: &Variable) {
+        eprintln!("atoms ({}):", self.atoms.size());
+        for level in 0..m.num_levels() {
+            eprint!(" - level {} -> var {}. ", level, m.level_to_var(level));
+            let var = m.level_to_var(level);
+            let atom = self.atoms.by_index(&var).unwrap();
+
+            if self.mentions(&atom, target) {
+                if self.cutoff.read().is_some_and(|c| var == c) {
+                    eprintln!("mentions target! cutoff!")
+                } else {
+                    eprintln!("mentions target!")
+                }
+            } else {
+                eprintln!()
+            }
+        }
+    }
+
+    fn top(&self) -> BCDDFunction {
+        self.top.clone()
+    }
+
+    fn bottom(&self) -> BCDDFunction {
+        self.bottom.clone()
+    }
+
+    // fn ite(&self, guard: Term, high: Term, low: Term) -> Term {
+    //     if high == true && low == false {
+    //         guard
+    //     } else if high == false && low == true {
+    //         self.not(&guard)
+    //     } else if low == true {
+    //         Core::implies().call([guard, high]).into_term_in(self.pool)
+    //     } else if low == false {
+    //         Core::and().call([guard, high]).into_term_in(self.pool)
+    //     } else if high == true {
+    //         Core::or().call([guard, low]).into_term_in(self.pool)
+    //     } else {
+    //         Core::ite().call([guard, high, low]).into_term_in(self.pool)
+    //     }
+    // }
+
+    // fn not(&self, arg: &Term) -> Term {
+    //     match arg.kind() {
+    //         TermKind::Atom(atom) => {
+    //             if let Ok(atom) = CoreAtom::try_from(atom) {
+    //                 match atom {
+    //                     CoreAtom::True => Core::False().into_term_in(self.pool),
+    //                     CoreAtom::False => Core::True().into_term_in(self.pool),
+    //                     CoreAtom::Not(arg) => arg.clone(),
+    //                     _ => Core::not().call([arg.clone()]).into_term_in(self.pool),
+    //                 }
+    //             } else {
+    //                 Core::not().call([arg.clone()]).into_term_in(self.pool)
+    //             }
+    //         }
+    //         _ => Core::not().call([arg.clone()]).into_term_in(self.pool),
+    //     }
+    // }
+
+    fn eliminate(
+        &self,
+        target: &Variable,
+        next: Option<&Variable>,
+        body: BCDDFunction,
+    ) -> Result<Either<Term, BCDDFunction>, Error> {
+        let cutoff = match std::mem::take(&mut *self.cutoff.write()) {
+            Some(cutoff) => self.manager.with_manager_shared(|m| m.var_to_level(cutoff)),
+            None => return Ok(Either::Right(body)),
+        };
+
+        self.eliminate_in(target, next, cutoff, body, &DashMap::new())
+    }
+
     fn eliminate_in(
         &self,
-        var: Variable,
+        target: &Variable,
+        next: Option<&Variable>,
         cutoff: LevelNo,
-        bdd: &BCDDFunction,
-        cache: &DashMap<BCDDFunction, BCDDFunction>,
-    ) -> Result<BCDDFunction, Error> {
-        if let Some(result) = cache.get(bdd) {
+        body: BCDDFunction,
+        cache: &DashMap<BCDDFunction, Either<Term, BCDDFunction>>,
+    ) -> Result<Either<Term, BCDDFunction>, Error> {
+        if let Some(result) = cache.get(&body) {
             return Ok(result.clone());
         }
 
-        let result = match bdd.cofactors() {
+        let result = match body.cofactors() {
             Some((high, low)) => {
-                let (level, guard) = bdd.with_manager_shared(|m, edge| -> Result<_, Error> {
-                    let Node::Inner(node) = m.get_node(edge) else {
-                        unreachable!()
-                    };
-                    let level = node.level();
-                    let var = m.level_to_var(level);
+                let (level, guard_var, guard_bdd) =
+                    body.with_manager_shared(|m, edge| -> Result<_, Error> {
+                        let Node::Inner(node) = m.get_node(edge) else {
+                            unreachable!()
+                        };
+                        let level = node.level();
+                        let var = m.level_to_var(level);
 
-                    Ok((level, BCDDFunction::var(m, var)?))
-                })?;
+                        Ok((level, var, BCDDFunction::var(m, var)?))
+                    })?;
 
-                if level <= cutoff {
+                let total = self.manager.with_manager_shared(|m| m.num_levels());
+                eprintln!("eliminating bdd at level {level}/{total}, cutoff {cutoff}...");
+                if level < cutoff {
                     let (high, low) = self.manager.workers().join(
-                        || self.eliminate_in(var.clone(), cutoff, &high, cache),
-                        || self.eliminate_in(var.clone(), cutoff, &low, cache),
+                        || self.eliminate_in(target, next, cutoff, high, cache),
+                        || self.eliminate_in(target, next, cutoff, low, cache),
                     );
-                    let high = high?;
-                    let low = low?;
 
-                    guard.ite(&high, &low)?
+                    match (high?, low?) {
+                        (Either::Right(high), Either::Right(low)) => {
+                            Either::Right(guard_bdd.ite(&high, &low)?)
+                        }
+                        (Either::Left(high), Either::Left(low)) => {
+                            let atom = self.atoms.by_index(&guard_var).unwrap();
+                            Either::Left(
+                                Core::ite().call([atom, high, low]).into_term_in(self.pool),
+                            )
+                        }
+                        (Either::Left(high), Either::Right(low)) => {
+                            let high = self.bdd(next.unwrap(), &high)?;
+                            Either::Right(guard_bdd.ite(&high, &low)?)
+                        }
+                        (Either::Right(high), Either::Left(low)) => {
+                            let low = self.bdd(next.unwrap(), &low)?;
+                            Either::Right(guard_bdd.ite(&high, &low)?)
+                        }
+                    }
                 } else {
                     let quant = Quantified {
                         quantifier: Quantifier::Exists,
-                        variables: Arc::new([var]),
-                        body: self.term(bdd),
+                        variables: Arc::new([target.clone()]),
+                        body: self.term(&body),
                         span: None,
                     }
                     .into_term_in(self.pool);
@@ -455,22 +428,397 @@ impl<'p> QE<'p> {
 
                     eprintln!("invoking QE backend...");
                     let eliminated = solver.qe(quant)?;
-                    eprintln!("QE backend invocation succeeded!");
 
-                    self.bdd(&eliminated)?
+                    if let Some(next) = next
+                        && self.mentions(&eliminated, next)
+                    {
+                        eprintln!(
+                            "QE backend invocation succeeded! result mentions the next target ({})!",
+                            next.name()
+                        );
+                        Either::Right(self.bdd(next, &eliminated)?)
+                    } else {
+                        eprintln!(
+                            "QE backend invocation succeeded! no mentions of the next target ({})!",
+                            next.map(|v| v.name().name()).unwrap_or("none")
+                        );
+                        Either::Left(eliminated)
+                    }
                 }
             }
-            None => bdd.clone(),
+            None => body.with_manager_shared(|_, edge| match edge.tag() {
+                EdgeTag::None => Either::Left(Core::True().into_term_in(self.pool)),
+                EdgeTag::Complemented => Either::Left(Core::False().into_term_in(self.pool)),
+            }),
         };
 
-        cache.insert(bdd.clone(), result.clone());
+        cache.insert(body, result.clone());
 
         Ok(result)
     }
 
-    fn bdd(&self, term: &Term) -> Result<BCDDFunction, Error> {
-        if let Some(bdd) = self.bdds.get(term) {
+    fn mentions(&self, term: &Term, target: &Variable) -> bool {
+        let key = (term.clone(), target.clone());
+        if let Some(mentions) = self.mentions.get(&key) {
+            return *mentions;
+        }
+
+        let kind = term.kind();
+        let mentions = match kind {
+            TermKind::Atom(atom) => {
+                if let FunctionRef::Bound(bound) = &atom.head
+                    && let Function::Variable(var) = &bound.function
+                    && *var == *target
+                {
+                    true
+                } else {
+                    atom.arguments.iter().any(|arg| self.mentions(arg, target))
+                }
+            }
+            TermKind::Constant(_) => false,
+            TermKind::Let(Let { bindings, body, .. }) => {
+                self.mentions(body, target)
+                    || bindings.iter().any(|b| self.mentions(&b.def, target))
+            }
+            _ => unreachable!(),
+        };
+
+        self.mentions.insert(key, mentions);
+
+        mentions
+    }
+
+    fn atom(&self, term: Term, mentions: bool) -> Result<BCDDFunction, Error> {
+        assert_eq!(Sort::of(&term).unwrap(), Core::Bool());
+
+        self.manager.with_manager_exclusive(|m| {
+            let var = self.atoms.by_key_or_insert(term, |_| {
+                let var = m.add_vars(1).start;
+                let level = m.var_to_level(var);
+
+                let mut cutoff = self.cutoff.write();
+                match &*cutoff {
+                    Some(_) if !mentions => {
+                        let order = iter::once(level)
+                            .chain(0..m.num_levels() - 1)
+                            .map(|l| m.level_to_var(l))
+                            .collect_vec();
+
+                        set_var_order_seq(m, &order);
+                    }
+                    None if mentions => *cutoff = Some(var),
+                    _ => {}
+                }
+
+                var
+            });
+            Ok(BCDDFunction::var(m, var)?)
+        })
+    }
+
+    fn simplify(&self, term: &Term) -> Term {
+        self.simplify_in(term, &mut HashMap::new())
+    }
+
+    #[allow(clippy::mutable_key_type)]
+    fn simplify_in(&self, term: &Term, cache: &mut HashMap<Term, Term>) -> Term {
+        if let Some(term) = cache.get(term) {
+            return term.clone();
+        }
+
+        let TermKind::Atom(atom) = term.kind() else {
+            unreachable!()
+        };
+
+        let Ok(atom) = CoreAtom::try_from(atom) else {
+            return term.clone();
+        };
+
+        let result = match atom {
+            CoreAtom::True => Core::True().into_term_in(self.pool),
+            CoreAtom::False => Core::False().into_term_in(self.pool),
+            CoreAtom::Not(arg) => {
+                let arg = self.simplify_in(arg, cache);
+                if arg == true {
+                    Core::False().into_term_in(self.pool)
+                } else if arg == false {
+                    Core::True().into_term_in(self.pool)
+                } else if let TermKind::Atom(atom) = arg.kind()
+                    && let Ok(atom) = CoreAtom::try_from(atom)
+                    && let CoreAtom::Not(arg) = atom
+                {
+                    arg.clone()
+                } else {
+                    Core::not().call([arg.clone()]).into_term_in(self.pool)
+                }
+            }
+            CoreAtom::Implies(args) => {
+                let mut heads = Vec::with_capacity(args.len());
+                #[allow(clippy::needless_range_loop)]
+                for i in 0..args.len() - 1 {
+                    heads.push(Core::not().call([args[i].clone()]).into_term_in(self.pool))
+                }
+                heads.push(args[args.len() - 1].clone());
+
+                self.simplify_in(&Core::or().call(heads).into_term_in(self.pool), cache)
+            }
+            CoreAtom::And(args) => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.simplify_in(arg, cache))
+                    .filter(|arg| *arg != true)
+                    .collect_vec();
+                if args.iter().any(|arg| *arg == false) {
+                    Core::False().into_term_in(self.pool)
+                } else if args.len() == 1 {
+                    args[0].clone()
+                } else if args.is_empty() {
+                    Core::True().into_term_in(self.pool)
+                } else {
+                    let mut flattened = Vec::new();
+                    for arg in args {
+                        if let TermKind::Atom(atom) = arg.kind()
+                            && let Ok(atom) = CoreAtom::try_from(atom)
+                            && let CoreAtom::And(args) = atom
+                        {
+                            flattened.extend(args.iter().cloned())
+                        } else {
+                            flattened.push(arg.clone())
+                        }
+                    }
+
+                    Core::and().call(flattened).into_term_in(self.pool)
+                }
+            }
+            CoreAtom::Or(args) => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.simplify_in(arg, cache))
+                    .filter(|arg| *arg != false)
+                    .collect_vec();
+                if args.iter().any(|arg| *arg == true) {
+                    Core::True().into_term_in(self.pool)
+                } else if args.len() == 1 {
+                    args[0].clone()
+                } else if args.is_empty() {
+                    Core::False().into_term_in(self.pool)
+                } else {
+                    let mut flattened = Vec::new();
+                    for arg in args {
+                        if let TermKind::Atom(atom) = arg.kind()
+                            && let Ok(atom) = CoreAtom::try_from(atom)
+                            && let CoreAtom::Or(args) = atom
+                        {
+                            flattened.extend(args.iter().cloned())
+                        } else {
+                            flattened.push(arg.clone())
+                        }
+                    }
+
+                    Core::or().call(flattened).into_term_in(self.pool)
+                }
+            }
+            CoreAtom::Xor(args) => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.simplify_in(arg, cache))
+                    .collect_vec();
+                let mut flattened = Vec::new();
+                for arg in args {
+                    if let TermKind::Atom(atom) = arg.kind()
+                        && let Ok(atom) = CoreAtom::try_from(atom)
+                        && let CoreAtom::Xor(args) = atom
+                    {
+                        flattened.extend(args.iter().cloned())
+                    } else {
+                        flattened.push(arg.clone())
+                    }
+                }
+
+                Core::xor().call(flattened).into_term_in(self.pool)
+            }
+            CoreAtom::Equals(args) => Core::equals()
+                .call(args.iter().map(|arg| self.simplify_in(arg, cache)))
+                .into_term_in(self.pool),
+            CoreAtom::Distinct(args) => Core::distinct()
+                .call(args.iter().map(|arg| self.simplify_in(arg, cache)))
+                .into_term_in(self.pool),
+            CoreAtom::Ite(guard, high, low) => {
+                let guard = self.simplify_in(guard, cache);
+                let high = self.simplify_in(high, cache);
+                let low = self.simplify_in(low, cache);
+
+                if guard == true {
+                    high
+                } else if guard == false {
+                    low
+                } else if high == true && low == false {
+                    guard
+                } else if high == false && low == true {
+                    self.simplify_in(&Core::not().call([guard]).into_term_in(self.pool), cache)
+                } else if high == true && low == true {
+                    Core::True().into_term_in(self.pool)
+                } else if high == false && low == false {
+                    Core::False().into_term_in(self.pool)
+                } else if low == true {
+                    self.simplify_in(
+                        &Core::implies().call([guard, high]).into_term_in(self.pool),
+                        cache,
+                    )
+                } else if low == false {
+                    self.simplify_in(
+                        &Core::and().call([guard, high]).into_term_in(self.pool),
+                        cache,
+                    )
+                } else if high == true {
+                    self.simplify_in(
+                        &Core::or().call([guard, low]).into_term_in(self.pool),
+                        cache,
+                    )
+                } else {
+                    Core::ite().call([guard, high, low]).into_term_in(self.pool)
+                }
+            }
+        };
+
+        cache.insert(term.clone(), result.clone());
+
+        result
+    }
+
+    fn coalesce(&self, target: &Variable, term: &Term) -> Term {
+        self.coalesce_in(target, &self.simplify(term), &mut HashMap::new())
+    }
+
+    #[allow(clippy::mutable_key_type)]
+    fn coalesce_in(&self, target: &Variable, term: &Term, cache: &mut HashMap<Term, Term>) -> Term {
+        if let Some(term) = cache.get(term) {
+            return term.clone();
+        }
+
+        if !self.mentions(term, target) {
+            return term.clone();
+        }
+
+        let TermKind::Atom(atom) = term.kind() else {
+            unreachable!()
+        };
+
+        let Ok(atom) = CoreAtom::try_from(atom) else {
+            return term.clone();
+        };
+
+        let result = match atom {
+            CoreAtom::True => Core::True().into_term_in(self.pool),
+            CoreAtom::False => Core::False().into_term_in(self.pool),
+            CoreAtom::Not(arg) => Core::not()
+                .call([self.coalesce_in(target, arg, cache)])
+                .into_term_in(self.pool),
+            CoreAtom::And(args) => {
+                let mut args = args
+                    .iter()
+                    .map(|arg| self.coalesce_in(target, arg, cache))
+                    .collect_vec();
+                let pivot = itertools::partition(&mut args, |arg| self.mentions(arg, target));
+                assert_ne!(pivot, 0);
+
+                let mentions = Core::and()
+                    .call(args[0..pivot].iter().cloned())
+                    .into_term_in(self.pool);
+                let no_mentions = args[pivot..args.len()].iter().cloned().collect_vec();
+
+                match &no_mentions[..] {
+                    [] => mentions,
+                    [t] => Core::and()
+                        .call([mentions, t.clone()])
+                        .into_term_in(self.pool),
+                    [_, ..] => {
+                        let no_mentions = Core::and().call(no_mentions).into_term_in(self.pool);
+                        Core::and()
+                            .call([mentions, no_mentions])
+                            .into_term_in(self.pool)
+                    }
+                }
+            }
+            CoreAtom::Or(args) => {
+                let mut args = args
+                    .iter()
+                    .map(|arg| self.coalesce_in(target, arg, cache))
+                    .collect_vec();
+                let pivot = itertools::partition(&mut args, |arg| self.mentions(arg, target));
+                assert_ne!(pivot, 0);
+
+                let mentions = Core::or()
+                    .call(args[0..pivot].iter().cloned())
+                    .into_term_in(self.pool);
+                let no_mentions = args[pivot..args.len()].iter().cloned().collect_vec();
+
+                match &no_mentions[..] {
+                    [] => mentions,
+                    [t] => Core::or()
+                        .call([mentions, t.clone()])
+                        .into_term_in(self.pool),
+                    [_, ..] => {
+                        let no_mentions = Core::or().call(no_mentions).into_term_in(self.pool);
+                        Core::or()
+                            .call([mentions, no_mentions])
+                            .into_term_in(self.pool)
+                    }
+                }
+            }
+            CoreAtom::Implies(args) => Core::implies()
+                .call(args.iter().map(|arg| self.coalesce_in(target, arg, cache)))
+                .into_term_in(self.pool),
+            CoreAtom::Xor(args) => Core::xor()
+                .call(args.iter().map(|arg| self.coalesce_in(target, arg, cache)))
+                .into_term_in(self.pool),
+            CoreAtom::Equals(args) => Core::equals()
+                .call(args.iter().map(|arg| self.coalesce_in(target, arg, cache)))
+                .into_term_in(self.pool),
+            CoreAtom::Distinct(args) => Core::distinct()
+                .call(args.iter().map(|arg| self.coalesce_in(target, arg, cache)))
+                .into_term_in(self.pool),
+            CoreAtom::Ite(guard, high, low) => {
+                let guard = self.coalesce_in(target, guard, cache);
+                let high = self.coalesce_in(target, high, cache);
+                let low = self.coalesce_in(target, low, cache);
+
+                Core::ite().call([guard, high, low]).into_term_in(self.pool)
+            }
+        };
+
+        cache.insert(term.clone(), result.clone());
+
+        result
+    }
+
+    fn bdd(&self, target: &Variable, term: &Term) -> Result<BCDDFunction, Error> {
+        eprint!("compiling bdd for: ");
+        term.println(&mut std::io::stderr()).ok();
+
+        let term = self.coalesce(target, term);
+        eprint!("coalesced: ");
+        term.println(&mut std::io::stderr()).ok();
+
+        self.bdd_in(target, &term, &mut HashMap::new())
+    }
+
+    #[allow(clippy::mutable_key_type)]
+    fn bdd_in(
+        &self,
+        target: &Variable,
+        term: &Term,
+        cache: &mut HashMap<Term, BCDDFunction>,
+    ) -> Result<BCDDFunction, Error> {
+        if let Some(bdd) = cache.get(term) {
             return Ok(bdd.clone());
+        }
+
+        if !self.mentions(term, target) {
+            eprintln!("new atom *not* mentioning the target ({})!", target.name());
+            let atom = self.atom(term.clone(), false)?;
+            cache.insert(term.clone(), atom.clone());
+            return Ok(atom);
         }
 
         let bdd = match term.kind() {
@@ -479,69 +827,72 @@ impl<'p> QE<'p> {
                     match atom {
                         CoreAtom::True => self.top(),
                         CoreAtom::False => self.bottom(),
-                        CoreAtom::Not(arg) => self.bdd(arg)?.not()?,
+                        CoreAtom::Not(arg) => self.bdd_in(target, arg, cache)?.not()?,
                         CoreAtom::Implies(args) => {
-                            let bdds: Vec<_> =
-                                args.iter().map(|arg| self.bdd(arg)).try_collect()?;
+                            let bdds: Vec<_> = args
+                                .iter()
+                                .map(|arg| self.bdd_in(target, arg, cache))
+                                .try_collect()?;
                             bdds.into_iter()
                                 .rev()
-                                .try_fold(self.bottom(), |acc, arg| acc.imp(&arg))?
+                                .try_fold(self.bottom(), |acc, arg| arg.imp(&acc))?
                         }
                         CoreAtom::And(args) => {
-                            let bdds: Vec<_> =
-                                args.iter().map(|arg| self.bdd(arg)).try_collect()?;
+                            let bdds: Vec<_> = args
+                                .iter()
+                                .map(|arg| self.bdd_in(target, arg, cache))
+                                .try_collect()?;
                             bdds.into_iter()
                                 .try_fold(self.top(), |acc, arg| acc.and(&arg))?
                         }
                         CoreAtom::Or(args) => {
-                            let bdds: Vec<_> =
-                                args.iter().map(|arg| self.bdd(arg)).try_collect()?;
+                            let bdds: Vec<_> = args
+                                .iter()
+                                .map(|arg| self.bdd_in(target, arg, cache))
+                                .try_collect()?;
                             bdds.into_iter()
                                 .try_fold(self.bottom(), |acc, arg| acc.or(&arg))?
                         }
                         CoreAtom::Xor(args) => {
-                            let bdds: Vec<_> =
-                                args.iter().map(|arg| self.bdd(arg)).try_collect()?;
+                            let bdds: Vec<_> = args
+                                .iter()
+                                .map(|arg| self.bdd_in(target, arg, cache))
+                                .try_collect()?;
                             bdds.into_iter()
                                 .try_fold(self.bottom(), |acc, arg| acc.xor(&arg))?
                         }
                         CoreAtom::Ite(guard, then, else_) => {
-                            let guard = self.bdd(guard)?;
-                            let then = self.bdd(then)?;
-                            let else_ = self.bdd(else_)?;
+                            let guard = self.bdd_in(target, guard, cache)?;
+                            let then = self.bdd_in(target, then, cache)?;
+                            let else_ = self.bdd_in(target, else_, cache)?;
 
                             guard.ite(&then, &else_)?
                         }
                         CoreAtom::Equals(_) | CoreAtom::Distinct(_) => {
-                            let var = self.atom(term.clone());
-                            self.manager
-                                .with_manager_shared(|m| BCDDFunction::var(m, var))?
+                            eprintln!("new atom mentioning the target ({})!", target.name());
+                            self.atom(term.clone(), true)?
                         }
                     }
                 } else if let Ok(sort) = Sort::of(term)
                     && sort == Core::Bool()
                 {
-                    let var = self.atom(term.clone());
-                    self.manager
-                        .with_manager_shared(|m| BCDDFunction::var(m, var))?
+                    eprintln!("new atom mentioning the target ({})!", target.name());
+                    self.atom(term.clone(), true)?
                 } else {
                     unreachable!();
                 }
             }
-            TermKind::Constant(_) => unreachable!(),
-            TermKind::Quantified(_) => unreachable!(),
-            TermKind::Let(_) => unreachable!(),
+            _ => unreachable!(),
         };
 
-        self.bdds.insert(term.clone(), bdd.clone());
+        cache.insert(term.clone(), bdd.clone());
 
         Ok(bdd)
     }
 
     #[allow(clippy::mutable_key_type)]
     fn term(&self, bdd: &BCDDFunction) -> Term {
-        let mut cache = HashMap::new();
-        self.term_in(bdd, &mut cache)
+        self.simplify(&self.term_in(bdd, &mut HashMap::new()))
     }
 
     #[allow(clippy::mutable_key_type)]
@@ -563,19 +914,7 @@ impl<'p> QE<'p> {
                 let high = self.term_in(&high, cache);
                 let low = self.term_in(&low, cache);
 
-                if high == true && low == false {
-                    guard
-                } else if high == false && low == true {
-                    Core::not().call([guard]).into_term_in(self.pool)
-                } else if low == true {
-                    Core::implies().call([guard, high]).into_term_in(self.pool)
-                } else if low == false {
-                    Core::and().call([guard, high]).into_term_in(self.pool)
-                } else if high == true {
-                    Core::or().call([guard, low]).into_term_in(self.pool)
-                } else {
-                    Core::ite().call([guard, high, low]).into_term_in(self.pool)
-                }
+                Core::ite().call([guard, high, low]).into_term_in(self.pool)
             }
             None => bdd.with_manager_shared(|_, edge| match edge.tag() {
                 EdgeTag::None => Core::True().into_term_in(self.pool),
@@ -585,42 +924,5 @@ impl<'p> QE<'p> {
 
         cache.insert(bdd.clone(), term.clone());
         term
-    }
-
-    fn free(&self, term: impl Deref<Target = Term>) -> BitSet {
-        if let Some(bits) = self.free.get(&term) {
-            return bits.clone();
-        }
-
-        let bits = match term.kind() {
-            TermKind::Constant(_) => BitSet::new(),
-            TermKind::Atom(atom) => {
-                let mut bits = BitSet::new();
-                if let FunctionRef::Bound(bound) = &atom.head
-                    && let Function::Variable(var) = &bound.function
-                    && let Some(index) = self.variables.by_key(var)
-                {
-                    bits.set(index, true);
-                }
-                for arg in &*atom.arguments {
-                    bits |= self.free(arg);
-                }
-
-                bits
-            }
-            TermKind::Quantified(_) => unreachable!(),
-            TermKind::Let(let_) => {
-                let mut bits = self.free(&let_.body);
-                for bind in &*let_.bindings {
-                    if let Some(index) = self.variables.by_key(&bind.variable) {
-                        bits.set(index, false)
-                    }
-                }
-                bits
-            }
-        };
-        self.free.insert(term.clone(), bits.clone());
-
-        bits
     }
 }

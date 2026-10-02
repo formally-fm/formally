@@ -45,6 +45,7 @@ thiserror = "2.0.17"
 dashmap = "6.2.1"
 rpds = "1"
 bitvec = "1.1.1"
+either = "1.18.0"
 
 [dev-dependencies]
 rstest = "0.26.0"

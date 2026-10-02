@@ -379,8 +379,12 @@ impl Interpreter {
             state.solver.qe(term)?
         };
 
-        let term = Box::new(ast::Term::from(term));
 
+        eprintln!("QE finished, collecting shared subterms...");
+        let term = smt::Let::collect(&term, &*state.pool)?;
+        eprintln!("collected!");
+        
+        let term = Box::new(ast::Term::from(term));
         Interpreter::response(
             &mut *state.settings.output,
             ast::Response::GetQE(ast::GetQEResponse { term, span: None }),
