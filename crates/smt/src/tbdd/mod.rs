@@ -29,8 +29,8 @@ use crate::formally;
 
 use formally::{
     smt::{
-        self, Config, Env, Function, FunctionRef, Let, Quantified, Quantifier, Solver, Sort, Term,
-        TermKind, TermPool, ToTerm, Variable,
+        self, Config, Env, Function, FunctionRef, Let, Quantified, Solver, Sort, Term, TermKind,
+        TermPool, ToTerm, Variable,
         backends::Backend,
         theories::{Core, CoreAtom},
     },
@@ -55,7 +55,6 @@ use thiserror::Error;
 use transitive::Transitive;
 
 use std::{collections::HashMap, fmt::Debug, iter, num::NonZero, sync::Arc};
-use formally_io::print::Print;
 
 type Manager<'m> = <BCDDFunction as oxidd::Function>::Manager<'m>;
 
@@ -125,25 +124,23 @@ fn qe_in(
                 .into_term_in(pool))
             }
         }
-        TermKind::Quantified(Quantified { quantifier, .. }) => {
-            let mut variables = Vec::new();
+        TermKind::Quantified(_) => {
+            let mut quantifiers = Vec::new();
             let mut body = term.clone();
 
-            while let TermKind::Quantified(quant) = body.kind()
-                && quant.quantifier == *quantifier
-            {
-                variables.extend(quant.variables.iter().cloned());
+            while let TermKind::Quantified(quant) = body.kind() {
+                for variable in &*quant.variables {
+                    quantifiers.push(Quantifier {
+                        quantifier: quant.quantifier,
+                        variable: variable.clone(),
+                    })
+                }
                 body = quant.body.clone();
             }
+            quantifiers.reverse();
 
-            let quant = Quantified {
-                quantifier: *quantifier,
-                variables: Arc::from(variables.into_boxed_slice()),
-                body: qe_in(&body, pool, env.clone(), backend, jobs, bindings)?,
-                span: term.span(),
-            };
-
-            QE::new(pool, env, backend, jobs).qe(quant)
+            let body = qe_in(&body, pool, env.clone(), backend, jobs, bindings)?;
+            QE::new(pool, env, backend, jobs).qe(&quantifiers, &body)
         }
         TermKind::Let(let_) => {
             let mut nested = bindings.clone();
@@ -156,6 +153,11 @@ fn qe_in(
             qe_in(&let_.body, pool, env, backend, jobs, &nested)
         }
     }
+}
+
+struct Quantifier {
+    quantifier: smt::Quantifier,
+    variable: Variable,
 }
 
 struct QE<'p> {
@@ -183,6 +185,7 @@ impl<'p> QE<'p> {
                 .unwrap_or(1) as u32
         });
         let manager = oxidd::bcdd::new_manager(1_073_741_824, 1_048_576, jobs);
+        manager.workers().set_split_depth(Some(30));
         QE {
             top: manager.with_manager_shared(|m| BCDDFunction::t(m)),
             bottom: manager.with_manager_shared(|m| BCDDFunction::f(m)),
@@ -236,54 +239,66 @@ impl<'p> QE<'p> {
     //   - atoms not involved in the current iteration are forgotten
     //   - the VarNo is still there, but it adds negligible overhead if the BDDs do not use it
     //   - we should make sure unused BDDs from old iterations can be garbage-collected
-    fn qe(self, quant: Quantified) -> Result<Term, Error> {
-        match quant.quantifier {
-            Quantifier::Forall => self.qe_forall(&quant.variables, quant.body),
-            Quantifier::Exists => self.qe_exists(&quant.variables, quant.body),
-        }
+    fn qe(self, quantifiers: &[Quantifier], body: &Term) -> Result<Term, Error> {
+        self.manager
+            .workers()
+            .install(|| self.qe_in(quantifiers, body))
     }
 
-    fn qe_exists(&self, variables: &[Variable], body: Term) -> Result<Term, Error> {
-        if body == true {
-            eprintln!("body is true");
-        }
+    fn qe_in(&self, quantifiers: &[Quantifier], body: &Term) -> Result<Term, Error> {
+        let mut body = Either::Left(body.clone());
+        let mut prevq = smt::Quantifier::Exists;
 
-        let mut body = Either::Left(body);
-        for i in 0..variables.len() {
-            let target = &variables[i];
-            let next = variables.get(i + 1);
+        for i in 0..quantifiers.len() {
+            let target = &quantifiers[i].variable;
+            let quantifier = quantifiers[i].quantifier;
+            let next = quantifiers.get(i + 1).map(|q| &q.variable);
 
-            eprintln!("eliminating {}", target.name());
+            match quantifier {
+                smt::Quantifier::Forall => eprintln!("eliminating forall {}", target.name()),
+                smt::Quantifier::Exists => eprintln!("eliminating exists {}", target.name()),
+            }
+
+            let neg = prevq != quantifier;
+            prevq = quantifier;
 
             body = match body {
-                Either::Left(term) => {
-                    eprintln!("partial result is a term, compiling the bdd...");
+                Either::Left(mut term) => {
+                    eprintln!("partial result is a term");
+                    if neg {
+                        eprintln!("switching quantifiers, negating term...");
+                        term = self.simplify(&Core::not().call([term]).into_term_in(self.pool));
+                    }
+
+                    eprintln!("compiling the bdd...");
                     let body = self.bdd(target, &term)?;
                     eprintln!("bdd compiled! traversing...");
                     self.eliminate(target, next, body)?
                 }
-                Either::Right(body) => {
-                    eprintln!("partial result is a bdd already, traversing...");
+                Either::Right(mut body) => {
+                    eprintln!("partial result is a bdd already.");
+                    if neg {
+                        eprintln!("switching quantifiers, negating bdd..");
+                        body = body.not()?;
+                    }
+                    eprintln!("traversing...");
                     self.eliminate(target, next, body)?
                 }
             };
             eprintln!("traversed!");
         }
 
-        let term = match body {
+        let mut term = match body {
             Either::Left(term) => term,
             Either::Right(bdd) => self.term(&bdd),
         };
 
+        if prevq == smt::Quantifier::Forall {
+            eprintln!("final quantifier was universal, negating result...");
+            term = self.simplify(&Core::not().call([term]).into_term_in(self.pool));
+        }
+
         Ok(term)
-    }
-
-    fn qe_forall(&self, variables: &[Variable], body: Term) -> Result<Term, Error> {
-        let neg = Core::not().call([body]).into_term_in(self.pool);
-        let eliminated = self.qe_exists(variables, neg)?;
-        let neg = self.simplify(&Core::not().call([eliminated]).into_term_in(self.pool));
-
-        Ok(neg)
     }
 
     #[allow(unused)]
@@ -313,40 +328,6 @@ impl<'p> QE<'p> {
     fn bottom(&self) -> BCDDFunction {
         self.bottom.clone()
     }
-
-    // fn ite(&self, guard: Term, high: Term, low: Term) -> Term {
-    //     if high == true && low == false {
-    //         guard
-    //     } else if high == false && low == true {
-    //         self.not(&guard)
-    //     } else if low == true {
-    //         Core::implies().call([guard, high]).into_term_in(self.pool)
-    //     } else if low == false {
-    //         Core::and().call([guard, high]).into_term_in(self.pool)
-    //     } else if high == true {
-    //         Core::or().call([guard, low]).into_term_in(self.pool)
-    //     } else {
-    //         Core::ite().call([guard, high, low]).into_term_in(self.pool)
-    //     }
-    // }
-
-    // fn not(&self, arg: &Term) -> Term {
-    //     match arg.kind() {
-    //         TermKind::Atom(atom) => {
-    //             if let Ok(atom) = CoreAtom::try_from(atom) {
-    //                 match atom {
-    //                     CoreAtom::True => Core::False().into_term_in(self.pool),
-    //                     CoreAtom::False => Core::True().into_term_in(self.pool),
-    //                     CoreAtom::Not(arg) => arg.clone(),
-    //                     _ => Core::not().call([arg.clone()]).into_term_in(self.pool),
-    //                 }
-    //             } else {
-    //                 Core::not().call([arg.clone()]).into_term_in(self.pool)
-    //             }
-    //         }
-    //         _ => Core::not().call([arg.clone()]).into_term_in(self.pool),
-    //     }
-    // }
 
     fn eliminate(
         &self,
@@ -416,7 +397,7 @@ impl<'p> QE<'p> {
                     }
                 } else {
                     let quant = Quantified {
-                        quantifier: Quantifier::Exists,
+                        quantifier: smt::Quantifier::Exists,
                         variables: Arc::new([target.clone()]),
                         body: self.term(&body),
                         span: None,
@@ -811,8 +792,7 @@ impl<'p> QE<'p> {
         }
 
         if !self.mentions(term, target) {
-            eprint!("new atom *not* mentioning the target ({}): ", target.name());
-            term.println(&mut std::io::stderr()).ok();
+            eprintln!("new atom *not* mentioning the target ({})!", target.name());
             let atom = self.atom(term.clone(), false)?;
             cache.insert(term.clone(), atom.clone());
             return Ok(atom);
@@ -858,12 +838,12 @@ impl<'p> QE<'p> {
                             bdds.into_iter()
                                 .try_fold(self.bottom(), |acc, arg| acc.xor(&arg))?
                         }
-                        CoreAtom::Ite(guard, then, else_) => {
+                        CoreAtom::Ite(guard, high, low) => {
                             let guard = self.bdd_in(target, guard, cache)?;
-                            let then = self.bdd_in(target, then, cache)?;
-                            let else_ = self.bdd_in(target, else_, cache)?;
+                            let high = self.bdd_in(target, high, cache)?;
+                            let low = self.bdd_in(target, low, cache)?;
 
-                            guard.ite(&then, &else_)?
+                            guard.ite(&high, &low)?
                         }
                         CoreAtom::Equals(_) | CoreAtom::Distinct(_) => {
                             eprintln!("new atom mentioning the target ({})!", target.name());
