@@ -164,7 +164,7 @@ impl Context {
     }
 
     pub fn mk_false(&self) -> Ast {
-        Ast::new(self, unsafe { Z3_mk_true(self.ctx).unwrap() })
+        Ast::new(self, unsafe { Z3_mk_false(self.ctx).unwrap() })
     }
 
     pub fn mk_int(&self, value: c_int) -> Ast {
@@ -176,12 +176,7 @@ impl Context {
     pub fn mk_numeral(&self, value: &str, sort: Sort) -> Ast {
         let numeral = CString::new(value.as_bytes()).unwrap();
         Ast::new(self, unsafe {
-            Z3_mk_numeral(
-                self.ctx,
-                numeral.as_ptr(),
-                sort.sort,
-            )
-            .unwrap()
+            Z3_mk_numeral(self.ctx, numeral.as_ptr(), sort.sort).unwrap()
         })
     }
 

@@ -33,9 +33,11 @@ theories! {
         type Bool;
 
         /// The true constant.
+        #[name = "true"]
         const True: Core::Bool();
 
         /// The false constant.
+        #[name = "false"]
         const False: Core::Bool();
 
         /// Logical negation.

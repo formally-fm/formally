@@ -54,8 +54,8 @@ use parking_lot::RwLock;
 use thiserror::Error;
 use transitive::Transitive;
 
-use formally_io::print::Print;
 use std::{collections::HashMap, fmt::Debug, iter, num::NonZero, sync::Arc};
+use formally_io::print::Print;
 
 type Manager<'m> = <BCDDFunction as oxidd::Function>::Manager<'m>;
 
@@ -426,7 +426,7 @@ impl<'p> QE<'p> {
                     let mut solver = Solver::with_backend(&Config::default(), self.backend)?;
                     solver.import(self.env.clone())?;
 
-                    eprintln!("invoking QE backend...");
+                    eprint!("invoking QE backend...");
                     let eliminated = solver.qe(quant)?;
 
                     if let Some(next) = next
@@ -527,7 +527,7 @@ impl<'p> QE<'p> {
         }
 
         let TermKind::Atom(atom) = term.kind() else {
-            unreachable!()
+            return term.clone();
         };
 
         let Ok(atom) = CoreAtom::try_from(atom) else {
@@ -793,12 +793,8 @@ impl<'p> QE<'p> {
     }
 
     fn bdd(&self, target: &Variable, term: &Term) -> Result<BCDDFunction, Error> {
-        eprint!("compiling bdd for: ");
-        term.println(&mut std::io::stderr()).ok();
-
+        eprint!("compiling bdd...");
         let term = self.coalesce(target, term);
-        eprint!("coalesced: ");
-        term.println(&mut std::io::stderr()).ok();
 
         self.bdd_in(target, &term, &mut HashMap::new())
     }
@@ -815,7 +811,8 @@ impl<'p> QE<'p> {
         }
 
         if !self.mentions(term, target) {
-            eprintln!("new atom *not* mentioning the target ({})!", target.name());
+            eprint!("new atom *not* mentioning the target ({}): ", target.name());
+            term.println(&mut std::io::stderr()).ok();
             let atom = self.atom(term.clone(), false)?;
             cache.insert(term.clone(), atom.clone());
             return Ok(atom);
