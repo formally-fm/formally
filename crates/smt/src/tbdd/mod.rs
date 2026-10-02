@@ -470,7 +470,7 @@ impl<'p> QE<'p> {
     }
 
     fn atom(&self, term: Term, mentions: bool) -> Result<BCDDFunction, Error> {
-        assert_eq!(Sort::of(&term).unwrap(), Core::Bool());
+        debug_assert_eq!(Sort::of(&term).unwrap(), Core::Bool());
 
         self.manager.with_manager_exclusive(|m| {
             let var = self.atoms.by_key_or_insert(term, |_| {
