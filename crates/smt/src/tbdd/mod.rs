@@ -51,11 +51,10 @@ use dashmap::DashMap;
 use either::Either;
 use itertools::Itertools;
 use parking_lot::RwLock;
-use rayon::prelude::*;
 use thiserror::Error;
 use transitive::Transitive;
 
-use std::{collections::HashMap, fmt::Debug, iter, num::NonZero, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, num::NonZero, sync::Arc};
 
 type Manager<'m> = <BCDDFunction as oxidd::Function>::Manager<'m>;
 
@@ -186,7 +185,6 @@ impl<'p> QE<'p> {
                 .unwrap_or(1) as u32
         });
         let manager = oxidd::bcdd::new_manager(1_073_741_824, 1_048_576, jobs);
-        manager.workers().set_split_depth(Some(30));
         QE {
             top: manager.with_manager_shared(|m| BCDDFunction::t(m)),
             bottom: manager.with_manager_shared(|m| BCDDFunction::f(m)),
@@ -470,6 +468,21 @@ impl<'p> QE<'p> {
         mentions
     }
 
+    // This may be the key reason of most of the problems.
+    //
+    // 1. When parallelizing the descent in bdd(), the interaction between Rayon and this lock on
+    //    the DashMap causes deadlocks
+    //    - we need to collect atoms beforehand and then descend into the term to build the BDD in
+    //      parallel, using the DashMap only for lookups
+    // 2. The insertion point of new atoms was pathological
+    //    - new atoms that do not mention the target were inserted at the top of the order.
+    //    - this meant that when reconstructing the BDD, the whole structure of the BDDs has to be
+    //      redone from scratch
+    //    - this should have been fixed now, and indeed the CPU utilization dropped to 100% probably
+    //      because we're doing a lot less work in the parallel apply() and everything is now done
+    //      by the sequential descent in bdd()
+    // 3. We may also want to cache the association BDD -> term when constructing the BDD instead
+    //    recomputing it in the term() function
     fn atom(&self, term: Term, mentions: bool) -> Result<BCDDFunction, Error> {
         debug_assert_eq!(Sort::of(&term).unwrap(), Core::Bool());
 
@@ -481,15 +494,14 @@ impl<'p> QE<'p> {
             }
             self.manager.with_manager_exclusive(|m| {
                 let var = m.add_vars(1).start;
-                let level = m.var_to_level(var);
 
                 let mut cutoff = self.cutoff.write();
                 match &*cutoff {
-                    Some(_) if !mentions => {
-                        let order = iter::once(level)
-                            .chain(0..m.num_levels() - 1)
-                            .map(|l| m.level_to_var(l))
-                            .collect_vec();
+                    Some(cutoff) if !mentions => {
+                        let cutoff = m.var_to_level(*cutoff) as usize;
+                        let mut order =
+                            (0..m.num_levels()).map(|l| m.level_to_var(l)).collect_vec();
+                        order[cutoff..].rotate_right(1);
 
                         set_var_order_seq(m, &order);
                     }
@@ -783,16 +795,7 @@ impl<'p> QE<'p> {
 
     fn bdd(&self, target: &Variable, term: &Term) -> Result<BCDDFunction, Error> {
         eprint!("compiling bdd...");
-        let term = self.coalesce(target, term);
-
-        let depth = self.manager.workers().split_depth();
-        self.manager.workers().set_split_depth(Some(0));
-
-        let result = self.bdd_in(target, &term, &mut HashMap::new());
-
-        self.manager.workers().set_split_depth(Some(depth));
-
-        result
+        self.bdd_in(target, &self.coalesce(target, term), &mut HashMap::new())
     }
 
     #[allow(clippy::mutable_key_type)]
@@ -828,30 +831,18 @@ impl<'p> QE<'p> {
                                 .rev()
                                 .try_fold(self.bottom(), |acc, arg| arg.imp(&acc))?
                         }
-                        CoreAtom::And(args) => {
-                            let bdds: Vec<_> = args
-                                .iter()
-                                .map(|arg| self.bdd_in(target, arg, cache))
-                                .try_collect()?;
-                            bdds.into_iter()
-                                .try_fold(self.top(), |acc, arg| acc.and(&arg))?
-                        }
-                        CoreAtom::Or(args) => {
-                            let bdds: Vec<_> = args
-                                .iter()
-                                .map(|arg| self.bdd_in(target, arg, cache))
-                                .try_collect()?;
-                            bdds.into_iter()
-                                .try_fold(self.bottom(), |acc, arg| acc.or(&arg))?
-                        }
-                        CoreAtom::Xor(args) => {
-                            let bdds: Vec<_> = args
-                                .iter()
-                                .map(|arg| self.bdd_in(target, arg, cache))
-                                .try_collect()?;
-                            bdds.into_iter()
-                                .try_fold(self.bottom(), |acc, arg| acc.xor(&arg))?
-                        }
+                        CoreAtom::And(args) => args
+                            .iter()
+                            .map(|arg| self.bdd_in(target, arg, cache))
+                            .try_fold(self.top(), |acc, arg| Ok::<_, Error>(acc.and(&arg?)?))?,
+                        CoreAtom::Or(args) => args
+                            .iter()
+                            .map(|arg| self.bdd_in(target, arg, cache))
+                            .try_fold(self.bottom(), |acc, arg| Ok::<_, Error>(acc.or(&arg?)?))?,
+                        CoreAtom::Xor(args) => args
+                            .iter()
+                            .map(|arg| self.bdd_in(target, arg, cache))
+                            .try_fold(self.bottom(), |acc, arg| Ok::<_, Error>(acc.xor(&arg?)?))?,
                         CoreAtom::Ite(guard, high, low) => {
                             let guard = self.bdd_in(target, guard, cache)?;
                             let high = self.bdd_in(target, high, cache)?;
