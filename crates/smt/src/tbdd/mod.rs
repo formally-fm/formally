@@ -44,7 +44,7 @@ use oxidd::{
     error::OutOfMemory,
 };
 
-use oxidd_reorder::set_var_order_seq;
+use oxidd_reorder::set_var_order;
 use oxidd_rules_bdd::complement_edge::EdgeTag;
 
 use dashmap::DashMap;
@@ -230,7 +230,10 @@ impl<'p> QE<'p> {
             eprintln!("collecting atoms...");
             self.collect(target, &body);
 
-            self.print_atoms(target);
+            eprintln!("reordering...");
+            self.reorder(target);
+
+            // self.print_atoms(target);
 
             eprintln!("compiling the bdd...");
             let bdd = self.bdd(&body)?;
@@ -410,31 +413,31 @@ impl<'p> QE<'p> {
         }
     }
 
-    fn insert_atom(&mut self, term: Term, mentions: bool) {
+    fn insert_atom(&mut self, term: Term) {
         debug_assert_eq!(Sort::of(&term).unwrap(), Core::Bool());
 
         if self.atoms.by_key(&term).is_some() {
             return;
         }
 
-        let var = self.manager.with_manager_exclusive(|m| {
-            let var = m.add_vars(1).start;
-            match self.cutoff {
-                Some(cutoff) if !mentions => {
-                    let cutoff = m.var_to_level(cutoff) as usize;
-                    let mut order = (0..m.num_levels()).map(|l| m.level_to_var(l)).collect_vec();
-                    order[cutoff..].rotate_right(1);
-
-                    set_var_order_seq(m, &order);
-                }
-                None if mentions => self.cutoff = Some(var),
-                _ => {}
-            }
-
-            var
-        });
+        let var = self.manager.with_manager_exclusive(|m| m.add_vars(1).start);
 
         self.atoms.insert(term, var);
+    }
+
+    fn reorder(&mut self, target: &Variable) {
+        let manager = self.manager.clone();
+        manager.with_manager_exclusive(|m| {
+            let mut vars = (0..m.num_levels()).map(|l| m.level_to_var(l)).collect_vec();
+
+            let cutoff = itertools::partition(&mut vars, |var| {
+                let atom = self.atoms.by_index(var).unwrap().clone();
+                !self.mentions(&atom, target)
+            });
+
+            self.cutoff = Some(vars[cutoff]);
+            set_var_order(m, &vars)
+        })
     }
 
     fn simplify(&self, term: &Term) -> Term {
@@ -732,7 +735,7 @@ impl<'p> QE<'p> {
         visited.insert(term.clone());
 
         if !self.mentions(term, target) {
-            self.insert_atom(term.clone(), false);
+            self.insert_atom(term.clone());
             return;
         }
 
@@ -764,12 +767,12 @@ impl<'p> QE<'p> {
                                     self.collect_in(target, arg, visited)
                                 }
                             } else {
-                                self.insert_atom(term.clone(), true)
+                                self.insert_atom(term.clone())
                             }
                         }
                     }
                 } else {
-                    self.insert_atom(term.clone(), true)
+                    self.insert_atom(term.clone())
                 }
             }
             _ => unreachable!(),
