@@ -23,31 +23,31 @@
 //
 
 use bitvec::vec::BitVec;
-use dashmap::{DashMap, Entry};
 use std::ops::BitOrAssign;
 use std::{
+    collections::HashMap,
     hash::Hash,
     ops::{Deref, DerefMut},
 };
 
 #[derive(Clone)]
-pub struct SyncBiMap<K: Hash + Eq, I: Hash + Eq> {
-    key_to_index: DashMap<K, I>,
-    index_to_key: DashMap<I, K>,
+pub struct BiMap<K: Hash + Eq, I: Hash + Eq> {
+    key_to_index: HashMap<K, I>,
+    index_to_key: HashMap<I, K>,
 }
 
-impl<K: Hash + Eq, I: Hash + Eq> Default for SyncBiMap<K, I> {
+impl<K: Hash + Eq, I: Hash + Eq> Default for BiMap<K, I> {
     fn default() -> Self {
-        SyncBiMap::new()
+        BiMap::new()
     }
 }
 
 #[allow(unused)]
-impl<K: Hash + Eq, I: Hash + Eq> SyncBiMap<K, I> {
+impl<K: Hash + Eq, I: Hash + Eq> BiMap<K, I> {
     pub fn new() -> Self {
-        SyncBiMap {
-            key_to_index: DashMap::new(),
-            index_to_key: DashMap::new(),
+        BiMap {
+            key_to_index: HashMap::new(),
+            index_to_key: HashMap::new(),
         }
     }
 
@@ -57,54 +57,45 @@ impl<K: Hash + Eq, I: Hash + Eq> SyncBiMap<K, I> {
 }
 
 #[allow(unused)]
-impl<K: Clone + Hash + Eq, I: Clone + Hash + Eq> SyncBiMap<K, I> {
-    pub fn by_index(&self, index: &I) -> Option<K> {
-        self.index_to_key.get(index).as_deref().cloned()
+impl<K: Clone + Hash + Eq, I: Clone + Hash + Eq> BiMap<K, I> {
+    pub fn by_index(&self, index: &I) -> Option<&K> {
+        self.index_to_key.get(index)
     }
 
-    pub fn by_key(&self, key: &K) -> Option<I> {
-        self.key_to_index.get(key).as_deref().cloned()
+    pub fn by_key(&self, key: &K) -> Option<&I> {
+        self.key_to_index.get(key)
     }
 
-    pub fn insert(&self, key: K, index: I) {
-        let e1 = self.key_to_index.entry(key);
-        let e2 = self.index_to_key.entry(index);
-
-        let key = e1.key().clone();
-        let index = e2.key().clone();
-
-        e1.insert(index);
-        e2.insert(key);
+    pub fn insert(&mut self, key: K, index: I) {
+        self.key_to_index.insert(key.clone(), index.clone());
+        self.index_to_key.insert(index, key);
     }
 
-    pub fn by_key_or_insert<F>(&self, key: K, f: F) -> I
+    pub fn by_key_or_insert<F>(&mut self, key: &K, f: F) -> I
     where
         F: FnOnce(&K) -> I,
     {
-        match self.key_to_index.entry(key) {
-            Entry::Occupied(entry) => entry.get().clone(),
-            Entry::Vacant(entry) => {
-                let index = f(entry.key());
-                self.index_to_key.insert(index.clone(), entry.key().clone());
-                entry.insert(index.clone());
+        match self.key_to_index.get(key) {
+            Some(index) => index.clone(),
+            None => {
+                let index = f(key);
+                self.insert(key.clone(), index.clone());
+
                 index
             }
         }
     }
 
-    pub fn keys(&self) -> impl Iterator<Item = K> {
-        self.key_to_index.iter().map(|r| r.key().clone())
+    pub fn keys(&self) -> impl Iterator<Item = &K> {
+        self.key_to_index.keys()
     }
 
-    pub fn indexes(&self) -> impl Iterator<Item = I> {
-        self.index_to_key.iter().map(|r| r.key().clone())
+    pub fn indexes(&self) -> impl Iterator<Item = &I> {
+        self.key_to_index.values()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (K, I)> {
-        self.key_to_index.iter().map(|r| {
-            let (k, i) = r.pair();
-            (k.clone(), i.clone())
-        })
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &I)> {
+        self.key_to_index.iter()
     }
 }
 

@@ -171,7 +171,7 @@ struct QE<'p> {
     pool: &'p (dyn TermPool + Send + Sync),
     env: Env,
     backend: &'static dyn Backend,
-    atoms: SyncBiMap<Term, VarNo>,
+    atoms: BiMap<Term, VarNo>,
     mentions: HashMap<(Term, Variable), bool>,
     cutoff: Option<VarNo>,
 }
@@ -197,7 +197,7 @@ impl<'p> QE<'p> {
             pool,
             env,
             backend,
-            atoms: SyncBiMap::new(),
+            atoms: BiMap::new(),
             mentions: HashMap::new(),
             cutoff: None,
         }
@@ -249,13 +249,14 @@ impl<'p> QE<'p> {
         Ok(body)
     }
 
+    #[allow(unused)]
     fn print_atoms(&mut self, target: &Variable) {
         eprintln!("levels:");
         let manager = self.manager.clone();
         manager.with_manager_shared(|m| {
             for level in 0..m.num_levels() {
                 let var = m.level_to_var(level);
-                let atom = self.atoms.by_index(&var).unwrap();
+                let atom = self.atoms.by_index(&var).unwrap().clone();
 
                 eprint!(" level {} -> var {}.", level, var);
 
@@ -269,26 +270,6 @@ impl<'p> QE<'p> {
             }
         })
     }
-
-    // #[allow(unused)]
-    // fn stats(&self, m: &Manager<'_>, target: &Variable) {
-    //     eprintln!("atoms ({}):", self.atoms.size());
-    //     for level in 0..m.num_levels() {
-    //         eprint!(" - level {} -> var {}. ", level, m.level_to_var(level));
-    //         let var = m.level_to_var(level);
-    //         let atom = self.atoms.by_index(&var).unwrap();
-    //
-    //         if self.mentions(&atom, target) {
-    //             if self.cutoff.is_some_and(|c| var == c) {
-    //                 eprintln!("mentions target! cutoff!")
-    //             } else {
-    //                 eprintln!("mentions target!")
-    //             }
-    //         } else {
-    //             eprintln!()
-    //         }
-    //     }
-    // }
 
     fn top(&self) -> BCDDFunction {
         self.top.clone()
@@ -339,7 +320,7 @@ impl<'p> QE<'p> {
                         || self.eliminate_in(target, low, cache),
                     );
 
-                    let atom = self.atoms.by_index(&guard_var).unwrap();
+                    let atom = self.atoms.by_index(&guard_var).unwrap().clone();
                     Core::ite()
                         .call([atom, high?, low?])
                         .into_term_in(self.pool)
@@ -423,7 +404,7 @@ impl<'p> QE<'p> {
         match self.atoms.by_key(term) {
             Some(var) => Ok(Some(
                 self.manager
-                    .with_manager_shared(|m| BCDDFunction::var(m, var))?,
+                    .with_manager_shared(|m| BCDDFunction::var(m, *var))?,
             )),
             None => Ok(None),
         }
@@ -903,7 +884,10 @@ impl<'p> QE<'p> {
                     let Node::Inner(node) = m.get_node(edge) else {
                         unreachable!()
                     };
-                    self.atoms.by_index(&m.level_to_var(node.level())).unwrap()
+                    self.atoms
+                        .by_index(&m.level_to_var(node.level()))
+                        .unwrap()
+                        .clone()
                 });
 
                 let high = self.term_in(&high, cache);
