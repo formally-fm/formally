@@ -51,6 +51,7 @@ use dashmap::DashMap;
 use either::Either;
 use itertools::Itertools;
 use parking_lot::RwLock;
+use rayon::prelude::*;
 use thiserror::Error;
 use transitive::Transitive;
 
@@ -472,8 +473,13 @@ impl<'p> QE<'p> {
     fn atom(&self, term: Term, mentions: bool) -> Result<BCDDFunction, Error> {
         debug_assert_eq!(Sort::of(&term).unwrap(), Core::Bool());
 
-        self.manager.with_manager_exclusive(|m| {
-            let var = self.atoms.by_key_or_insert(term, |_| {
+        let var = self.atoms.by_key_or_insert(term, |_| {
+            if mentions {
+                eprintln!("new atom mentioning the target!");
+            } else {
+                eprintln!("new atom *not* mentioning the target!");
+            }
+            self.manager.with_manager_exclusive(|m| {
                 let var = m.add_vars(1).start;
                 let level = m.var_to_level(var);
 
@@ -492,9 +498,11 @@ impl<'p> QE<'p> {
                 }
 
                 var
-            });
-            Ok(BCDDFunction::var(m, var)?)
-        })
+            })
+        });
+        Ok(self
+            .manager
+            .with_manager_shared(|m| BCDDFunction::var(m, var))?)
     }
 
     fn simplify(&self, term: &Term) -> Term {
@@ -777,7 +785,14 @@ impl<'p> QE<'p> {
         eprint!("compiling bdd...");
         let term = self.coalesce(target, term);
 
-        self.bdd_in(target, &term, &mut HashMap::new())
+        let depth = self.manager.workers().split_depth();
+        self.manager.workers().set_split_depth(Some(0));
+
+        let result = self.bdd_in(target, &term, &mut HashMap::new());
+
+        self.manager.workers().set_split_depth(Some(depth));
+
+        result
     }
 
     #[allow(clippy::mutable_key_type)]
@@ -792,7 +807,6 @@ impl<'p> QE<'p> {
         }
 
         if !self.mentions(term, target) {
-            eprintln!("new atom *not* mentioning the target ({})!", target.name());
             let atom = self.atom(term.clone(), false)?;
             cache.insert(term.clone(), atom.clone());
             return Ok(atom);
@@ -846,14 +860,12 @@ impl<'p> QE<'p> {
                             guard.ite(&high, &low)?
                         }
                         CoreAtom::Equals(_) | CoreAtom::Distinct(_) => {
-                            eprintln!("new atom mentioning the target ({})!", target.name());
                             self.atom(term.clone(), true)?
                         }
                     }
                 } else if let Ok(sort) = Sort::of(term)
                     && sort == Core::Bool()
                 {
-                    eprintln!("new atom mentioning the target ({})!", target.name());
                     self.atom(term.clone(), true)?
                 } else {
                     unreachable!();
