@@ -189,6 +189,7 @@ impl<'p> QE<'p> {
                 .unwrap_or(1) as u32
         });
         let manager = oxidd::bcdd::new_manager(1_073_741_824, 1_048_576, jobs);
+        manager.workers().set_split_depth(Some(0));
         QE {
             top: manager.with_manager_shared(|m| BCDDFunction::t(m)),
             bottom: manager.with_manager_shared(|m| BCDDFunction::f(m)),
@@ -229,6 +230,8 @@ impl<'p> QE<'p> {
             eprintln!("collecting atoms...");
             self.collect(target, &body);
 
+            self.print_atoms(target);
+
             eprintln!("compiling the bdd...");
             let bdd = self.bdd(&body)?;
 
@@ -244,6 +247,27 @@ impl<'p> QE<'p> {
         }
 
         Ok(body)
+    }
+
+    fn print_atoms(&mut self, target: &Variable) {
+        eprintln!("levels:");
+        let manager = self.manager.clone();
+        manager.with_manager_shared(|m| {
+            for level in 0..m.num_levels() {
+                let var = m.level_to_var(level);
+                let atom = self.atoms.by_index(&var).unwrap();
+
+                eprint!(" level {} -> var {}.", level, var);
+
+                if self.mentions(&atom, target) {
+                    eprint!(" mentions target!")
+                }
+                if Some(var) == self.cutoff {
+                    eprint!(" cutoff!")
+                }
+                eprintln!()
+            }
+        })
     }
 
     // #[allow(unused)]
@@ -302,11 +326,14 @@ impl<'p> QE<'p> {
                     })?;
 
                 let total = self.manager.with_manager_shared(|m| m.num_levels());
+                let cutoff = self
+                    .manager
+                    .with_manager_shared(|m| self.cutoff.map(|c| m.var_to_level(c)));
                 eprintln!(
                     "eliminating bdd at level {level}/{total}, cutoff {}...",
-                    self.cutoff.map(|c| c.to_string()).unwrap_or("none".into())
+                    cutoff.map(|c| c.to_string()).unwrap_or("none".into())
                 );
-                if self.cutoff.is_none_or(|cutoff| level < cutoff) {
+                if cutoff.is_none_or(|cutoff| level < cutoff) {
                     let (high, low) = self.manager.workers().join(
                         || self.eliminate_in(target, high, cache),
                         || self.eliminate_in(target, low, cache),
@@ -422,10 +449,10 @@ impl<'p> QE<'p> {
                 None if mentions => self.cutoff = Some(var),
                 _ => {}
             }
-            
+
             var
         });
-        
+
         self.atoms.insert(term, var);
     }
 
