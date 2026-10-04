@@ -557,14 +557,18 @@ impl<'b, 'o, 'e, 'p> State<'b, 'o, 'e, 'p> {
     /// thus obtaining a slice pointing to the string `while`, that we can use to produce the error
     /// message.
     pub fn token(&mut self) -> Token<'b> {
-        let begin = self.view.clone();
-        let skip = self.skip.clone();
-        let mut split = self.split();
+        let begin = self.view.location();
+        let mut preview = self.view.clone();
+        preview.next();
+        let end = preview.location();
 
-        (not(skip).skip().skipping(nothing()).parse)(&mut split).ok();
         Token(
-            &split.view.buffer[begin.location.position..split.view.location.position],
-            split.elapsed().unwrap(),
+            &self.view.buffer[begin.position..end.position],
+            Span::Span {
+                origin: self.origin.clone(),
+                begin,
+                end,
+            },
         )
     }
 
