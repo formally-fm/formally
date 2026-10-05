@@ -264,8 +264,12 @@ impl<'p> QE<'p> {
 
         self.setup(quantifiers);
 
+        eprintln!("simplifying term...");
+        let body = body.simplify(self.pool)?;
+
         eprintln!("compiling the initial bdd...");
-        let mut body = self.bdd_seq(body)?;
+        let mut body = self.bdd_seq(&body)?;
+
         for Quantifier { quantifier, target } in quantifiers {
             match quantifier {
                 smt::Quantifier::Forall => eprintln!("eliminating forall {}", target.name()),
@@ -283,11 +287,14 @@ impl<'p> QE<'p> {
             eprintln!("traversing...");
             let calls = AtomicUsize::new(0);
             let term = self.eliminate(target, body, &calls)?;
-
+            
             eprintln!(
                 "traversed with {} QE calls completed!",
                 calls.load(Ordering::Relaxed)
             );
+            
+            eprintln!("simplifying term...");
+            let term = term.simplify(self.pool)?;
 
             eprintln!("compiling next bdd...");
             body = self.bdd_seq(&term)?;

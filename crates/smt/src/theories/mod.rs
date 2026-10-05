@@ -49,12 +49,24 @@
 //! often. We refer to the documentation on [how to write a new backend](crate::backends) for
 //! details.
 
+mod standard;
+mod simplifiers;
+
+pub use standard::*;
+
 use crate::*;
 use formally::support::*;
 
-mod standard;
+use itertools::*;
 
-pub use standard::*;
+use std::fmt::{Debug, Formatter};
+
+pub trait Simplify {
+    #[allow(unused_variables)]
+    fn simplify(&self, term: &Term, pool: &dyn TermPool) -> Result<Term> {
+        Ok(term.clone())
+    }
+}
 
 /// A trait for types representing SMT-LIBv2 theories.
 ///
@@ -65,7 +77,7 @@ pub use standard::*;
 ///
 /// Implementing this trait directly is quite rare, since theories are usually better declared
 /// using the [theories!] macro.
-pub trait Theory {
+pub trait Theory: Debug + Simplify + Send + Sync {
     fn functions(&self) -> Scope<Function>;
 
     fn sorts(&self) -> Scope<Function>;
@@ -84,14 +96,15 @@ pub trait TheoryEx: Theory {
 }
 
 /// An instance of [Theory] combining multiple theories together.
-pub struct CombinedTheory {
+pub struct CombinedTheory<'t> {
+    theories: Box<[&'t dyn Theory]>,
     functions: Scope<Function>,
     sorts: Scope<Function>,
 }
 
-impl CombinedTheory {
+impl<'t> CombinedTheory<'t> {
     /// Create a theory combining the given theories.
-    pub fn new(theories: &[&dyn Theory]) -> CombinedTheory {
+    pub fn new(theories: &[&'t dyn Theory]) -> CombinedTheory<'t> {
         let mut functions = Scope::new();
         let mut sorts = Scope::new();
 
@@ -100,11 +113,31 @@ impl CombinedTheory {
             sorts.merge(&theory.sorts());
         }
 
-        CombinedTheory { functions, sorts }
+        CombinedTheory {
+            theories: theories.to_vec().into_boxed_slice(),
+            functions,
+            sorts,
+        }
     }
 }
 
-impl Theory for CombinedTheory {
+impl Simplify for CombinedTheory<'_> {
+    fn simplify(&self, term: &Term, pool: &dyn TermPool) -> Result<Term> {
+        let mut term = term.clone();
+        for theory in &self.theories {
+            term = theory.simplify(&term, pool)?
+        }
+        Ok(term)
+    }
+}
+
+impl Debug for CombinedTheory<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.theories.iter().map(|t| format!("{t:?}")).join(" + "))
+    }
+}
+
+impl Theory for CombinedTheory<'_> {
     fn functions(&self) -> Scope<Function> {
         self.functions.clone()
     }
@@ -119,6 +152,7 @@ static SORT_DECL: PrimitiveData = PrimitiveData {
     domain: Vec::new(),
     range: Sort::sort(),
     associativity: None,
+    theory: SArc::Static(&Core)
 };
 
 impl Sort {

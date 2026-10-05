@@ -58,7 +58,7 @@ use std::{collections::HashMap, sync::LazyLock};
 /// Trait for types representing SMT-LIBv2 logics.
 ///
 /// Types implementing this trait are usually not declared by hand but by using the [logic] macro.
-pub trait Logic {
+pub trait Logic: Send + Sync {
     /// Return the name of the logic.
     fn name(&self) -> &str;
 

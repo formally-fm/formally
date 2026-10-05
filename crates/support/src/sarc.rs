@@ -50,6 +50,17 @@ impl<T: 'static + ?Sized> Deref for SArc<T> {
     }
 }
 
+impl<T: 'static + ?Sized> From<&'static T> for SArc<T> {
+    fn from(r: &'static T) -> Self {
+        SArc::Static(r)
+    }
+}
+
+impl<T: 'static + ?Sized> From<Arc<T>> for SArc<T> {
+    fn from(arc: Arc<T>) -> Self {
+        SArc::Arc(arc.clone())
+    }
+}
 
 impl<T: 'static + ?Sized + Hash> Hash for SArc<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -92,9 +103,12 @@ impl<T: 'static + ?Sized> Clone for SArc<T> {
     }
 }
 
-impl<T: Debug> Debug for SArc<T> {
+impl<T: Debug + ?Sized> Debug for SArc<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", **self)
+        match self {
+            SArc::Static(r) => Debug::fmt(r, f),
+            SArc::Arc(a) => Debug::fmt(a, f),
+        }
     }
 }
 

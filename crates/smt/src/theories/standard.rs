@@ -28,6 +28,7 @@ theories! {
     /// The core SMT-LIBv2 theory, with basic Boolean connectives.
     ///
     /// See [the official specification](https://smt-lib.org/theories-Core.shtml).
+    #[simplify]
     pub Core {
         /// The sort of Boolean terms.
         type Bool;

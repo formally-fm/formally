@@ -22,9 +22,12 @@
 // SOFTWARE.
 //
 
-use crate::*;
+use crate::formally;
 
-use formally::support::*;
+use formally::{
+    smt::{theories::Theory, *},
+    support::*,
+};
 
 use derive_more::{Deref, From};
 use transitive::Transitive;
@@ -163,6 +166,7 @@ pub(crate) struct PrimitiveData {
     pub domain: Vec<Sort>,
     pub range: Sort,
     pub associativity: Option<Associativity>,
+    pub theory: SArc<dyn Theory>,
 }
 
 impl Located for Primitive {
@@ -182,6 +186,7 @@ impl Primitive {
         domain: Vec<Sort>,
         range: Sort,
         associativity: Option<Associativity>,
+        theory: impl Into<SArc<dyn Theory>>,
     ) -> Primitive {
         Primitive(Nominal(SArc::Arc(Arc::new(PrimitiveData {
             name: name.into().into_owned(),
@@ -189,6 +194,7 @@ impl Primitive {
             domain,
             range,
             associativity,
+            theory: theory.into(),
         }))))
     }
 
@@ -218,6 +224,11 @@ impl Primitive {
         &self.0.range
     }
 
+    /// Get the [Theory] this [Primitive] comes from.
+    pub fn theory(&self) -> &dyn Theory {
+        &*self.0.theory
+    }
+    
     /// Get the associativity annotation, if any, of the primitive function.
     ///
     /// See [Associativity] for details.

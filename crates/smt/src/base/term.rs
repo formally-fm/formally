@@ -34,12 +34,16 @@ use formally::{
 use derive_more::From;
 use transitive::Transitive;
 
+use itertools::Itertools;
 pub use rug::{Integer, Rational};
 use std::{
     collections::HashMap,
     fmt::{Display, Formatter},
     hash::{Hash, Hasher},
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 /// A constant term.
@@ -305,6 +309,7 @@ pub(crate) struct TermInner {
     pub(crate) resolved: bool,
     pub(crate) qf: bool,
     pub(crate) size: usize,
+    pub(crate) simplified: AtomicBool,
 }
 
 impl TermInner {
@@ -332,10 +337,7 @@ impl TermInner {
             TermKind::Let(let_) => {
                 resolved = let_.body.is_resolved();
                 qf = let_.body.is_quantifier_free()
-                    && let_
-                        .bindings
-                        .iter()
-                        .all(|b| b.def.is_quantifier_free());
+                    && let_.bindings.iter().all(|b| b.def.is_quantifier_free());
                 1 + let_.bindings.iter().map(|b| b.def.size()).sum::<usize>() + let_.body.size()
             }
         };
@@ -346,6 +348,7 @@ impl TermInner {
             resolved,
             qf,
             size,
+            simplified: AtomicBool::new(false),
         }
     }
 }
@@ -366,6 +369,16 @@ impl Term {
     /// The number of nodes (atoms and other kinds) that recursively compose this [Term].
     pub fn size(&self) -> usize {
         self.0.size
+    }
+
+    /// Tell whether this [Term] is already simplified according to the [Term::simplify()] method.
+    ///
+    /// Note that this method does not actively check if the term is simplified, because it would
+    /// cost as much as the simplification itself. Instead, [Term::simplify()] sets an internal
+    /// flag on the [Term] when it creates simplified terms, so that the next time the
+    /// simplification is a no-op. This method reads that flag.
+    pub fn is_simplified(&self) -> bool {
+        self.0.simplified.load(Ordering::Relaxed)
     }
 
     /// Tell whether this [Term] represents a numeric constant, possibly negated.
@@ -458,6 +471,61 @@ impl PartialEq<Rational> for Term {
             **value == *other
         } else {
             false
+        }
+    }
+}
+
+impl Term {
+    fn simplified(self) -> Term {
+        self.0.simplified.store(true, Ordering::Relaxed);
+        self
+    }
+
+    pub fn simplify(&self, pool: &dyn TermPool) -> Result<Term> {
+        if self.is_simplified() {
+            return Ok(self.to_term_in(pool));
+        }
+
+        match self.kind() {
+            TermKind::Constant(_) => Ok(self.clone()),
+            TermKind::Atom(atom) => {
+                if let FunctionRef::Bound(bound) = &atom.head
+                    && let Function::Primitive(prim) = &bound.function
+                {
+                    Ok(prim.theory().simplify(self, pool)?.simplified())
+                } else {
+                    Ok(Atom {
+                        head: atom.head.clone(),
+                        arguments: atom.arguments.iter().map(|arg| arg.simplify(pool)).try_collect()?,
+                        span: atom.span(),
+                    }.into_term_in(pool).simplified())
+                }
+            }
+            TermKind::Quantified(quant) => Ok(Quantified {
+                quantifier: quant.quantifier,
+                variables: quant.variables.clone(),
+                body: quant.body.simplify(pool)?,
+                span: quant.span(),
+            }
+            .into_term_in(pool)
+            .simplified()),
+            TermKind::Let(let_) => Ok(Let {
+                bindings: let_
+                    .bindings
+                    .iter()
+                    .map(|b| -> Result<_> {
+                        Ok(Binding {
+                            variable: b.variable.clone(),
+                            def: b.def.simplify(pool)?,
+                            span: b.span(),
+                        })
+                    })
+                    .try_collect()?,
+                body: let_.body.simplify(pool)?,
+                span: let_.span(),
+            }
+            .into_term_in(pool)
+            .simplified()),
         }
     }
 }
