@@ -299,17 +299,18 @@ impl<T: Into<Atom>> From<T> for TermKind {
 ///
 /// See the [ToTerm] trait for more information about how to construct [Term] objects from [ToTerm]
 /// instances.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Term(pub(crate) Nominal<Arc<TermInner>>);
 
 #[derive(Debug)]
 pub(crate) struct TermInner {
     pub(crate) kind: TermKind,
     pub(crate) sort: OnceLock<Result<Sort, TypeCheckError>>,
+    pub(crate) simplified: OnceLock<Term>,
+    pub(crate) is_simplified: AtomicBool,
     pub(crate) resolved: bool,
     pub(crate) qf: bool,
     pub(crate) size: usize,
-    pub(crate) simplified: AtomicBool,
 }
 
 impl TermInner {
@@ -345,10 +346,11 @@ impl TermInner {
         TermInner {
             kind,
             sort: OnceLock::new(),
+            simplified: OnceLock::new(),
+            is_simplified: AtomicBool::new(false),
             resolved,
             qf,
             size,
-            simplified: AtomicBool::new(false),
         }
     }
 }
@@ -371,14 +373,14 @@ impl Term {
         self.0.size
     }
 
-    /// Tell whether this [Term] is already simplified according to the [Term::simplify()] method.
+    /// Tell whether this [Term] is already simplified according to the [Term::simplified()] method.
     ///
     /// Note that this method does not actively check if the term is simplified, because it would
-    /// cost as much as the simplification itself. Instead, [Term::simplify()] sets an internal
+    /// cost as much as the simplification itself. Instead, [Term::simplified()] sets an internal
     /// flag on the [Term] when it creates simplified terms, so that the next time the
     /// simplification is a no-op. This method reads that flag.
     pub fn is_simplified(&self) -> bool {
-        self.0.simplified.load(Ordering::Relaxed)
+        self.0.is_simplified.load(Ordering::Relaxed)
     }
 
     /// Tell whether this [Term] represents a numeric constant, possibly negated.
@@ -476,56 +478,117 @@ impl PartialEq<Rational> for Term {
 }
 
 impl Term {
-    fn simplified(self) -> Term {
-        self.0.simplified.store(true, Ordering::Relaxed);
+    pub fn simplified(&self, pool: &dyn TermPool) -> Term {
+        if self.is_simplified() {
+            return self.to_term_in(pool);
+        }
+
+        self.0
+            .simplified
+            .get_or_init(|| self.simplify_in(pool))
+            .clone()
+    }
+
+    fn mark_simplified(self) -> Term {
+        self.0.is_simplified.store(true, Ordering::Relaxed);
         self
     }
 
-    pub fn simplify(&self, pool: &dyn TermPool) -> Result<Term> {
-        if self.is_simplified() {
-            return Ok(self.to_term_in(pool));
-        }
-
+    fn simplify_in(&self, pool: &dyn TermPool) -> Term {
         match self.kind() {
-            TermKind::Constant(_) => Ok(self.clone()),
+            TermKind::Constant(_) => self.clone(),
             TermKind::Atom(atom) => {
+                let mut arguments = Vec::with_capacity(atom.arguments.len());
+                for arg in &*atom.arguments {
+                    arguments.push(arg.simplified(pool))
+                }
+
+                let atom = Atom {
+                    head: atom.head.clone(),
+                    arguments: Arc::from(arguments.into_boxed_slice()),
+                    span: None,
+                };
+
                 if let FunctionRef::Bound(bound) = &atom.head
                     && let Function::Primitive(prim) = &bound.function
                 {
-                    Ok(prim.theory().simplify(self, pool)?.simplified())
-                } else {
-                    Ok(Atom {
-                        head: atom.head.clone(),
-                        arguments: atom.arguments.iter().map(|arg| arg.simplify(pool)).try_collect()?,
-                        span: atom.span(),
-                    }.into_term_in(pool).simplified())
+                    let simplified = prim.theory().simplify(&atom.to_term_in(pool), pool);
+
+                    let TermKind::Atom(atom) = simplified.kind() else {
+                        return simplified;
+                    };
+
+                    if let FunctionRef::Bound(bound) = &atom.head
+                        && let Function::Primitive(prim) = &bound.function
+                    {
+                        let mut atom = atom.clone();
+                        
+                        if let Some(Associativity::LeftAssoc | Associativity::RightAssoc) =
+                            prim.associativity()
+                        {
+                            let mut arguments = Vec::new();
+                            for arg in &*atom.arguments {
+                                if let TermKind::Atom(atom) = arg.kind()
+                                    && let FunctionRef::Bound(bound) = &atom.head
+                                    && let Function::Primitive(prim2) = &bound.function
+                                    && prim2 == prim
+                                {
+                                    arguments.extend(atom.arguments.iter().cloned())
+                                } else {
+                                    arguments.push(arg.clone())
+                                }
+                            }
+    
+                            atom = Atom {
+                                arguments: Arc::from(arguments.into_boxed_slice()),
+                                ..atom
+                            }
+                        }
+    
+                        if prim.commutativity() == Commutativity::Commutative
+                            || prim.associativity() == Some(Associativity::Chainable)
+                            || prim.associativity() == Some(Associativity::Pairwise)
+                        {
+                            let mut arguments = atom.arguments.iter().cloned().collect_vec();
+                            arguments.sort();
+    
+                            atom = Atom {
+                                arguments: Arc::from(arguments.into_boxed_slice()),
+                                ..atom
+                            };
+                        }
+
+                        return atom.into_term_in(pool);
+                    }
+                    
+                    return atom.into_term_in(pool);
                 }
+
+                atom.into_term_in(pool)
             }
-            TermKind::Quantified(quant) => Ok(Quantified {
+            TermKind::Quantified(quant) => Quantified {
                 quantifier: quant.quantifier,
                 variables: quant.variables.clone(),
-                body: quant.body.simplify(pool)?,
-                span: quant.span(),
+                body: quant.body.simplified(pool),
+                span: None,
             }
             .into_term_in(pool)
-            .simplified()),
-            TermKind::Let(let_) => Ok(Let {
+            .mark_simplified(),
+            TermKind::Let(let_) => Let {
                 bindings: let_
                     .bindings
                     .iter()
-                    .map(|b| -> Result<_> {
-                        Ok(Binding {
-                            variable: b.variable.clone(),
-                            def: b.def.simplify(pool)?,
-                            span: b.span(),
-                        })
+                    .map(|b| Binding {
+                        variable: b.variable.clone(),
+                        def: b.def.simplified(pool),
+                        span: b.span(),
                     })
-                    .try_collect()?,
-                body: let_.body.simplify(pool)?,
-                span: let_.span(),
+                    .collect(),
+                body: let_.body.simplified(pool),
+                span: None,
             }
             .into_term_in(pool)
-            .simplified()),
+            .mark_simplified(),
         }
     }
 }

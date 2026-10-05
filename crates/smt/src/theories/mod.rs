@@ -49,8 +49,8 @@
 //! often. We refer to the documentation on [how to write a new backend](crate::backends) for
 //! details.
 
-mod standard;
 mod simplifiers;
+mod standard;
 
 pub use standard::*;
 
@@ -63,8 +63,8 @@ use std::fmt::{Debug, Formatter};
 
 pub trait Simplify {
     #[allow(unused_variables)]
-    fn simplify(&self, term: &Term, pool: &dyn TermPool) -> Result<Term> {
-        Ok(term.clone())
+    fn simplify(&self, term: &Term, pool: &dyn TermPool) -> Term {
+        term.to_term_in(pool)
     }
 }
 
@@ -122,18 +122,22 @@ impl<'t> CombinedTheory<'t> {
 }
 
 impl Simplify for CombinedTheory<'_> {
-    fn simplify(&self, term: &Term, pool: &dyn TermPool) -> Result<Term> {
+    fn simplify(&self, term: &Term, pool: &dyn TermPool) -> Term {
         let mut term = term.clone();
         for theory in &self.theories {
-            term = theory.simplify(&term, pool)?
+            term = theory.simplify(&term, pool)
         }
-        Ok(term)
+        term
     }
 }
 
 impl Debug for CombinedTheory<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.theories.iter().map(|t| format!("{t:?}")).join(" + "))
+        write!(
+            f,
+            "{}",
+            self.theories.iter().map(|t| format!("{t:?}")).join(" + ")
+        )
     }
 }
 
@@ -152,7 +156,8 @@ static SORT_DECL: PrimitiveData = PrimitiveData {
     domain: Vec::new(),
     range: Sort::sort(),
     associativity: None,
-    theory: SArc::Static(&Core)
+    commutativity: Commutativity::NonCommutative,
+    theory: SArc::Static(&Core),
 };
 
 impl Sort {

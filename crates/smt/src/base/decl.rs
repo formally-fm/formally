@@ -53,7 +53,7 @@ use std::{fmt::Debug, sync::Arc};
 ///
 /// See also the [theories!] macro to see how to specify these annotations when declaring theory
 /// symbols.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Associativity {
     /// Equivalent to the `:left-assoc` annotation.
     LeftAssoc,
@@ -63,6 +63,13 @@ pub enum Associativity {
     Chainable,
     /// Equivalent to the `:pairwise` annotation.
     Pairwise,
+}
+
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Commutativity {
+    #[default]
+    NonCommutative,
+    Commutative,
 }
 
 /// A free variable.
@@ -166,6 +173,7 @@ pub(crate) struct PrimitiveData {
     pub domain: Vec<Sort>,
     pub range: Sort,
     pub associativity: Option<Associativity>,
+    pub commutativity: Commutativity,
     pub theory: SArc<dyn Theory>,
 }
 
@@ -186,6 +194,7 @@ impl Primitive {
         domain: Vec<Sort>,
         range: Sort,
         associativity: Option<Associativity>,
+        commutativity: Commutativity,
         theory: impl Into<SArc<dyn Theory>>,
     ) -> Primitive {
         Primitive(Nominal(SArc::Arc(Arc::new(PrimitiveData {
@@ -194,6 +203,7 @@ impl Primitive {
             domain,
             range,
             associativity,
+            commutativity,
             theory: theory.into(),
         }))))
     }
@@ -228,7 +238,7 @@ impl Primitive {
     pub fn theory(&self) -> &dyn Theory {
         &*self.0.theory
     }
-    
+
     /// Get the associativity annotation, if any, of the primitive function.
     ///
     /// See [Associativity] for details.
@@ -236,6 +246,10 @@ impl Primitive {
         self.0.associativity
     }
 
+    pub fn commutativity(&self) -> Commutativity {
+        self.0.commutativity
+    }
+    
     /// Form an [Atom] that calls this [Primitive] as a function with the given arguments.
     pub fn call(self, args: impl IntoIterator<Item = Term>) -> Atom {
         Atom {

@@ -26,8 +26,94 @@ use crate::formally;
 
 use formally::smt::theories::*;
 
+use std::collections::HashSet;
+
+#[allow(clippy::mutable_key_type)]
 impl Simplify for Core {
-    fn simplify(&self, term: &Term, _pool: &dyn TermPool) -> Result<Term> {
-        todo!()
+    fn simplify(&self, term: &Term, pool: &dyn TermPool) -> Term {
+        let Ok(atom) = CoreAtom::try_from(term) else {
+            return term.to_term_in(pool);
+        };
+
+        match atom {
+            CoreAtom::Not(arg) if let Ok(arg) = CoreAtom::try_from(arg) => match arg {
+                CoreAtom::True => Core::False().into_term_in(pool),
+                CoreAtom::False => Core::True().into_term_in(pool),
+                CoreAtom::Not(arg) => arg.clone(),
+                _ => term.clone(),
+            },
+            CoreAtom::And(args) => {
+                let mut arguments = Vec::with_capacity(args.len());
+                for arg in args {
+                    if *arg == false {
+                        return Core::False().into_term_in(pool);
+                    }
+                    if *arg != true {
+                        arguments.push(arg.clone())
+                    }
+                }
+
+                if arguments.is_empty() {
+                    Core::True().into_term_in(pool)
+                } else if arguments.len() == 1 {
+                    arguments[0].clone()
+                } else {
+                    Core::and().call(arguments).into_term_in(pool)
+                }
+            }
+            CoreAtom::Or(args) => {
+                let mut arguments = Vec::with_capacity(args.len());
+                for arg in args {
+                    if *arg == true {
+                        return Core::True().into_term_in(pool);
+                    }
+                    if *arg != false {
+                        arguments.push(arg.clone())
+                    }
+                }
+                if arguments.is_empty() {
+                    Core::False().into_term_in(pool)
+                } else if arguments.len() == 1 {
+                    arguments[0].clone()
+                } else {
+                    Core::or().call(arguments).into_term_in(pool)
+                }
+            }
+            CoreAtom::Equals(args) => {
+                let arguments: HashSet<_> = args.iter().cloned().collect();
+                if arguments.len() == 1 {
+                    Core::True().into_term_in(pool)
+                } else {
+                    Core::equals().call(arguments).into_term_in(pool)
+                }
+            }
+            CoreAtom::Distinct(args) => {
+                let arguments: HashSet<_> = args.iter().cloned().collect();
+                if arguments.len() < args.len() {
+                    Core::False().into_term_in(pool)
+                } else {
+                    Core::equals().call(arguments).into_term_in(pool)
+                }
+            }
+            CoreAtom::Ite(guard, high, low) => {
+                if *guard == true {
+                    high.clone()
+                } else if *guard == false {
+                    low.clone()
+                } else if *high == *low {
+                    high.clone()
+                } else if *high == true && *low == false {
+                    guard.clone()
+                } else if *high == false && *low == true {
+                    Core::not()
+                        .call([guard.clone()])
+                        .into_term_in(pool)
+                        .simplified(pool)
+                } else {
+                    term.clone()
+                }
+            }
+            _ => term.clone(), // TODO: Boolean constant propagation for implications and xors
+        }
     }
 }

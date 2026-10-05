@@ -256,6 +256,25 @@ impl Parse for Decl {
     }
 }
 
+fn is_commutative_from_attr(attr: &syn::Attribute) -> bool {
+    if let Ok(path) = attr.meta.require_path_only()
+        && path.is_ident("commutative")
+    {
+        true
+    } else {
+        false
+    }
+}
+
+fn is_commutative_from_attrs(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if is_commutative_from_attr(attr) {
+            return true;
+        }
+    }
+    false
+}
+
 fn get_name_from_attr(attr: &syn::Attribute) -> Option<&syn::Expr> {
     match &attr.meta {
         Meta::NameValue(syn::MetaNameValue { path, value, .. }) if path.is_ident("name") => {
@@ -279,6 +298,11 @@ fn const_static(theory: &syn::Ident, cnst: Attributed<&Const>) -> TokenStream {
     let ident = &cnst.node.ident;
     let sident = syn::LitStr::new(&ident.to_string(), ident.span());
     let name = get_name_from_attrs(&cnst.attrs).map(|name| quote!(name = #name));
+    let commutativity = if is_commutative_from_attrs(&cnst.attrs) {
+        quote!(formally::smt::Commutativity::Commutative)
+    } else {
+        quote!(formally::smt::Commutativity::NonCommutative)
+    };
     let sort = &cnst.node.sort;
 
     quote! {
@@ -293,6 +317,7 @@ fn const_static(theory: &syn::Ident, cnst: Attributed<&Const>) -> TokenStream {
                     std::iter::empty().collect(),
                     #sort,
                     None,
+                    #commutativity,
                     &#theory as &dyn formally::smt::theories::Theory
                 )
             });
@@ -351,6 +376,11 @@ fn func_static(theory: &syn::Ident, func: Attributed<&Function>) -> TokenStream 
     let flag = get_flag_from_attrs(&func.attrs)
         .map(|f| quote!(Some(#f)))
         .unwrap_or(quote!(None));
+    let commutativity = if is_commutative_from_attrs(&func.attrs) {
+        quote!(formally::smt::Commutativity::Commutative)
+    } else {
+        quote!(formally::smt::Commutativity::NonCommutative)
+    };
 
     quote! {
         pub static #ident : std::sync::LazyLock<formally::smt::Primitive> =
@@ -368,6 +398,7 @@ fn func_static(theory: &syn::Ident, func: Attributed<&Function>) -> TokenStream 
                     vec![#(formally::smt::Sort::from(#args.clone())),*] as Vec<formally::smt::Sort>,
                     formally::smt::Sort::from(#range.clone()),
                     #flag,
+                    #commutativity,
                     &#theory as &dyn formally::smt::theories::Theory
                 )
             });
@@ -832,6 +863,20 @@ impl ToTokens for Attributed<Theory> {
                     if false { unreachable!() }
                     #(#atom_try_from)* else {
                         Err(atom)
+                    }
+                }
+            }
+
+            impl<'t> TryFrom<&'t formally::smt::Term> for #atomenum<'t> {
+                type Error = &'t formally::smt::Term;
+
+                fn try_from(term: &'t formally::smt::Term) -> Result<#atomenum<'t>, Self::Error> {
+                    let formally::smt::TermKind::Atom(atom) = term.kind() else {
+                        return Err(term);
+                    };
+                    match #atomenum::try_from(atom) {
+                        Ok(atom) => Ok(atom),
+                        Err(_) => Err(term)
                     }
                 }
             }
