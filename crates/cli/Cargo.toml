@@ -20,5 +20,5 @@ cvc5 = ["formally/cvc5"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-formally = { path = "../formally", version = "0.2.0", default-features = false, features = ["io", "smt", "dd", "smt-tbdd"] }
+formally = { path = "../formally", version = "0.2.0", default-features = false, features = ["io", "smt", "smt-tbdd"] }
 itertools = "0.15.0"

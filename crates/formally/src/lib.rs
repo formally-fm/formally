@@ -142,8 +142,3 @@ pub extern crate formally_io as io;
 #[cfg(feature = "smt")]
 #[doc(inline)]
 pub extern crate formally_smt as smt;
-
-#[cfg_attr(docsrs, doc(cfg(feature = "dd")))]
-#[cfg(feature = "dd")]
-#[doc(inline)]
-pub extern crate formally_dd as dd;

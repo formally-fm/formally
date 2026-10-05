@@ -7,7 +7,6 @@ members = [
     "crates/formally",
     "crates/cli",
     "crates/smt-macros",
-    "crates/dd",
 ]
 resolver = "3"
 
