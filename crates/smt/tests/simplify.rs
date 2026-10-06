@@ -50,14 +50,17 @@ pub fn simplify() -> Result<()> {
 
     let mut term = solver.lookup(term!(+ x (+ y (* 2.0 y) (* 4.0 2.0 y))), Role::Function)?;
     let mut term2 = solver.lookup(term!(and #top (or q #top) (not #bottom)), Role::Function)?;
+    let mut term3 = solver.lookup(term!(+ (- (+ (+ x y) (+ x y))) z), Role::Function)?;
 
     term = term.simplified(&*solver.pool());
     term2 = term2.simplified(&*solver.pool());
+    term3 = term3.simplified(&*solver.pool());
 
     assert_eq!(term2, true);
 
     term.println(&mut std::io::stdout()).ok();
     term2.println(&mut std::io::stdout()).ok();
+    term3.println(&mut std::io::stdout()).ok();
 
     Ok(())
 }

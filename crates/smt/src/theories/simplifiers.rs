@@ -139,11 +139,23 @@ impl Simplify for Reals {
                         }
                         Reals::plus().call(arguments).into_term_in(pool)
                     }
+                    Ok(RealsAtom::Mult(args)) => {
+                        let mut arguments = args.iter().cloned().collect_vec();
+                        arguments[0] = Reals::unary_minus()
+                            .call([arguments[0].clone()])
+                            .into_term_in(pool)
+                            .simplified(pool);
+
+                        Reals::mult()
+                            .call(arguments)
+                            .into_term_in(pool)
+                            .simplified(pool)
+                    }
                     // - (- 42) = 42
                     _ if let TermKind::Constant(cnst) = arg.kind() => match cnst {
                         Constant::Integer { .. } => {
                             let value = cnst.to_integer().unwrap();
-                            if value < 0 {
+                            if value <= 0 {
                                 Constant::from(-value).into_term_in(pool)
                             } else {
                                 term.clone()
@@ -151,7 +163,7 @@ impl Simplify for Reals {
                         }
                         Constant::Rational { .. } => {
                             let value = cnst.to_rational();
-                            if value < 0 {
+                            if value <= 0 {
                                 Constant::from(-value).into_term_in(pool)
                             } else {
                                 term.clone()
@@ -168,12 +180,16 @@ impl Simplify for Reals {
                     if i == 0 {
                         arguments.push(arg.clone());
                     } else {
-                        arguments.push(Reals::minus().call([arg.clone()]).into_term_in(pool))
+                        arguments.push(Reals.simplify(
+                            &Reals::unary_minus().call([arg.clone()]).into_term_in(pool),
+                            pool,
+                        ))
                     }
                 }
-                let sum = Reals::plus().call(arguments).into_term_in(pool);
-
-                Reals.simplify(&sum, pool)
+                Reals::plus()
+                    .call(arguments)
+                    .into_term_in(pool)
+                    .simplified(pool)
             }
             // collect scaled common factors together
             RealsAtom::Plus(args) => {
@@ -191,7 +207,10 @@ impl Simplify for Reals {
 
                 for (factor, coefficient) in factors {
                     if coefficient == 1 {
-                        arguments.push(factor)
+                        if !matches!(factor.kind(), TermKind::Constant(cnst) if cnst.to_rational() == 0)
+                        {
+                            arguments.push(factor)
+                        }
                     } else {
                         let coefficient = Constant::from(coefficient).into_term_in(pool);
                         arguments.push(
@@ -202,6 +221,10 @@ impl Simplify for Reals {
                         );
                     }
                 }
+
+                let arguments = arguments.into_iter().filter(
+                    |arg| !matches!(arg.kind(), TermKind::Constant(cnst) if cnst.to_rational() == 0),
+                ).collect_vec();
 
                 if arguments.is_empty() {
                     Constant::from(Rational::from(0)).into_term_in(pool)
@@ -225,6 +248,10 @@ impl Simplify for Reals {
                     arguments.push(Constant::from(coefficient).into_term_in(pool))
                 }
 
+                let arguments = arguments.into_iter().filter(
+                    |arg| !matches!(arg.kind(), TermKind::Constant(cnst) if cnst.to_rational() == 1),
+                ).collect_vec();
+
                 if arguments.is_empty() {
                     Constant::from(Rational::from(1)).into_term_in(pool)
                 } else if arguments.len() == 1 {
@@ -233,11 +260,51 @@ impl Simplify for Reals {
                     Reals::mult().call(arguments).into_term_in(pool)
                 }
             }
+            // lhs <= rhs ---> lhs - rhs <= 0
+            RealsAtom::Le(args) => match args {
+                [left, right] => {
+                    let lhs = Reals::minus()
+                        .call([left.clone(), right.clone()])
+                        .into_term_in(pool)
+                        .simplified(pool);
+                    let zero = Constant::from(Rational::from(0)).into_term_in(pool);
+                    Reals::le().call([lhs, zero]).into_term_in(pool)
+                }
+                _ => term.clone(),
+            },
+            // lhs < rhs ---> lhs - rhs < 0
+            RealsAtom::Lt(args) => match args {
+                [left, right] => {
+                    let lhs = Reals::minus()
+                        .call([left.clone(), right.clone()])
+                        .into_term_in(pool)
+                        .simplified(pool);
+                    let zero = Constant::from(Rational::from(0)).into_term_in(pool);
+                    Reals::lt().call([lhs, zero]).into_term_in(pool)
+                }
+                _ => term.clone(),
+            },
+            // lhs >= rhs ---> rhs <= lhs
+            RealsAtom::Ge(args) => match args {
+                [left, right] => Reals.simplify(
+                    &Reals::le()
+                        .call([right.clone(), left.clone()])
+                        .into_term_in(pool),
+                    pool,
+                ),
+                _ => term.clone(),
+            },
+            // lhs > rhs ---> rhs < lhs
+            RealsAtom::Gt(args) => match args {
+                [left, right] => Reals.simplify(
+                    &Reals::lt()
+                        .call([right.clone(), left.clone()])
+                        .into_term_in(pool),
+                    pool,
+                ),
+                _ => term.clone(),
+            },
             RealsAtom::Div(_) => term.clone(),
-            RealsAtom::Le(_) => term.clone(),
-            RealsAtom::Lt(_) => term.clone(),
-            RealsAtom::Ge(_) => term.clone(),
-            RealsAtom::Gt(_) => term.clone(),
         }
     }
 }

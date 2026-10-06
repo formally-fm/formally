@@ -66,10 +66,12 @@ theories! {
         /// Equality.
         #[name = "="]
         #[chainable]
+        #[commutative]
         fn equals<A>(A, A) -> Core::Bool();
 
         /// Disequality.
         #[pairwise]
+        #[commutative]
         fn distinct<A>(A, A) -> Core::Bool();
 
         /// If-then-else choice construct.

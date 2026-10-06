@@ -553,10 +553,7 @@ impl Term {
                         }
                     }
 
-                    if prim.commutativity() == Commutativity::Commutative
-                        || prim.associativity() == Some(Associativity::Chainable)
-                        || prim.associativity() == Some(Associativity::Pairwise)
-                    {
+                    if prim.commutativity() == Commutativity::Commutative {
                         let mut arguments = atom.arguments.iter().cloned().collect_vec();
                         arguments.sort();
 
