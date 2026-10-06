@@ -413,7 +413,7 @@ impl QE {
                     let quant = Quantified {
                         quantifier: smt::Quantifier::Exists,
                         variables: Arc::new([target.clone()]),
-                        body: self.term(&body),
+                        body: self.term(&body).simplified(&*self.pool),
                         span: None,
                     }
                     .into_term_in(&*self.pool);
@@ -723,7 +723,7 @@ impl QE {
 
     #[allow(clippy::mutable_key_type)]
     fn term(&self, bdd: &BCDDFunction) -> Term {
-        self.term_in(bdd, &mut HashMap::new())
+        self.term_in(bdd, &mut HashMap::new()).simplified(&*self.pool)
     }
 
     #[allow(clippy::mutable_key_type)]
