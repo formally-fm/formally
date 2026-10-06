@@ -66,6 +66,23 @@ pub enum Constant {
     },
 }
 
+impl Constant {
+    pub fn to_integer(&self) -> Option<Integer> {
+        match self {
+            Constant::Integer { value, .. } => Some((**value).clone()),
+            Constant::Rational { value, .. } if *value.denom() == 1 => Some(value.numer().clone()),
+            Constant::Rational { .. } => None,
+        }
+    }
+
+    pub fn to_rational(&self) -> Rational {
+        match self {
+            Constant::Integer { value, .. } => Rational::from((**value).clone()),
+            Constant::Rational { value, .. } => (**value).clone(),
+        }
+    }
+}
+
 impl From<Integer> for Constant {
     fn from(value: Integer) -> Self {
         Constant::Integer {
@@ -512,56 +529,44 @@ impl Term {
                 if let FunctionRef::Bound(bound) = &atom.head
                     && let Function::Primitive(prim) = &bound.function
                 {
-                    let simplified = prim.theory().simplify(&atom.to_term_in(pool), pool);
+                    let mut atom = atom.clone();
 
-                    let TermKind::Atom(atom) = simplified.kind() else {
-                        return simplified;
-                    };
-
-                    if let FunctionRef::Bound(bound) = &atom.head
-                        && let Function::Primitive(prim) = &bound.function
+                    if let Some(Associativity::LeftAssoc | Associativity::RightAssoc) =
+                        prim.associativity()
                     {
-                        let mut atom = atom.clone();
-                        
-                        if let Some(Associativity::LeftAssoc | Associativity::RightAssoc) =
-                            prim.associativity()
-                        {
-                            let mut arguments = Vec::new();
-                            for arg in &*atom.arguments {
-                                if let TermKind::Atom(atom) = arg.kind()
-                                    && let FunctionRef::Bound(bound) = &atom.head
-                                    && let Function::Primitive(prim2) = &bound.function
-                                    && prim2 == prim
-                                {
-                                    arguments.extend(atom.arguments.iter().cloned())
-                                } else {
-                                    arguments.push(arg.clone())
-                                }
+                        let mut arguments = Vec::new();
+                        for arg in &*atom.arguments {
+                            if let TermKind::Atom(atom) = arg.kind()
+                                && let FunctionRef::Bound(bound) = &atom.head
+                                && let Function::Primitive(prim2) = &bound.function
+                                && prim2 == prim
+                            {
+                                arguments.extend(atom.arguments.iter().cloned())
+                            } else {
+                                arguments.push(arg.clone())
                             }
-    
-                            atom = Atom {
-                                arguments: Arc::from(arguments.into_boxed_slice()),
-                                ..atom
-                            }
-                        }
-    
-                        if prim.commutativity() == Commutativity::Commutative
-                            || prim.associativity() == Some(Associativity::Chainable)
-                            || prim.associativity() == Some(Associativity::Pairwise)
-                        {
-                            let mut arguments = atom.arguments.iter().cloned().collect_vec();
-                            arguments.sort();
-    
-                            atom = Atom {
-                                arguments: Arc::from(arguments.into_boxed_slice()),
-                                ..atom
-                            };
                         }
 
-                        return atom.into_term_in(pool);
+                        atom = Atom {
+                            arguments: Arc::from(arguments.into_boxed_slice()),
+                            ..atom
+                        }
                     }
-                    
-                    return atom.into_term_in(pool);
+
+                    if prim.commutativity() == Commutativity::Commutative
+                        || prim.associativity() == Some(Associativity::Chainable)
+                        || prim.associativity() == Some(Associativity::Pairwise)
+                    {
+                        let mut arguments = atom.arguments.iter().cloned().collect_vec();
+                        arguments.sort();
+
+                        atom = Atom {
+                            arguments: Arc::from(arguments.into_boxed_slice()),
+                            ..atom
+                        };
+                    }
+
+                    return prim.theory().simplify(&atom.to_term_in(pool), pool);
                 }
 
                 atom.into_term_in(pool)

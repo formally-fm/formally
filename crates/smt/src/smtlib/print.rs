@@ -52,13 +52,17 @@ impl Pretty for Decimal {
             span: None,
         };
 
-        parens(
-            RcDoc::text("/")
-                .append(RcDoc::space())
-                .append(numer.pretty())
-                .append(RcDoc::space())
-                .append(denom.pretty()),
-        )
+        if *self.value.denom() == 1 {
+            Numeral { value: self.value.numer().clone().into(), span: None }.pretty()
+        } else {
+            parens(
+                RcDoc::text("/")
+                    .append(RcDoc::space())
+                    .append(numer.pretty())
+                    .append(RcDoc::space())
+                    .append(denom.pretty()),
+            )            
+        }
     }
 }
 

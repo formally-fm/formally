@@ -289,7 +289,7 @@ impl Parse for VariableList {
             content.parse::<Token![#]>()?;
             let ident = content.parse()?;
             input.parse::<Token![*]>()?;
-            
+
             Ok(VariableList::Bound(ident))
         } else {
             let content;
@@ -522,8 +522,8 @@ impl ToTokens for Atom {
             Head::Real(lit) => {
                 let lit = &lit.to_string();
                 tokens.append_all(quote! {
-                    formally::smt::Term::Constant(
-                        formally::smt::Constant::Rational {
+                    formally::smt::macros::support::Term::Constant(
+                        formally::smt::macros::support::Constant::Rational {
                             value: #lit,
                             span: None
                         }

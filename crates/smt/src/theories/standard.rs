@@ -51,10 +51,12 @@ theories! {
 
         /// Logical conjunction.
         #[left_assoc]
+        #[commutative]
         fn and(Core::Bool(), Core::Bool()) -> Core::Bool();
 
         /// Logical disjunction.
         #[left_assoc]
+        #[commutative]
         fn or(Core::Bool(), Core::Bool()) -> Core::Bool();
 
         /// Logical exclusive disjunction.
@@ -77,6 +79,7 @@ theories! {
     /// The theory of reals.
     ///
     /// See [the official specification](https://smt-lib.org/theories-Reals.shtml).
+    #[simplify]
     pub Reals {
         /// The sort of real numbers.
         type Real;
@@ -93,11 +96,13 @@ theories! {
         /// Addition.
         #[name = "+"]
         #[left_assoc]
+        #[commutative]
         fn plus(Reals::Real(), Reals::Real()) -> Reals::Real();
 
         /// Multiplication.
         #[name = "*"]
         #[left_assoc]
+        #[commutative]
         fn mult(Reals::Real(), Reals::Real()) -> Reals::Real();
 
         /// Division.
@@ -146,11 +151,13 @@ theories! {
         /// Addition.
         #[name = "+"]
         #[left_assoc]
+        #[commutative]
         fn plus (Ints::Int(), Ints::Int()) -> Ints::Int();
 
         /// Multiplication.
         #[name = "*"]
         #[left_assoc]
+        #[commutative]
         fn mult (Ints::Int(), Ints::Int()) -> Ints::Int();
 
         /// Division.

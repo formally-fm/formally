@@ -36,10 +36,10 @@ use formally::{
 
 #[test]
 pub fn simplify() -> Result<()> {
-    let mut solver = Solver::new(&Config::default().logic("LIA"))?;
-    solver.declare(Declaration::constant("x", sort!(Int)))?;
-    solver.declare(Declaration::constant("y", sort!(Int)))?;
-    solver.declare(Declaration::constant("z", sort!(Int)))?;
+    let mut solver = Solver::new(&Config::default().logic("LRA"))?;
+    solver.declare(Declaration::constant("x", sort!(Real)))?;
+    solver.declare(Declaration::constant("y", sort!(Real)))?;
+    solver.declare(Declaration::constant("z", sort!(Real)))?;
 
     solver.declare(Declaration::constant("p", sort!(Bool)))?;
     solver.declare(Declaration::constant("q", sort!(Bool)))?;
@@ -48,7 +48,7 @@ pub fn simplify() -> Result<()> {
     let top = Core::True().into_term_in(&*solver.pool());
     let bottom = Core::False().into_term_in(&*solver.pool());
 
-    let mut term = solver.lookup(term!(+ x (+ y (* 4 y))), Role::Function)?;
+    let mut term = solver.lookup(term!(+ x (+ y (* 2.0 y) (* 4.0 y))), Role::Function)?;
     let mut term2 = solver.lookup(term!(and #top (or q #top) (not #bottom)), Role::Function)?;
 
     term = term.simplified(&*solver.pool());

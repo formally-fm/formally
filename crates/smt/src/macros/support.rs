@@ -153,7 +153,7 @@ impl ToTerm for Term<'_> {
                         span,
                     },
                     Constant::Rational { value, span } => smt::Constant::Rational {
-                        value: Arc::new(Rational::from_str_radix(value, 10).unwrap()),
+                        value: Arc::new(Rational::from_f64(value.parse().unwrap()).unwrap()),
                         span,
                     },
                 };

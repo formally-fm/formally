@@ -430,7 +430,9 @@ fn decl_static(theory: &syn::Ident, decl: &Attributed<Decl>) -> TokenStream {
 }
 
 fn is_custom_attr(attr: &syn::Attribute) -> bool {
-    get_name_from_attr(attr).is_some() || get_flag_from_attr(attr).is_some()
+    get_name_from_attr(attr).is_some()
+        || get_flag_from_attr(attr).is_some()
+        || is_commutative_from_attr(attr)
 }
 
 impl ToTokens for SortParam {

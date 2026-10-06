@@ -24,9 +24,9 @@
 
 use crate::formally;
 
-use formally::smt::theories::*;
+use formally::smt::{Rational, theories::*};
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[allow(clippy::mutable_key_type)]
 impl Simplify for Core {
@@ -115,5 +115,144 @@ impl Simplify for Core {
             }
             _ => term.clone(), // TODO: Boolean constant propagation for implications and xors
         }
+    }
+}
+
+impl Simplify for Reals {
+    fn simplify(&self, term: &Term, pool: &dyn TermPool) -> Term {
+        let Ok(atom) = RealsAtom::try_from(term) else {
+            return term.to_term_in(pool);
+        };
+
+        match atom {
+            RealsAtom::Unary_minus(arg) => {
+                match RealsAtom::try_from(arg) {
+                    // - (- x) = x
+                    Ok(RealsAtom::Unary_minus(arg)) => arg.clone(),
+                    Ok(RealsAtom::Plus(args)) => {
+                        let mut arguments = Vec::with_capacity(args.len());
+                        for arg in args {
+                            arguments.push(Reals.simplify(
+                                &Reals::unary_minus().call([arg.clone()]).into_term_in(pool),
+                                pool,
+                            ));
+                        }
+                        Reals::plus().call(arguments).into_term_in(pool)
+                    }
+                    // - (- 42) = 42
+                    _ if let TermKind::Constant(cnst) = arg.kind() => match cnst {
+                        Constant::Integer { .. } => {
+                            let value = cnst.to_integer().unwrap();
+                            if value < 0 {
+                                Constant::from(-value).into_term_in(pool)
+                            } else {
+                                term.clone()
+                            }
+                        }
+                        Constant::Rational { .. } => {
+                            let value = cnst.to_rational();
+                            if value < 0 {
+                                Constant::from(-value).into_term_in(pool)
+                            } else {
+                                term.clone()
+                            }
+                        }
+                    },
+                    _ => term.clone(),
+                }
+            }
+            RealsAtom::Minus(args) => {
+                // x - y - z = x + (- y) + (- z)
+                let mut arguments = Vec::with_capacity(args.len());
+                for (i, arg) in args.iter().enumerate() {
+                    if i == 0 {
+                        arguments.push(arg.clone());
+                    } else {
+                        arguments.push(Reals::minus().call([arg.clone()]).into_term_in(pool))
+                    }
+                }
+                let sum = Reals::plus().call(arguments).into_term_in(pool);
+
+                Reals.simplify(&sum, pool)
+            }
+            // collect scaled common factors together
+            RealsAtom::Plus(args) => {
+                #[allow(clippy::mutable_key_type)]
+                let mut factors = HashMap::new();
+                let mut arguments = Vec::with_capacity(args.len());
+                for arg in args {
+                    let (coefficient, factor) = self.coefficient(arg, pool);
+                    if let Some(c) = factors.get_mut(&factor) {
+                        *c += coefficient;
+                    } else {
+                        factors.insert(factor, coefficient);
+                    }
+                }
+
+                for (factor, coefficient) in factors {
+                    if coefficient == 1 {
+                        arguments.push(factor)
+                    } else {
+                        let coefficient = Constant::from(coefficient).into_term_in(pool);
+                        arguments.push(
+                            Reals::mult()
+                                .call([factor, coefficient])
+                                .into_term_in(pool)
+                                .simplified(pool),
+                        );
+                    }
+                }
+
+                if arguments.is_empty() {
+                    Constant::from(Rational::from(0)).into_term_in(pool)
+                } else if arguments.len() == 1 {
+                    arguments[0].clone()
+                } else {
+                    Reals::plus().call(arguments).into_term_in(pool)
+                }
+            }
+            RealsAtom::Mult(args) => {
+                if args.is_empty() {
+                    Constant::from(Rational::from(1)).into_term_in(pool)
+                } else if args.len() == 1 {
+                    args[0].clone()
+                } else {
+                    term.clone()
+                }
+            }
+            RealsAtom::Div(_) => term.clone(),
+            RealsAtom::Le(_) => term.clone(),
+            RealsAtom::Lt(_) => term.clone(),
+            RealsAtom::Ge(_) => term.clone(),
+            RealsAtom::Gt(_) => term.clone(),
+        }
+    }
+}
+
+impl Reals {
+    // this assumes there's a single constant factor in a multiplication because earlier
+    // simplification recursive pass has collapsed multiple constant factors together already.
+    fn coefficient(&self, term: &Term, pool: &dyn TermPool) -> (Rational, Term) {
+        let Ok(RealsAtom::Mult(args)) = RealsAtom::try_from(term) else {
+            return (Rational::from(1), term.clone());
+        };
+
+        let mut coefficient = None;
+        let mut arguments = Vec::with_capacity(args.len());
+        for arg in args {
+            if let TermKind::Constant(cnst) = arg.kind() {
+                coefficient = Some(cnst.to_rational());
+            } else {
+                arguments.push(arg.clone());
+            }
+        }
+
+        (
+            coefficient.unwrap_or(Rational::from(1)),
+            Reals::mult()
+                .call(arguments)
+                .into_term_in(pool)
+                .simplified(pool),
+        )
     }
 }
