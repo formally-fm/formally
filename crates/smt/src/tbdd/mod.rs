@@ -292,18 +292,12 @@ impl QE {
 
             eprintln!("traversing...");
             let calls = AtomicUsize::new(0);
-            let term = self.eliminate(target, body, &calls)?;
+            body = self.eliminate(target, body, &calls)?;
 
             eprintln!(
                 "traversed with {} QE calls completed!",
                 calls.load(Ordering::Relaxed)
             );
-
-            eprintln!("simplifying term...");
-            let term = term.simplified(&*self.pool);
-
-            eprintln!("compiling next bdd...");
-            body = self.bdd_seq(&term)?;
 
             self.print_atoms();
         }
@@ -325,7 +319,7 @@ impl QE {
 
                 match &block.target {
                     Some(target) => eprint!("- `{}` ", target.name()),
-                    None => eprint!("- unrelevant variables "),
+                    None => eprint!("- irrelevant variables "),
                 }
                 let len = block.len.load(Ordering::Relaxed);
                 let capacity = *block.capacity.read();
@@ -345,7 +339,14 @@ impl QE {
                             } else {
                                 eprint!("   ")
                             }
-                            atom.println(&mut std::io::stderr()).ok();
+                            let mut printed = Vec::new();
+                            atom.print(&mut printed).ok();
+                            let mut printed = String::from_utf8(printed).unwrap();
+                            if printed.len() > 60 {
+                                printed.truncate(60);
+                                printed.push_str("...");
+                            }
+                            eprintln!("{printed}");
                         }
                         None => {
                             eprintln!();
@@ -369,7 +370,7 @@ impl QE {
         target: &Variable,
         body: BCDDFunction,
         calls: &AtomicUsize,
-    ) -> Result<Term, Error> {
+    ) -> Result<BCDDFunction, Error> {
         self.eliminate_in(target, body, &DashMap::new(), calls)
     }
 
@@ -377,9 +378,9 @@ impl QE {
         &self,
         target: &Variable,
         body: BCDDFunction,
-        cache: &DashMap<BCDDFunction, Term>,
+        cache: &DashMap<BCDDFunction, BCDDFunction>,
         calls: &AtomicUsize,
-    ) -> Result<Term, Error> {
+    ) -> Result<BCDDFunction, Error> {
         if let Some(result) = cache.get(&body) {
             return Ok(result.clone());
         }
@@ -393,22 +394,17 @@ impl QE {
                     let level = node.level();
                     let var = m.level_to_var(level);
 
-                    Ok((level, var))
+                    Ok((level, BCDDFunction::var(m, var)?))
                 })?;
 
-                // let total = self.manager.with_manager_shared(|m| m.num_levels());
                 let cutoff = self.cutoff(target).unwrap();
-                // eprintln!("eliminating bdd at level {level}/{total}, cutoff {cutoff}...");
                 if level < cutoff {
                     let (high, low) = self.manager.workers().join(
                         || self.eliminate_in(target, high, cache, calls),
                         || self.eliminate_in(target, low, cache, calls),
                     );
 
-                    let guard = self.atoms.by_index(&guard).unwrap();
-                    Core::ite()
-                        .call([guard, high?, low?])
-                        .into_term_in(&*self.pool)
+                    guard.ite(&high?, &low?)?
                 } else {
                     let quant = Quantified {
                         quantifier: smt::Quantifier::Exists,
@@ -422,18 +418,25 @@ impl QE {
                     let mut solver = Solver::with_manager(&Config::default(), manager)?;
                     solver.import(self.env.clone())?;
 
-                    //eprint!("invoking QE backend...");
-                    let eliminated = solver.qe(quant)?;
-                    calls.fetch_add(1, Ordering::Relaxed);
-                    //eprintln!("QE backend invocation succeeded!");
+                    let calls = calls.fetch_add(1, Ordering::Relaxed);
+                    eprintln!("{calls}th QE call...");
+                    let eliminated = solver.qe(quant)?.simplified(&*self.pool);
 
-                    eliminated
+                    if eliminated == true {
+                        eprintln!("{calls}th QE call completed with true!");
+                        self.top()
+                    } else if eliminated == false {
+                        eprintln!("{calls}th QE call completed with false!");
+                        self.bottom()
+                    } else {
+                        eprintln!("{calls}th QE call completed!");
+                        let var = self.atom(eliminated);
+                        self.manager
+                            .with_manager_shared(|m| BCDDFunction::var(m, var))?
+                    }
                 }
             }
-            None => body.with_manager_shared(|_, edge| match edge.tag() {
-                EdgeTag::None => Core::True().into_term_in(&*self.pool),
-                EdgeTag::Complemented => Core::False().into_term_in(&*self.pool),
-            }),
+            None => body.clone(),
         };
 
         cache.insert(body, result.clone());
@@ -723,7 +726,8 @@ impl QE {
 
     #[allow(clippy::mutable_key_type)]
     fn term(&self, bdd: &BCDDFunction) -> Term {
-        self.term_in(bdd, &mut HashMap::new()).simplified(&*self.pool)
+        self.term_in(bdd, &mut HashMap::new())
+            .simplified(&*self.pool)
     }
 
     #[allow(clippy::mutable_key_type)]
