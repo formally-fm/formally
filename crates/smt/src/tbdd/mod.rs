@@ -270,13 +270,10 @@ impl QE {
 
         self.setup(quantifiers);
 
-        eprintln!("simplifying term...");
-        let body = body.simplified(&*self.pool);
-
         eprintln!("compiling the initial bdd...");
-        let mut body = self.bdd_seq(&body)?;
+        let mut body = self.bdd_seq(body)?;
 
-        self.print_atoms();
+        // self.print_atoms();
 
         for Quantifier { quantifier, target } in quantifiers {
             match quantifier {
@@ -299,7 +296,7 @@ impl QE {
                 calls.load(Ordering::Relaxed)
             );
 
-            self.print_atoms();
+            // self.print_atoms();
         }
 
         if prevq == smt::Quantifier::Forall {
@@ -409,7 +406,7 @@ impl QE {
                     let quant = Quantified {
                         quantifier: smt::Quantifier::Exists,
                         variables: Arc::new([target.clone()]),
-                        body: self.term(&body).simplified(&*self.pool),
+                        body: self.term(&body),
                         span: None,
                     }
                     .into_term_in(&*self.pool);
@@ -418,18 +415,18 @@ impl QE {
                     let mut solver = Solver::with_manager(&Config::default(), manager)?;
                     solver.import(self.env.clone())?;
 
-                    let calls = calls.fetch_add(1, Ordering::Relaxed);
-                    eprintln!("{calls}th QE call...");
-                    let eliminated = solver.qe(quant)?.simplified(&*self.pool);
+                    let _calls = calls.fetch_add(1, Ordering::Relaxed);
+                    // eprintln!("{calls}th QE call...");
+                    let eliminated = solver.qe(quant)?;
 
                     if eliminated == true {
-                        eprintln!("{calls}th QE call completed with true!");
+                        // eprintln!("{calls}th QE call completed with true!");
                         self.top()
                     } else if eliminated == false {
-                        eprintln!("{calls}th QE call completed with false!");
+                        // eprintln!("{calls}th QE call completed with false!");
                         self.bottom()
                     } else {
-                        eprintln!("{calls}th QE call completed!");
+                        // eprintln!("{calls}th QE call completed!");
                         let var = self.atom(eliminated);
                         self.manager
                             .with_manager_shared(|m| BCDDFunction::var(m, var))?
@@ -727,7 +724,6 @@ impl QE {
     #[allow(clippy::mutable_key_type)]
     fn term(&self, bdd: &BCDDFunction) -> Term {
         self.term_in(bdd, &mut HashMap::new())
-            .simplified(&*self.pool)
     }
 
     #[allow(clippy::mutable_key_type)]
