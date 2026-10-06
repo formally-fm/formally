@@ -27,6 +27,8 @@ use formally::io::print::*;
 
 use crate::smtlib::ast::*;
 
+use std::sync::Arc;
+
 impl Pretty for Numeral {
     fn pretty(&self) -> RcDoc<'static> {
         if *self.value >= 0 {
@@ -44,13 +46,19 @@ impl Pretty for Numeral {
 impl Pretty for Decimal {
     fn pretty(&self) -> RcDoc<'static> {
         if *self.value >= 0 {
-            RcDoc::text(self.value.to_f64().to_string())
-        } else {
-            parens(
-                RcDoc::text("-")
+            let num = parens(
+                RcDoc::text("/")
                     .append(RcDoc::space())
-                    .append(RcDoc::text((-(*self.value).clone()).to_f64().to_string())),
-            )
+                    .append(RcDoc::as_string(self.value.numer()))
+                    .append(RcDoc::space())
+                    .append(RcDoc::as_string(self.value.denom())),
+            );
+            parens(RcDoc::text("-").append(RcDoc::space()).append(num))
+        } else {
+            Decimal {
+                value: Arc::new(-(*self.value).clone()),
+                span: None,
+            }.pretty()
         }
     }
 }

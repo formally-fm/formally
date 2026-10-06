@@ -129,7 +129,7 @@ pub trait Print {
         // {
         //     self.render(target, size.cols)
         // } else {
-        //     self.render(target, u16::MAX)    
+        //     self.render(target, u16::MAX)
         // }
     }
 

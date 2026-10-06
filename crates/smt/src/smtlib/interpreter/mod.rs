@@ -371,7 +371,7 @@ impl Interpreter {
         let term = if let Some(jobs) = state.settings.jobs {
             tbdd::qe(
                 &term,
-                &*state.pool,
+                state.pool.clone(),
                 state.solver.env().clone(),
                 state.settings.backend,
                 jobs,

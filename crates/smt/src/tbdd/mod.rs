@@ -31,7 +31,7 @@ use formally::{
     io::print::*,
     smt::{
         self, Config, Env, Function, FunctionRef, Quantified, Solver, Sort, Term, TermKind,
-        TermPool, ToTerm, Variable,
+        TermManager, TermPool, ToTerm, Variable,
         backends::Backend,
         theories::{Core, CoreAtom},
     },
@@ -55,6 +55,7 @@ use rayon::prelude::*;
 use thiserror::Error;
 use transitive::Transitive;
 
+use std::ops::Deref;
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -94,7 +95,7 @@ impl Diagnosable for Error {}
 
 pub fn qe(
     term: &Term,
-    pool: &(dyn TermPool + Send + Sync),
+    pool: Arc<dyn TermPool + Send + Sync>,
     env: Env,
     backend: &'static dyn Backend,
     jobs: Option<NonZero<u32>>,
@@ -105,7 +106,7 @@ pub fn qe(
 #[allow(clippy::mutable_key_type)]
 fn qe_in(
     term: &Term,
-    pool: &(dyn TermPool + Send + Sync),
+    pool: Arc<dyn TermPool + Send + Sync>,
     env: Env,
     backend: &'static dyn Backend,
     jobs: Option<NonZero<u32>>,
@@ -125,11 +126,11 @@ fn qe_in(
                     arguments: atom
                         .arguments
                         .iter()
-                        .map(|arg| qe_in(arg, pool, env.clone(), backend, jobs, bindings))
+                        .map(|arg| qe_in(arg, pool.clone(), env.clone(), backend, jobs, bindings))
                         .try_collect()?,
                     span: atom.span(),
                 }
-                .into_term_in(pool))
+                .into_term_in(&*pool))
             }
         }
         TermKind::Quantified(_) => {
@@ -147,7 +148,7 @@ fn qe_in(
             }
             quantifiers.reverse();
 
-            let body = qe_in(&body, pool, env.clone(), backend, jobs, bindings)?;
+            let body = qe_in(&body, pool.clone(), env.clone(), backend, jobs, bindings)?;
             QE::new(pool, env, backend, jobs).qe(&quantifiers, &body)
         }
         TermKind::Let(let_) => {
@@ -155,7 +156,14 @@ fn qe_in(
             for bind in &*let_.bindings {
                 nested.insert(
                     bind.variable.clone(),
-                    qe_in(&bind.def, pool, env.clone(), backend, jobs, bindings)?,
+                    qe_in(
+                        &bind.def,
+                        pool.clone(),
+                        env.clone(),
+                        backend,
+                        jobs,
+                        bindings,
+                    )?,
                 );
             }
             qe_in(&let_.body, pool, env, backend, jobs, &nested)
@@ -175,11 +183,11 @@ struct OrderBlock {
     capacity: RwLock<u32>,
 }
 
-struct QE<'p> {
+struct QE {
     manager: BCDDManagerRef,
     top: BCDDFunction,
     bottom: BCDDFunction,
-    pool: &'p (dyn TermPool + Send + Sync),
+    pool: Arc<dyn TermPool + Send + Sync>,
     env: Env,
     backend: &'static dyn Backend,
     atoms: SyncBiMap<Term, VarNo>,
@@ -188,13 +196,13 @@ struct QE<'p> {
     free: DashMap<Term, BitSet>,
 }
 
-impl<'p> QE<'p> {
+impl QE {
     pub fn new(
-        pool: &'p (dyn TermPool + Send + Sync),
+        pool: Arc<dyn TermPool + Send + Sync>,
         env: Env,
         backend: &'static dyn Backend,
         jobs: Option<NonZero<u32>>,
-    ) -> QE<'p> {
+    ) -> QE {
         let jobs = jobs.map(NonZero::get).unwrap_or_else(|| {
             std::thread::available_parallelism()
                 .map(NonZero::get)
@@ -265,7 +273,7 @@ impl<'p> QE<'p> {
         self.setup(quantifiers);
 
         eprintln!("simplifying term...");
-        let body = body.simplified(self.pool);
+        let body = body.simplified(&*self.pool);
 
         eprintln!("compiling the initial bdd...");
         let mut body = self.bdd_seq(&body)?;
@@ -282,8 +290,6 @@ impl<'p> QE<'p> {
             }
             prevq = *quantifier;
 
-            // self.print_atoms();
-
             eprintln!("traversing...");
             let calls = AtomicUsize::new(0);
             let term = self.eliminate(target, body, &calls)?;
@@ -294,7 +300,7 @@ impl<'p> QE<'p> {
             );
 
             eprintln!("simplifying term...");
-            let term = term.simplified(self.pool);
+            let term = term.simplified(&*self.pool);
 
             eprintln!("compiling next bdd...");
             body = self.bdd_seq(&term)?;
@@ -317,6 +323,8 @@ impl<'p> QE<'p> {
         self.manager.with_manager_exclusive(|m| {
             eprintln!("atoms:");
             for block in &self.order {
+                let mut set: HashMap<Vec<u8>, Term> = HashMap::new();
+
                 match &block.target {
                     Some(target) => eprint!("- `{}` ", target.name()),
                     None => eprint!("- unrelevant variables "),
@@ -393,7 +401,7 @@ impl<'p> QE<'p> {
                 // let total = self.manager.with_manager_shared(|m| m.num_levels());
                 let cutoff = self.cutoff(target);
                 // eprintln!("eliminating bdd at level {level}/{total}, cutoff {cutoff}...");
-                if level < cutoff {
+                if level <= cutoff {
                     let (high, low) = self.manager.workers().join(
                         || self.eliminate_in(target, high, cache, calls),
                         || self.eliminate_in(target, low, cache, calls),
@@ -402,7 +410,7 @@ impl<'p> QE<'p> {
                     let guard = self.atoms.by_index(&guard).unwrap();
                     Core::ite()
                         .call([guard, high?, low?])
-                        .into_term_in(self.pool)
+                        .into_term_in(&*self.pool)
                 } else {
                     let quant = Quantified {
                         quantifier: smt::Quantifier::Exists,
@@ -410,9 +418,10 @@ impl<'p> QE<'p> {
                         body: self.term(&body),
                         span: None,
                     }
-                    .into_term_in(self.pool);
+                    .into_term_in(&*self.pool);
 
-                    let mut solver = Solver::with_backend(&Config::default(), self.backend)?;
+                    let manager = TermManager::with_pool(self.backend, self.pool.clone())?;
+                    let mut solver = Solver::with_manager(&Config::default(), manager)?;
                     solver.import(self.env.clone())?;
 
                     //eprint!("invoking QE backend...");
@@ -424,8 +433,8 @@ impl<'p> QE<'p> {
                 }
             }
             None => body.with_manager_shared(|_, edge| match edge.tag() {
-                EdgeTag::None => Core::True().into_term_in(self.pool),
-                EdgeTag::Complemented => Core::False().into_term_in(self.pool),
+                EdgeTag::None => Core::True().into_term_in(&*self.pool),
+                EdgeTag::Complemented => Core::False().into_term_in(&*self.pool),
             }),
         };
 
@@ -741,11 +750,13 @@ impl<'p> QE<'p> {
                 let high = self.term_in(&high, cache);
                 let low = self.term_in(&low, cache);
 
-                Core::ite().call([guard, high, low]).into_term_in(self.pool)
+                Core::ite()
+                    .call([guard, high, low])
+                    .into_term_in(&*self.pool)
             }
             None => bdd.with_manager_shared(|_, edge| match edge.tag() {
-                EdgeTag::None => Core::True().into_term_in(self.pool),
-                EdgeTag::Complemented => Core::False().into_term_in(self.pool),
+                EdgeTag::None => Core::True().into_term_in(&*self.pool),
+                EdgeTag::Complemented => Core::False().into_term_in(&*self.pool),
             }),
         };
 
