@@ -48,7 +48,7 @@ pub fn simplify() -> Result<()> {
     let top = Core::True().into_term_in(&*solver.pool());
     let bottom = Core::False().into_term_in(&*solver.pool());
 
-    let mut term = solver.lookup(term!(+ x (+ y (* 2.0 y) (* 4.0 y))), Role::Function)?;
+    let mut term = solver.lookup(term!(+ x (+ y (* 2.0 y) (* 4.0 2.0 y))), Role::Function)?;
     let mut term2 = solver.lookup(term!(and #top (or q #top) (not #bottom)), Role::Function)?;
 
     term = term.simplified(&*solver.pool());

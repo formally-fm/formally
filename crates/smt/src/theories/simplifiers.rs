@@ -212,12 +212,25 @@ impl Simplify for Reals {
                 }
             }
             RealsAtom::Mult(args) => {
-                if args.is_empty() {
+                let mut coefficient = Rational::from(1);
+                let mut arguments = Vec::with_capacity(args.len());
+                for arg in args {
+                    if let TermKind::Constant(cnst) = arg.kind() {
+                        coefficient *= cnst.to_rational();
+                    } else {
+                        arguments.push(arg.clone())
+                    }
+                }
+                if coefficient != 1 {
+                    arguments.push(Constant::from(coefficient).into_term_in(pool))
+                }
+
+                if arguments.is_empty() {
                     Constant::from(Rational::from(1)).into_term_in(pool)
-                } else if args.len() == 1 {
-                    args[0].clone()
+                } else if arguments.len() == 1 {
+                    arguments[0].clone()
                 } else {
-                    term.clone()
+                    Reals::mult().call(arguments).into_term_in(pool)
                 }
             }
             RealsAtom::Div(_) => term.clone(),
