@@ -55,7 +55,6 @@ use rayon::prelude::*;
 use thiserror::Error;
 use transitive::Transitive;
 
-use std::ops::Deref;
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -258,13 +257,12 @@ impl QE {
         })
     }
 
-    fn cutoff(&self, variable: &Variable) -> LevelNo {
-        match self.variables.by_key(variable) {
-            Some(index) => self
-                .manager
-                .with_manager_shared(|m| m.var_to_level(self.order[index + 1].start)),
-            None => 0,
-        }
+    fn cutoff(&self, variable: &Variable) -> Option<LevelNo> {
+        let index = self.variables.by_key(variable)?;
+        let var = self.order[index + 1].start;
+        let level = self.manager.with_manager_shared(|m| m.var_to_level(var));
+
+        Some(level)
     }
 
     fn qe_in(&mut self, quantifiers: &[Quantifier], body: &Term) -> Result<Term, Error> {
@@ -277,6 +275,8 @@ impl QE {
 
         eprintln!("compiling the initial bdd...");
         let mut body = self.bdd_seq(&body)?;
+
+        self.print_atoms();
 
         for Quantifier { quantifier, target } in quantifiers {
             match quantifier {
@@ -306,8 +306,6 @@ impl QE {
             body = self.bdd_seq(&term)?;
 
             self.print_atoms();
-
-            eprintln!("traversed!");
         }
 
         if prevq == smt::Quantifier::Forall {
@@ -399,9 +397,9 @@ impl QE {
                 })?;
 
                 // let total = self.manager.with_manager_shared(|m| m.num_levels());
-                let cutoff = self.cutoff(target);
+                let cutoff = self.cutoff(target).unwrap();
                 // eprintln!("eliminating bdd at level {level}/{total}, cutoff {cutoff}...");
-                if level <= cutoff {
+                if level < cutoff {
                     let (high, low) = self.manager.workers().join(
                         || self.eliminate_in(target, high, cache, calls),
                         || self.eliminate_in(target, low, cache, calls),
