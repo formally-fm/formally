@@ -152,9 +152,11 @@ impl ToTerm for Term<'_> {
                         value: Arc::new(Integer::from(value)),
                         span,
                     },
-                    Constant::Rational { value, span } => smt::Constant::Rational {
-                        value: Arc::new(Rational::from_f64(value.parse().unwrap()).unwrap()),
-                        span,
+                    Constant::Rational { value, span } => {
+                        smt::Constant::Rational {
+                            value: Arc::new(Rational::from_f64(value.parse().unwrap()).unwrap()),
+                            span,
+                        }
                     },
                 };
                 TermKind::Constant(c).into_term_in(pool)

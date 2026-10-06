@@ -151,23 +151,15 @@ impl Simplify for Reals {
                             .into_term_in(pool)
                             .simplified(pool)
                     }
-                    // - (- 42) = 42
+                    // - (- 42) = 42 and (- 42) = -42
                     _ if let TermKind::Constant(cnst) = arg.kind() => match cnst {
                         Constant::Integer { .. } => {
                             let value = cnst.to_integer().unwrap();
-                            if value <= 0 {
-                                Constant::from(-value).into_term_in(pool)
-                            } else {
-                                term.clone()
-                            }
+                            Constant::from(-value).into_term_in(pool)
                         }
                         Constant::Rational { .. } => {
                             let value = cnst.to_rational();
-                            if value <= 0 {
-                                Constant::from(-value).into_term_in(pool)
-                            } else {
-                                term.clone()
-                            }
+                            Constant::from(-value).into_term_in(pool)
                         }
                     },
                     _ => term.clone(),
@@ -206,25 +198,23 @@ impl Simplify for Reals {
                 }
 
                 for (factor, coefficient) in factors {
-                    if coefficient == 1 {
-                        if !matches!(factor.kind(), TermKind::Constant(cnst) if cnst.to_rational() == 0)
-                        {
-                            arguments.push(factor)
+                    match factor {
+                        Some(factor) => {
+                            if coefficient == 1 {
+                                arguments.push(factor)
+                            } else {
+                                let coefficient = Constant::from(coefficient).into_term_in(pool);
+                                arguments.push(
+                                    Reals::mult()
+                                        .call([factor, coefficient])
+                                        .into_term_in(pool)
+                                        .simplified(pool),
+                                );
+                            }
                         }
-                    } else {
-                        let coefficient = Constant::from(coefficient).into_term_in(pool);
-                        arguments.push(
-                            Reals::mult()
-                                .call([factor, coefficient])
-                                .into_term_in(pool)
-                                .simplified(pool),
-                        );
+                        None => arguments.push(Constant::from(coefficient).into_term_in(pool)),
                     }
                 }
-
-                let arguments = arguments.into_iter().filter(
-                    |arg| !matches!(arg.kind(), TermKind::Constant(cnst) if cnst.to_rational() == 0),
-                ).collect_vec();
 
                 if arguments.is_empty() {
                     Constant::from(Rational::from(0)).into_term_in(pool)
@@ -248,10 +238,6 @@ impl Simplify for Reals {
                     arguments.push(Constant::from(coefficient).into_term_in(pool))
                 }
 
-                let arguments = arguments.into_iter().filter(
-                    |arg| !matches!(arg.kind(), TermKind::Constant(cnst) if cnst.to_rational() == 1),
-                ).collect_vec();
-
                 if arguments.is_empty() {
                     Constant::from(Rational::from(1)).into_term_in(pool)
                 } else if arguments.len() == 1 {
@@ -263,10 +249,11 @@ impl Simplify for Reals {
             // lhs <= rhs ---> lhs - rhs <= 0
             RealsAtom::Le(args) => match args {
                 [left, right] => {
-                    let lhs = Reals::minus()
+                    let mut lhs = Reals::minus()
                         .call([left.clone(), right.clone()])
                         .into_term_in(pool)
                         .simplified(pool);
+                    lhs = Reals.lcm(&lhs, pool);
                     let zero = Constant::from(Rational::from(0)).into_term_in(pool);
                     Reals::le().call([lhs, zero]).into_term_in(pool)
                 }
@@ -275,10 +262,11 @@ impl Simplify for Reals {
             // lhs < rhs ---> lhs - rhs < 0
             RealsAtom::Lt(args) => match args {
                 [left, right] => {
-                    let lhs = Reals::minus()
+                    let mut lhs = Reals::minus()
                         .call([left.clone(), right.clone()])
                         .into_term_in(pool)
                         .simplified(pool);
+                    lhs = Reals.lcm(&lhs, pool);
                     let zero = Constant::from(Rational::from(0)).into_term_in(pool);
                     Reals::lt().call([lhs, zero]).into_term_in(pool)
                 }
@@ -304,7 +292,25 @@ impl Simplify for Reals {
                 ),
                 _ => term.clone(),
             },
-            RealsAtom::Div(_) => term.clone(),
+            RealsAtom::Div(args) => {
+                let constants = args
+                    .iter()
+                    .filter_map(|arg| {
+                        if let TermKind::Constant(cnst) = arg.kind() {
+                            Some(cnst.to_rational())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect_vec();
+
+                if constants.len() < args.len() {
+                    term.clone()
+                } else {
+                    let result = constants.into_iter().reduce(|x, y| x / y).unwrap();
+                    Constant::from(result).into_term_in(pool)
+                }
+            }
         }
     }
 }
@@ -312,9 +318,12 @@ impl Simplify for Reals {
 impl Reals {
     // this assumes there's a single constant factor in a multiplication because earlier
     // simplification recursive pass has collapsed multiple constant factors together already.
-    fn coefficient(&self, term: &Term, pool: &dyn TermPool) -> (Rational, Term) {
+    fn coefficient(&self, term: &Term, pool: &dyn TermPool) -> (Rational, Option<Term>) {
         let Ok(RealsAtom::Mult(args)) = RealsAtom::try_from(term) else {
-            return (Rational::from(1), term.clone());
+            if let TermKind::Constant(cnst) = term.kind() {
+                return (cnst.to_rational(), None);
+            }
+            return (Rational::from(1), Some(term.clone()));
         };
 
         let mut coefficient = None;
@@ -329,10 +338,57 @@ impl Reals {
 
         (
             coefficient.unwrap_or(Rational::from(1)),
-            Reals::mult()
-                .call(arguments)
-                .into_term_in(pool)
-                .simplified(pool),
+            Some(
+                Reals::mult()
+                    .call(arguments)
+                    .into_term_in(pool)
+                    .simplified(pool),
+            ),
         )
+    }
+
+    fn lcm(&self, sum: &Term, pool: &dyn TermPool) -> Term {
+        let Ok(RealsAtom::Plus(args)) = RealsAtom::try_from(sum) else {
+            return sum.clone();
+        };
+
+        let mut factors = Vec::new();
+        for arg in args {
+            factors.push(self.coefficient(arg, pool));
+        }
+
+        let mut lcm = Integer::from(1);
+        for (c, _) in &factors {
+            lcm = lcm.lcm(c.denom());
+        }
+
+        for (c, _) in &mut factors {
+            *c = Rational::from(c.numer() * (lcm.clone() / c.denom()));
+        }
+
+        let mut arguments = Vec::new();
+        for (coefficient, factor) in factors {
+            match factor {
+                Some(factor) => {
+                    if coefficient != 1 {
+                        let coefficient = Constant::from(coefficient).into_term_in(pool);
+                        arguments.push(
+                            Reals::mult()
+                                .call([coefficient, factor])
+                                .into_term_in(pool)
+                                .simplified(pool),
+                        )
+                    } else {
+                        arguments.push(factor)
+                    }
+                }
+                None => arguments.push(Constant::from(coefficient).into_term_in(pool)),
+            }
+        }
+
+        Reals::plus()
+            .call(arguments)
+            .into_term_in(pool)
+            .simplified(pool)
     }
 }

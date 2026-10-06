@@ -50,7 +50,10 @@ pub fn simplify() -> Result<()> {
 
     let mut term = solver.lookup(term!(+ x (+ y (* 2.0 y) (* 4.0 2.0 y))), Role::Function)?;
     let mut term2 = solver.lookup(term!(and #top (or q #top) (not #bottom)), Role::Function)?;
-    let mut term3 = solver.lookup(term!(+ (- (+ (+ x y) (+ x y))) z), Role::Function)?;
+    let mut term3 = solver.lookup(
+        term!(<= (+ (/ 2 5) (* (/ 3 5) x) (* (/ 2 7) y)) 0.0),
+        Role::Function,
+    )?;
 
     term = term.simplified(&*solver.pool());
     term2 = term2.simplified(&*solver.pool());
