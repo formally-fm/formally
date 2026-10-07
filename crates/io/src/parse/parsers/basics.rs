@@ -55,7 +55,9 @@ where
     Out: 'c,
     F: 'c + Fn() -> Parser<'c, Out>,
 {
-    Parser::new(move |state: &mut State| f().parse_from(state))
+    Parser::new(move |state: &mut State| {
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || f().parse_from(state))
+    })
 }
 
 /// Utility to create recursive parsers.
