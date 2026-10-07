@@ -28,8 +28,7 @@ use dashmap::{DashMap, Entry};
 use std::{
     collections::HashMap,
     hash::Hash,
-    ops::BitOrAssign,
-    ops::{Deref, DerefMut},
+    ops::{BitAnd, BitOrAssign, Deref, DerefMut},
 };
 
 #[derive(Clone)]
@@ -239,6 +238,17 @@ impl BitOrAssign for BitSet {
             self.bits.resize(rhs.len(), false);
         }
         self.bits |= rhs.bits
+    }
+}
+
+impl BitAnd<&BitSet> for BitSet {
+    type Output = BitSet;
+
+    fn bitand(self, rhs: &BitSet) -> Self::Output {
+        let mut lhs = self.clone();
+        lhs.bits &= &rhs.bits;
+
+        lhs
     }
 }
 

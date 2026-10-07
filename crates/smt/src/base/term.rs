@@ -521,7 +521,7 @@ impl Term {
                 }
 
                 let atom = Atom {
-                    head: atom.head.clone(),
+                    head: atom.head.clone().over(None),
                     arguments: Arc::from(arguments.into_boxed_slice()),
                     span: None,
                 };

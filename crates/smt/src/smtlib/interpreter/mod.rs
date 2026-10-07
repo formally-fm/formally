@@ -367,7 +367,6 @@ impl Interpreter {
         let term = Interpreter::term_to_smt(&state.solver, getqe.term)?;
         let term = state.solver.lookup(term, smt::Role::Function)?;
 
-        eprintln!("QE starting...");
         let term = if let Some(jobs) = state.settings.jobs {
             tbdd::qe(
                 &term,
@@ -380,9 +379,7 @@ impl Interpreter {
             state.solver.qe(term)?
         };
 
-        eprintln!("QE finished, collecting shared subterms...");
         let term = smt::Let::collect(&term, &*state.pool)?;
-        eprintln!("collected!");
 
         let term = Box::new(ast::Term::from(term));
         Interpreter::response(

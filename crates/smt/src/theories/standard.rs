@@ -81,7 +81,6 @@ theories! {
     /// The theory of reals.
     ///
     /// See [the official specification](https://smt-lib.org/theories-Reals.shtml).
-    #[simplify]
     pub Reals {
         /// The sort of real numbers.
         type Real;

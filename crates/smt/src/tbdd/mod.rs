@@ -39,8 +39,8 @@ use formally::{
 };
 
 use oxidd::{
-    BooleanFunction as _, Function as _, HasLevel, HasWorkers, LevelNo, Manager as _, ManagerRef,
-    Node, VarNo, WorkerPool,
+    BooleanFunction as _, BooleanFunctionQuant, Function as _, HasLevel, HasWorkers, LevelNo,
+    Manager as _, ManagerRef, Node, VarNo, WorkerPool,
     bcdd::{BCDDFunction, BCDDManagerRef},
     error::OutOfMemory,
 };
@@ -51,7 +51,6 @@ use oxidd_rules_bdd::complement_edge::EdgeTag;
 use dashmap::DashMap;
 use itertools::Itertools;
 use parking_lot::RwLock;
-use rayon::prelude::*;
 use thiserror::Error;
 use transitive::Transitive;
 
@@ -64,7 +63,6 @@ use std::{
         atomic::{AtomicU32, AtomicUsize, Ordering},
     },
 };
-// type Manager<'m> = <BCDDFunction as oxidd::Function>::Manager<'m>;
 
 #[derive(Debug, Error, Located, Transitive)]
 #[allow(clippy::duplicated_attributes)]
@@ -182,6 +180,12 @@ struct OrderBlock {
     capacity: RwLock<u32>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BddConstruction {
+    Coarse,
+    Fine,
+}
+
 struct QE {
     manager: BCDDManagerRef,
     top: BCDDFunction,
@@ -190,9 +194,10 @@ struct QE {
     env: Env,
     backend: &'static dyn Backend,
     atoms: SyncBiMap<Term, VarNo>,
+    free: DashMap<Term, BitSet>,
     variables: BiMap<Variable, usize>,
     order: Vec<OrderBlock>,
-    free: DashMap<Term, BitSet>,
+    booleans: BitSet,
 }
 
 impl QE {
@@ -217,9 +222,10 @@ impl QE {
             env,
             backend,
             atoms: SyncBiMap::new(),
+            free: DashMap::new(),
             variables: BiMap::new(),
             order: Vec::new(),
-            free: DashMap::new(),
+            booleans: BitSet::new(),
         }
     }
 
@@ -245,6 +251,9 @@ impl QE {
             // which conceptually similar to how also levels in the BDD are higher.
             for (index, q) in quantifiers.iter().rev().enumerate() {
                 self.variables.insert(q.target.clone(), index);
+                if *q.target.sort() == Core::Bool() {
+                    self.booleans.set(index, true);
+                }
 
                 let vars = m.add_vars(BLOCK);
                 self.order.push(OrderBlock {
@@ -270,37 +279,35 @@ impl QE {
 
         self.setup(quantifiers);
 
-        eprintln!("compiling the initial bdd...");
-        let mut body = self.bdd_seq(body)?;
-
-        // self.print_atoms();
+        // eprintln!("compiling the initial bdd...");
+        let mut body = self.bdd(body, BddConstruction::Fine)?;
 
         for Quantifier { quantifier, target } in quantifiers {
-            match quantifier {
-                smt::Quantifier::Forall => eprintln!("eliminating forall {}", target.name()),
-                smt::Quantifier::Exists => eprintln!("eliminating exists {}", target.name()),
-            }
+            // match quantifier {
+            //     smt::Quantifier::Forall => eprint!("eliminating forall {}... ", target.name()),
+            //     smt::Quantifier::Exists => eprint!("eliminating exists {}... ", target.name()),
+            // }
 
             if prevq != *quantifier {
-                eprintln!("switching quantifiers, negating body...");
                 body = body.not()?;
             }
             prevq = *quantifier;
 
-            eprintln!("traversing...");
-            let calls = AtomicUsize::new(0);
-            body = self.eliminate(target, body, &calls)?;
+            if *target.sort() == Core::Bool() {
+                body = self.project(target, body)?;
+                // eprintln!("eliminated with Boolean projection!");
+            } else {
+                let calls = AtomicUsize::new(0);
+                body = self.eliminate(target, body, &calls)?;
 
-            eprintln!(
-                "traversed with {} QE calls completed!",
-                calls.load(Ordering::Relaxed)
-            );
-
-            // self.print_atoms();
+                // eprintln!(
+                //     "eliminated with {} QE calls!",
+                //     calls.load(Ordering::Relaxed)
+                // );
+            }
         }
 
         if prevq == smt::Quantifier::Forall {
-            eprintln!("final quantifier was universal, negating result...");
             body = body.not()?;
         }
 
@@ -312,8 +319,6 @@ impl QE {
         self.manager.with_manager_exclusive(|m| {
             eprintln!("atoms:");
             for block in &self.order {
-                let mut set: HashMap<Vec<u8>, Term> = HashMap::new();
-
                 match &block.target {
                     Some(target) => eprint!("- `{}` ", target.name()),
                     None => eprint!("- irrelevant variables "),
@@ -360,6 +365,18 @@ impl QE {
 
     fn bottom(&self) -> BCDDFunction {
         self.bottom.clone()
+    }
+
+    fn project(&self, target: &Variable, body: BCDDFunction) -> Result<BCDDFunction, Error> {
+        debug_assert_eq!(*target.sort(), Core::Bool());
+
+        let target = target.into_term_in(&*self.pool);
+        let var = self.atoms.by_key(&target).unwrap();
+        let var = self
+            .manager
+            .with_manager_shared(|m| BCDDFunction::var(m, var))?;
+
+        Ok(body.exists(&var)?)
     }
 
     fn eliminate(
@@ -416,21 +433,13 @@ impl QE {
                     solver.import(self.env.clone())?;
 
                     let _calls = calls.fetch_add(1, Ordering::Relaxed);
-                    // eprintln!("{calls}th QE call...");
+                    // eprint!("{calls}th QE call: ");
+                    // quant.println(&mut std::io::stderr()).ok();
                     let eliminated = solver.qe(quant)?;
+                    // eprint!("{calls}th QE result: ");
+                    // eliminated.println(&mut std::io::stderr()).ok();
 
-                    if eliminated == true {
-                        // eprintln!("{calls}th QE call completed with true!");
-                        self.top()
-                    } else if eliminated == false {
-                        // eprintln!("{calls}th QE call completed with false!");
-                        self.bottom()
-                    } else {
-                        // eprintln!("{calls}th QE call completed!");
-                        let var = self.atom(eliminated);
-                        self.manager
-                            .with_manager_shared(|m| BCDDFunction::var(m, var))?
-                    }
+                    self.bdd(&eliminated, BddConstruction::Coarse)?
                 }
             }
             None => body.clone(),
@@ -452,7 +461,7 @@ impl QE {
     // We need basically the same logic of a vector for each block: cutoff, len, capacity.
     // For the initial configuration see setup()
     fn atom(&self, term: Term) -> VarNo {
-        let var = self.atoms.by_key_or_insert(term, |term| {
+        self.atoms.by_key_or_insert(term, |term| {
             // block zero is for atoms mentioning no variables to be eliminated.
             // other blocks are at variable's index + 1
             let earliest = match self.earliest(term) {
@@ -501,11 +510,7 @@ impl QE {
             // reallocation happened if needed at all.
             self.manager
                 .with_manager_shared(|m| m.level_to_var(m.var_to_level(block.start) + len))
-        });
-
-        // self.print_atoms();
-
-        var
+        })
     }
 
     fn earliest(&self, term: &Term) -> Option<Variable> {
@@ -544,18 +549,39 @@ impl QE {
         bits
     }
 
-    fn bdd_seq(&self, term: &Term) -> Result<BCDDFunction, Error> {
-        self.bdd_seq_in(term, &mut HashMap::new())
+    fn has_booleans(&self, term: &Term) -> bool {
+        (self.free(term) & &self.booleans).any()
+    }
+
+    fn bdd(&self, term: &Term, construction: BddConstruction) -> Result<BCDDFunction, Error> {
+        self.bdd_in(term, construction, &mut HashMap::new())
     }
 
     #[allow(clippy::mutable_key_type)]
-    fn bdd_seq_in(
+    fn bdd_in(
         &self,
         term: &Term,
+        construction: BddConstruction,
         cache: &mut HashMap<Term, BCDDFunction>,
     ) -> Result<BCDDFunction, Error> {
         if let Some(bdd) = cache.get(term) {
             return Ok(bdd.clone());
+        }
+
+        if construction == BddConstruction::Coarse && !self.has_booleans(term) {
+            if *term == true {
+                return Ok(self.top());
+            }
+            if *term == false {
+                return Ok(self.bottom());
+            }
+
+            let var = self.atom(term.simplified(&*self.pool));
+            let bdd = self
+                .manager
+                .with_manager_shared(|m| BCDDFunction::var(m, var))?;
+            cache.insert(term.clone(), bdd.clone());
+            return Ok(bdd);
         }
 
         let bdd = match term.kind() {
@@ -564,37 +590,34 @@ impl QE {
                     match atom {
                         CoreAtom::True => self.top(),
                         CoreAtom::False => self.bottom(),
-                        CoreAtom::Not(arg) => self.bdd_seq_in(arg, cache)?.not()?,
+                        CoreAtom::Not(arg) => self.bdd_in(arg, construction, cache)?.not()?,
                         CoreAtom::Implies(args) => args
                             .iter()
                             .enumerate()
                             .map(|(i, arg)| {
                                 if i == args.len() - 1 {
-                                    self.bdd_seq_in(arg, cache)
+                                    self.bdd_in(arg, construction, cache)
                                 } else {
-                                    Ok(self.bdd_seq_in(arg, cache)?.not()?)
+                                    Ok(self.bdd_in(arg, construction, cache)?.not()?)
                                 }
                             })
                             .try_fold(self.bottom(), |acc, arg| Ok::<_, Error>(acc.or(&arg?)?))?,
-                        CoreAtom::And(args) => {
-                            args.iter()
-                                .map(|arg| self.bdd_seq_in(arg, cache))
-                                .try_fold(self.top(), |acc, arg| Ok::<_, Error>(acc.and(&arg?)?))?
-                        }
+                        CoreAtom::And(args) => args
+                            .iter()
+                            .map(|arg| self.bdd_in(arg, construction, cache))
+                            .try_fold(self.top(), |acc, arg| Ok::<_, Error>(acc.and(&arg?)?))?,
                         CoreAtom::Or(args) => args
                             .iter()
-                            .map(|arg| self.bdd_seq_in(arg, cache))
+                            .map(|arg| self.bdd_in(arg, construction, cache))
                             .try_fold(self.bottom(), |acc, arg| Ok::<_, Error>(acc.or(&arg?)?))?,
                         CoreAtom::Xor(args) => args
                             .iter()
-                            .map(|arg| self.bdd_seq_in(arg, cache))
-                            .try_fold(self.bottom(), |acc, arg| {
-                            Ok::<_, Error>(acc.xor(&arg?)?)
-                        })?,
+                            .map(|arg| self.bdd_in(arg, construction, cache))
+                            .try_fold(self.bottom(), |acc, arg| Ok::<_, Error>(acc.xor(&arg?)?))?,
                         CoreAtom::Ite(guard, high, low) => {
-                            let guard = self.bdd_seq_in(guard, cache)?;
-                            let high = self.bdd_seq_in(high, cache)?;
-                            let low = self.bdd_seq_in(low, cache)?;
+                            let guard = self.bdd_in(guard, construction, cache)?;
+                            let high = self.bdd_in(high, construction, cache)?;
+                            let low = self.bdd_in(low, construction, cache)?;
 
                             guard.ite(&high, &low)?
                         }
@@ -604,20 +627,20 @@ impl QE {
                                 .any(|arg| Sort::of(arg).unwrap() == Core::Bool())
                             {
                                 args.iter()
-                                    .map(|arg| self.bdd_seq_in(arg, cache))
+                                    .map(|arg| self.bdd_in(arg, construction, cache))
                                     .try_fold(self.top(), |acc, arg| {
                                         let arg = arg?;
                                         Ok::<_, Error>(acc.imp(&arg)?.and(&arg.imp(&acc)?)?)
                                     })?
                             } else {
-                                let var = self.atom(term.clone());
+                                let var = self.atom(term.simplified(&*self.pool));
                                 self.manager
                                     .with_manager_shared(|m| BCDDFunction::var(m, var))?
                             }
                         }
                     }
                 } else {
-                    let var = self.atom(term.clone());
+                    let var = self.atom(term.simplified(&*self.pool));
                     self.manager
                         .with_manager_shared(|m| BCDDFunction::var(m, var))?
                 }
@@ -630,100 +653,10 @@ impl QE {
         Ok(bdd)
     }
 
-    #[allow(unused)]
-    fn bdd(&self, term: &Term) -> Result<BCDDFunction, Error> {
-        self.bdd_in(term, &DashMap::new())
-    }
-
-    #[allow(clippy::mutable_key_type)]
-    fn bdd_in(
-        &self,
-        term: &Term,
-        cache: &DashMap<Term, BCDDFunction>,
-    ) -> Result<BCDDFunction, Error> {
-        if let Some(bdd) = cache.get(term) {
-            return Ok(bdd.clone());
-        }
-
-        let bdd =
-            match term.kind() {
-                TermKind::Atom(atom) => {
-                    if let Ok(atom) = CoreAtom::try_from(atom) {
-                        match atom {
-                            CoreAtom::True => self.top(),
-                            CoreAtom::False => self.bottom(),
-                            CoreAtom::Not(arg) => self.bdd_in(arg, cache)?.not()?,
-                            CoreAtom::Implies(args) => args
-                                .par_iter()
-                                .enumerate()
-                                .map(|(i, arg)| {
-                                    if i == args.len() - 1 {
-                                        self.bdd_in(arg, cache)
-                                    } else {
-                                        Ok(self.bdd_in(arg, cache)?.not()?)
-                                    }
-                                })
-                                .try_reduce(|| self.bottom(), |acc, arg| Ok(acc.or(&arg)?))?,
-                            CoreAtom::And(args) => args
-                                .par_iter()
-                                .map(|arg| self.bdd_in(arg, cache))
-                                .try_reduce(|| self.top(), |acc, arg| Ok(acc.and(&arg)?))?,
-                            CoreAtom::Or(args) => args
-                                .par_iter()
-                                .map(|arg| self.bdd_in(arg, cache))
-                                .try_reduce(|| self.bottom(), |acc, arg| Ok(acc.or(&arg)?))?,
-                            CoreAtom::Xor(args) => args
-                                .par_iter()
-                                .map(|arg| self.bdd_in(arg, cache))
-                                .try_reduce(|| self.bottom(), |acc, arg| Ok(acc.xor(&arg)?))?,
-                            CoreAtom::Ite(guard, high, low) => {
-                                let (guard, (high, low)) = rayon::join(
-                                    || self.bdd_in(guard, cache),
-                                    || {
-                                        rayon::join(
-                                            || self.bdd_in(high, cache),
-                                            || self.bdd_in(low, cache),
-                                        )
-                                    },
-                                );
-
-                                guard?.ite(&high?, &low?)?
-                            }
-                            CoreAtom::Equals(args) | CoreAtom::Distinct(args) => {
-                                if args
-                                    .iter()
-                                    .any(|arg| Sort::of(arg).unwrap() == Core::Bool())
-                                {
-                                    args.par_iter()
-                                        .map(|arg| self.bdd_in(arg, cache))
-                                        .try_reduce(
-                                            || self.top(),
-                                            |acc, arg| Ok(acc.imp(&arg)?.and(&arg.imp(&acc)?)?),
-                                        )?
-                                } else {
-                                    let var = self.atom(term.clone());
-                                    self.manager
-                                        .with_manager_shared(|m| BCDDFunction::var(m, var))?
-                                }
-                            }
-                        }
-                    } else {
-                        let var = self.atom(term.clone());
-                        self.manager
-                            .with_manager_shared(|m| BCDDFunction::var(m, var))?
-                    }
-                }
-                _ => unreachable!(),
-            };
-
-        cache.insert(term.clone(), bdd.clone());
-
-        Ok(bdd)
-    }
-
     #[allow(clippy::mutable_key_type)]
     fn term(&self, bdd: &BCDDFunction) -> Term {
         self.term_in(bdd, &mut HashMap::new())
+            .simplified(&*self.pool)
     }
 
     #[allow(clippy::mutable_key_type)]
