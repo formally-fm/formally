@@ -213,7 +213,7 @@ impl QE {
                 .unwrap_or(1) as u32
         });
         let manager = oxidd::bcdd::new_manager(1_073_741_824, 1_048_576, jobs);
-        // manager.workers().set_split_depth(Some(0));
+        manager.workers().set_split_depth(Some(0));
         QE {
             top: manager.with_manager_shared(|m| BCDDFunction::t(m)),
             bottom: manager.with_manager_shared(|m| BCDDFunction::f(m)),
@@ -227,11 +227,6 @@ impl QE {
             order: Vec::new(),
             booleans: BitSet::new(),
         }
-    }
-
-    fn qe(mut self, quantifiers: &[Quantifier], body: &Term) -> Result<Term, Error> {
-        let manager = self.manager.clone();
-        manager.workers().install(|| self.qe_in(quantifiers, body))
     }
 
     fn setup(&mut self, quantifiers: &[Quantifier]) {
@@ -274,14 +269,12 @@ impl QE {
         Some(level)
     }
 
-    fn qe_in(&mut self, quantifiers: &[Quantifier], body: &Term) -> Result<Term, Error> {
+    fn qe(&mut self, quantifiers: &[Quantifier], body: &Term) -> Result<Term, Error> {
         let mut prevq = smt::Quantifier::Exists;
 
         self.setup(quantifiers);
 
-        // eprintln!("compiling the initial bdd...");
         let mut body = self.bdd(body, BddConstruction::Fine)?;
-
         for Quantifier { quantifier, target } in quantifiers {
             // match quantifier {
             //     smt::Quantifier::Forall => eprint!("eliminating forall {}... ", target.name()),
@@ -461,6 +454,7 @@ impl QE {
     // We need basically the same logic of a vector for each block: cutoff, len, capacity.
     // For the initial configuration see setup()
     fn atom(&self, term: Term) -> VarNo {
+        let size = self.atoms.size();
         self.atoms.by_key_or_insert(term, |term| {
             // block zero is for atoms mentioning no variables to be eliminated.
             // other blocks are at variable's index + 1
@@ -503,8 +497,12 @@ impl QE {
 
                     // double the capacity
                     *capacity *= 2;
-                })
+                });
             }
+
+            self.manager
+                .workers()
+                .set_split_depth(Some(std::cmp::max(15, (size / 4 * 3) as u32)));
 
             // here we have the old `len` we reserved before, and we know *at least* one
             // reallocation happened if needed at all.
