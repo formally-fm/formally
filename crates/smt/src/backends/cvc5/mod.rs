@@ -221,19 +221,19 @@ impl api::Solver for Solver {
 pub trait Plugin: 'static {
     /// Return a list of lemmas to add to the SAT solver. Called periodically, roughly at every SAT
     /// decision.
-    fn check(&self) -> &[Term] {
+    fn check(&self) -> &[cvc5::Term] {
         &[]
     }
 
     /// Notify SAT clause, called when `clause` is learned by the SAT solver.
     #[allow(unused)]
-    fn notify_sat_clause(&self, clause: Term) {
+    fn notify_sat_clause(&self, clause: cvc5::Term) {
         // nop
     }
 
     /// Notify theory lemma, called when `lemma` is sent by a theory solver.
     #[allow(unused)]
-    fn notify_theory_lemma(&self, lemma: Term) {
+    fn notify_theory_lemma(&self, lemma: cvc5::Term) {
         // nop
     }
 

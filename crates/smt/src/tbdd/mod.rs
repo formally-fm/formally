@@ -364,7 +364,7 @@ impl QE {
         debug_assert_eq!(*target.sort(), Core::Bool());
 
         let target = target.into_term_in(&*self.pool);
-        let var = self.atoms.by_key(&target).unwrap();
+        let var = self.atom(target);
         let var = self
             .manager
             .with_manager_shared(|m| BCDDFunction::var(m, var))?;

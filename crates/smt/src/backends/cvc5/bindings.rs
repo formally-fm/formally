@@ -25,8 +25,14 @@ use cvc5_sys as cvc5;
 
 pub use cvc5::Kind;
 pub use cvc5::Plugin;
-use std::ffi::CStr;
-use std::{ffi::CString, ptr::NonNull, rc::Rc};
+
+use itertools::Itertools;
+use std::{
+    collections::{HashMap, HashSet},
+    ffi::{CStr, CString},
+    ptr::NonNull,
+    rc::Rc,
+};
 
 /// A non-null version of [cvc5_sys::Sort].
 pub type Sort = NonNull<cvc5::cvc5_sort_t>;
@@ -213,14 +219,14 @@ impl Drop for TermManager {
 }
 
 pub struct Solver {
-    _manager: Rc<TermManager>,
+    manager: Rc<TermManager>,
     pub(super) solver: NonNull<cvc5::Solver>,
 }
 
 impl Solver {
     pub fn new(manager: Rc<TermManager>) -> Solver {
         Solver {
-            _manager: manager.clone(),
+            manager: manager.clone(),
             solver: unsafe { NonNull::new(cvc5::new(manager.manager.as_ptr())).unwrap() },
         }
     }
@@ -239,7 +245,7 @@ impl Solver {
     pub fn add_plugin(&self, plugin: *mut Plugin) {
         unsafe { cvc5::add_plugin(self.solver.as_ptr(), plugin) }
     }
-    
+
     pub fn define_fun(
         &self,
         name: &str,
@@ -285,11 +291,102 @@ impl Solver {
 
     pub fn get_quantifier_elimination(&self, term: Term) -> Term {
         unsafe {
-            NonNull::new(cvc5::get_quantifier_elimination(
+            let mut consts = HashMap::new();
+            let term = self.qe_replace_vars(term, &HashSet::new(), &mut consts);
+
+            let result = NonNull::new(cvc5::get_quantifier_elimination(
                 self.solver.as_ptr(),
                 term.as_ptr(),
             ))
+            .unwrap();
+
+            let map = consts.into_iter().collect_vec();
+            let vars = map.iter().map(|(v, _)| *v).collect_vec();
+            let consts = map.iter().map(|(_, c)| *c).collect_vec();
+
+            NonNull::new(cvc5::term_substitute_terms(
+                result.as_ptr(),
+                consts.len(),
+                consts.as_ptr().cast(),
+                vars.as_ptr().cast(),
+            ))
             .unwrap()
+        }
+    }
+
+    fn qe_replace_vars(
+        &self,
+        term: Term,
+        bound: &HashSet<Term>,
+        consts: &mut HashMap<Term, Term>,
+    ) -> Term {
+        unsafe {
+            let kind = cvc5::term_get_kind(term.as_ptr());
+            match kind {
+                Kind::Variable if !bound.contains(&term) => {
+                    if let Some(cnst) = consts.get(&term) {
+                        *cnst
+                    } else {
+                        let cnst = NonNull::new(cvc5::mk_const(
+                            self.manager.manager.as_ptr(),
+                            cvc5::term_get_sort(term.as_ptr()),
+                            cvc5::term_get_symbol(term.as_ptr()),
+                        ))
+                        .unwrap();
+                        consts.insert(term, cnst);
+                        cnst
+                    }
+                }
+                Kind::Variable => term,
+                Kind::Lambda
+                | Kind::Witness
+                | Kind::MatchBindCase
+                | Kind::Forall
+                | Kind::Exists => {
+                    let mut bound = bound.clone();
+                    let varlist = NonNull::new(cvc5::term_get_child(term.as_ptr(), 0)).unwrap();
+                    for i in 0..cvc5::term_get_num_children(varlist.as_ptr()) {
+                        bound.insert(
+                            NonNull::new(cvc5::term_get_child(varlist.as_ptr(), i)).unwrap(),
+                        );
+                    }
+                    let mut children = vec![varlist];
+                    for i in 1..cvc5::term_get_num_children(term.as_ptr()) {
+                        children.push(self.qe_replace_vars(
+                            NonNull::new(cvc5::term_get_child(term.as_ptr(), i)).unwrap(),
+                            &bound,
+                            consts,
+                        ))
+                    }
+                    let op = cvc5::term_get_op(term.as_ptr());
+                    NonNull::new(cvc5::mk_term_from_op(
+                        self.manager.manager.as_ptr(),
+                        op,
+                        children.len(),
+                        children.as_ptr().cast(),
+                    ))
+                    .unwrap()
+                }
+                _ if cvc5::term_get_num_children(term.as_ptr()) == 0 => term,
+                _ => {
+                    let mut children = Vec::new();
+                    for i in 0..cvc5::term_get_num_children(term.as_ptr()) {
+                        children.push(self.qe_replace_vars(
+                            NonNull::new(cvc5::term_get_child(term.as_ptr(), i)).unwrap(),
+                            bound,
+                            consts,
+                        ))
+                    }
+                    let op = cvc5::term_get_op(term.as_ptr());
+                    NonNull::new(cvc5::mk_term_from_op(
+                        self.manager.manager.as_ptr(),
+                        op,
+                        children.len(),
+                        children.as_ptr().cast(),
+                    ))
+                    .unwrap()
+                }
+            }
         }
     }
 }
