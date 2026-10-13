@@ -22,7 +22,10 @@
 // SOFTWARE.
 //
 
+mod executor;
 mod utils;
+
+use executor::*;
 use utils::*;
 
 use crate::formally;
@@ -48,12 +51,12 @@ use oxidd::{
 use oxidd_reorder::set_var_order_seq;
 use oxidd_rules_bdd::complement_edge::EdgeTag;
 
-use dashmap::DashMap;
 use itertools::Itertools;
 use parking_lot::RwLock;
 use thiserror::Error;
 use transitive::Transitive;
 
+use async_recursion::async_recursion;
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -64,7 +67,7 @@ use std::{
     },
 };
 
-#[derive(Debug, Error, Located, Transitive)]
+#[derive(Debug, Clone, Error, Located, Transitive)]
 #[allow(clippy::duplicated_attributes)]
 #[transitive(from(OutOfMemory, ErrorKind))]
 #[transitive(from(DiagnosticEmitted, ErrorKind))]
@@ -80,7 +83,7 @@ impl From<ErrorKind> for Error {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum ErrorKind {
     #[error("maximum memory usage limit reached for BDD nodes")]
     OutOfMemory(#[from] OutOfMemory),
@@ -90,13 +93,15 @@ pub enum ErrorKind {
 
 impl Diagnosable for Error {}
 
+type Result<T, E = Error> = std::result::Result<T, E>;
+
 pub fn qe(
     term: &Term,
     pool: Arc<dyn TermPool + Send + Sync>,
     env: Env,
     backend: &'static dyn Backend,
     jobs: Option<NonZero<u32>>,
-) -> Result<Term, Error> {
+) -> Result<Term> {
     qe_in(term, pool, env, backend, jobs, &HashMap::new())
 }
 
@@ -108,7 +113,7 @@ fn qe_in(
     backend: &'static dyn Backend,
     jobs: Option<NonZero<u32>>,
     bindings: &HashMap<Variable, Term>,
-) -> Result<Term, Error> {
+) -> Result<Term> {
     match term.kind() {
         TermKind::Constant(_) => Ok(term.clone()),
         TermKind::Atom(atom) => {
@@ -146,7 +151,7 @@ fn qe_in(
             quantifiers.reverse();
 
             let body = qe_in(&body, pool.clone(), env.clone(), backend, jobs, bindings)?;
-            QE::new(pool, env, backend, jobs).qe(&quantifiers, &body)
+            QE::new(pool, env, backend, jobs).qe(quantifiers, body)
         }
         TermKind::Let(let_) => {
             let mut nested = bindings.clone();
@@ -194,7 +199,7 @@ struct QE {
     env: Env,
     backend: &'static dyn Backend,
     atoms: SyncBiMap<Term, VarNo>,
-    free: DashMap<Term, BitSet>,
+    free: scc::HashMap<Term, BitSet>,
     variables: BiMap<Variable, usize>,
     order: Vec<OrderBlock>,
     booleans: BitSet,
@@ -207,12 +212,14 @@ impl QE {
         backend: &'static dyn Backend,
         jobs: Option<NonZero<u32>>,
     ) -> QE {
-        let jobs = jobs.map(NonZero::get).unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(NonZero::get)
-                .unwrap_or(1) as u32
-        });
-        let manager = oxidd::bcdd::new_manager(1_073_741_824, 1_048_576, jobs);
+        let jobs = match jobs {
+            Some(jobs) => jobs.get(),
+            None => match std::thread::available_parallelism() {
+                Ok(jobs) => jobs.get() as u32,
+                Err(_) => 1u32,
+            },
+        };
+        let manager = oxidd::bcdd::new_manager(2usize.pow(30), 2usize.pow(20), jobs);
         manager.workers().set_split_depth(Some(0));
         QE {
             top: manager.with_manager_shared(|m| BCDDFunction::t(m)),
@@ -222,7 +229,7 @@ impl QE {
             env,
             backend,
             atoms: SyncBiMap::new(),
-            free: DashMap::new(),
+            free: scc::HashMap::new(),
             variables: BiMap::new(),
             order: Vec::new(),
             booleans: BitSet::new(),
@@ -243,7 +250,7 @@ impl QE {
             });
 
             // with rev(), variables to be eliminated *earlier* have *higher* indexes,
-            // which conceptually similar to how also levels in the BDD are higher.
+            // which is conceptually similar to how also levels in the BDD are higher.
             for (index, q) in quantifiers.iter().rev().enumerate() {
                 self.variables.insert(q.target.clone(), index);
                 if *q.target.sort() == Core::Bool() {
@@ -269,35 +276,43 @@ impl QE {
         Some(level)
     }
 
-    fn qe(&mut self, quantifiers: &[Quantifier], body: &Term) -> Result<Term, Error> {
+    fn qe(mut self, quantifiers: Vec<Quantifier>, body: Term) -> Result<Term> {
+        self.setup(&quantifiers);
+
+        let manager = self.manager.clone();
+        let this = Arc::new(self);
+        let main = manager.spawn(async { this.qe_in(quantifiers, body).await });
+
+        futures::executor::block_on(main)
+    }
+
+    async fn qe_in(self: Arc<Self>, quantifiers: Vec<Quantifier>, body: Term) -> Result<Term> {
         let mut prevq = smt::Quantifier::Exists;
-
-        self.setup(quantifiers);
-
-        let mut body = self.bdd(body, BddConstruction::Fine)?;
+        eprintln!("computing initial bdd...");
+        let mut body = self.bdd(&body, BddConstruction::Fine)?;
         for Quantifier { quantifier, target } in quantifiers {
-            // match quantifier {
-            //     smt::Quantifier::Forall => eprint!("eliminating forall {}... ", target.name()),
-            //     smt::Quantifier::Exists => eprint!("eliminating exists {}... ", target.name()),
-            // }
+            match quantifier {
+                smt::Quantifier::Forall => eprint!("eliminating forall {}... ", target.name()),
+                smt::Quantifier::Exists => eprint!("eliminating exists {}... ", target.name()),
+            }
 
-            if prevq != *quantifier {
+            if prevq != quantifier {
                 body = body.not()?;
             }
-            prevq = *quantifier;
+            prevq = quantifier;
 
-            if *target.sort() == Core::Bool() {
-                body = self.project(target, body)?;
-                // eprintln!("eliminated with Boolean projection!");
-            } else {
-                let calls = AtomicUsize::new(0);
-                body = self.eliminate(target, body, &calls)?;
+            // if *target.sort() == Core::Bool() {
+            //     body = self.project(&target, body)?;
+            //     eprintln!("eliminated with Boolean projection!");
+            // } else {
+            let calls = Arc::new(AtomicUsize::new(0));
+            body = self.clone().eliminate(target, body, calls.clone()).await?;
 
-                // eprintln!(
-                //     "eliminated with {} QE calls!",
-                //     calls.load(Ordering::Relaxed)
-                // );
-            }
+            eprintln!(
+                "eliminated with {} QE calls!",
+                calls.load(Ordering::Relaxed)
+            );
+            //}
         }
 
         if prevq == smt::Quantifier::Forall {
@@ -360,7 +375,8 @@ impl QE {
         self.bottom.clone()
     }
 
-    fn project(&self, target: &Variable, body: BCDDFunction) -> Result<BCDDFunction, Error> {
+    #[allow(unused)]
+    fn project(&self, target: &Variable, body: BCDDFunction) -> Result<BCDDFunction> {
         debug_assert_eq!(*target.sort(), Core::Bool());
 
         let target = target.into_term_in(&*self.pool);
@@ -372,75 +388,78 @@ impl QE {
         Ok(body.exists(&var)?)
     }
 
-    fn eliminate(
-        &mut self,
-        target: &Variable,
+    async fn eliminate(
+        self: Arc<Self>,
+        target: Variable,
         body: BCDDFunction,
-        calls: &AtomicUsize,
-    ) -> Result<BCDDFunction, Error> {
-        self.eliminate_in(target, body, &DashMap::new(), calls)
+        calls: Arc<AtomicUsize>,
+    ) -> Result<BCDDFunction> {
+        let cache = Arc::new(AsyncMemoMap::new(self.manager.clone()));
+        self.eliminate_in(target, body, cache, calls).await
     }
 
-    fn eliminate_in(
-        &self,
-        target: &Variable,
+    #[async_recursion]
+    async fn eliminate_in(
+        self: Arc<Self>,
+        target: Variable,
         body: BCDDFunction,
-        cache: &DashMap<BCDDFunction, BCDDFunction>,
-        calls: &AtomicUsize,
-    ) -> Result<BCDDFunction, Error> {
-        if let Some(result) = cache.get(&body) {
-            return Ok(result.clone());
-        }
+        cache: Arc<AsyncMemoMap<BCDDFunction, Result<BCDDFunction>>>,
+        calls: Arc<AtomicUsize>,
+    ) -> Result<BCDDFunction> {
+        cache
+            .clone()
+            .get_or_insert(body, async |body| match body.cofactors() {
+                Some((high, low)) => {
+                    let (level, guard) = body.with_manager_shared(|m, edge| -> Result<_> {
+                        let Node::Inner(node) = m.get_node(edge) else {
+                            unreachable!()
+                        };
+                        let level = node.level();
+                        let var = m.level_to_var(level);
 
-        let result = match body.cofactors() {
-            Some((high, low)) => {
-                let (level, guard) = body.with_manager_shared(|m, edge| -> Result<_, Error> {
-                    let Node::Inner(node) = m.get_node(edge) else {
-                        unreachable!()
-                    };
-                    let level = node.level();
-                    let var = m.level_to_var(level);
+                        Ok((level, BCDDFunction::var(m, var)?))
+                    })?;
 
-                    Ok((level, BCDDFunction::var(m, var)?))
-                })?;
+                    let cutoff = self.cutoff(&target).unwrap();
+                    if level < cutoff {
+                        let manager = self.manager.clone();
+                        let self2 = self.clone();
+                        let target2 = target.clone();
+                        let cache2 = cache.clone();
+                        let calls2 = calls.clone();
+                        let high = manager.spawn(self.eliminate_in(target, high, cache, calls));
+                        let low = manager.spawn(self2.eliminate_in(target2, low, cache2, calls2));
 
-                let cutoff = self.cutoff(target).unwrap();
-                if level < cutoff {
-                    let (high, low) = self.manager.workers().join(
-                        || self.eliminate_in(target, high, cache, calls),
-                        || self.eliminate_in(target, low, cache, calls),
-                    );
+                        Ok(guard.ite(&high.await?, &low.await?)?)
+                    } else {
+                        let quant = Quantified {
+                            quantifier: smt::Quantifier::Exists,
+                            variables: Arc::new([target.clone()]),
+                            body: self.term(&body),
+                            span: None,
+                        }
+                        .into_term_in(&*self.pool);
 
-                    guard.ite(&high?, &low?)?
-                } else {
-                    let quant = Quantified {
-                        quantifier: smt::Quantifier::Exists,
-                        variables: Arc::new([target.clone()]),
-                        body: self.term(&body),
-                        span: None,
+                        let manager = TermManager::with_pool(self.backend, self.pool.clone())?;
+                        let mut solver = Solver::with_manager(&Config::default(), manager)?;
+                        solver.import(self.env.clone())?;
+
+                        calls.fetch_add(1, Ordering::Relaxed);
+                        let eliminated = solver.qe(quant)?;
+
+                        let var = self.manager.with_manager_exclusive(|m| m.add_vars(1).start);
+                        let bdd = self
+                            .manager
+                            .with_manager_shared(|m| BCDDFunction::var(m, var))?;
+                        self.atoms.insert(eliminated, var);
+
+                        Ok(bdd)
+                        //self.bdd(&eliminated, BddConstruction::Coarse)
                     }
-                    .into_term_in(&*self.pool);
-
-                    let manager = TermManager::with_pool(self.backend, self.pool.clone())?;
-                    let mut solver = Solver::with_manager(&Config::default(), manager)?;
-                    solver.import(self.env.clone())?;
-
-                    let _calls = calls.fetch_add(1, Ordering::Relaxed);
-                    // eprint!("{calls}th QE call: ");
-                    // quant.println(&mut std::io::stderr()).ok();
-                    let eliminated = solver.qe(quant)?;
-                    // eprint!("{calls}th QE result: ");
-                    // eliminated.println(&mut std::io::stderr()).ok();
-
-                    self.bdd(&eliminated, BddConstruction::Coarse)?
                 }
-            }
-            None => body.clone(),
-        };
-
-        cache.insert(body, result.clone());
-
-        Ok(result)
+                None => Ok(body),
+            })
+            .await
     }
 
     // How to concurrently insert new atoms efficiently.
@@ -518,7 +537,7 @@ impl QE {
     }
 
     fn free(&self, term: &Term) -> BitSet {
-        if let Some(bits) = self.free.get(term) {
+        if let Some(bits) = self.free.get_sync(term) {
             return bits.clone();
         }
 
@@ -542,7 +561,7 @@ impl QE {
             _ => unreachable!(),
         };
 
-        self.free.insert(term.clone(), bits.clone());
+        self.free.insert_sync(term.clone(), bits.clone()).ok();
 
         bits
     }
@@ -551,7 +570,7 @@ impl QE {
         (self.free(term) & &self.booleans).any()
     }
 
-    fn bdd(&self, term: &Term, construction: BddConstruction) -> Result<BCDDFunction, Error> {
+    fn bdd(&self, term: &Term, construction: BddConstruction) -> Result<BCDDFunction> {
         self.bdd_in(term, construction, &mut HashMap::new())
     }
 
@@ -561,7 +580,7 @@ impl QE {
         term: &Term,
         construction: BddConstruction,
         cache: &mut HashMap<Term, BCDDFunction>,
-    ) -> Result<BCDDFunction, Error> {
+    ) -> Result<BCDDFunction> {
         if let Some(bdd) = cache.get(term) {
             return Ok(bdd.clone());
         }
@@ -624,12 +643,13 @@ impl QE {
                                 .iter()
                                 .any(|arg| Sort::of(arg).unwrap() == Core::Bool())
                             {
-                                args.iter()
-                                    .map(|arg| self.bdd_in(arg, construction, cache))
-                                    .try_fold(self.top(), |acc, arg| {
-                                        let arg = arg?;
-                                        Ok::<_, Error>(acc.imp(&arg)?.and(&arg.imp(&acc)?)?)
-                                    })?
+                                todo!()
+                                // args.iter()
+                                //     .map(|arg| self.bdd_in(arg, construction, cache, depth))
+                                //     .try_fold(self.top(), |acc, arg| {
+                                //         let arg = arg?;
+                                //         Ok::<_, Error>(acc.imp(&arg)?.and(&arg.imp(&acc)?)?)
+                                //     })?
                             } else {
                                 let var = self.atom(term.simplified(&*self.pool));
                                 self.manager

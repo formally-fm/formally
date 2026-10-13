@@ -27,7 +27,7 @@ formally-io = { path = "../io", version = "0.2.0" }
 formally-smt-macros = { path = "../smt-macros", version = "0.2.0", features = ["__subcratedoc"] }
 
 z3-sys = { version = "0.13.1", optional = true }
-cvc5-sys = { version = "0.4.0", optional = true }
+cvc5-sys = { version = "0.6.0", optional = true }
 
 oxidd = { version = "0.13.0", optional = true }
 oxidd-rules-bdd = { version = "0.13.0", optional = true }
@@ -44,7 +44,12 @@ thiserror = "2.0.17"
 dashmap = "6.2.1"
 rpds = "1"
 bitvec = "1.1.1"
+scc = "3.8.8"
+tokio = { version = "1.53.2", features = ["parking_lot", "rt-multi-thread", "sync"] }
+async-recursion = "1.2.0"
+async-task = "4"
+futures = "0.3.34"
 rayon = "1.12.0"
 
 [dev-dependencies]
-rstest = "0.26.0"
+rstest = "0.27.0"
