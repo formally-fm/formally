@@ -678,6 +678,12 @@ impl<'c> Parsable<'c> for Script {
                 span: None,
             })
             .whole()
+            .skipping(
+                whitespace()
+                    .ignore()
+                    .or(not(char('\n')).skip().between(char(';'), char('\n')).ignore())
+                    .skipping(nothing()),
+            )
             .located()
             .named("SMT-LIBv2 script", "SMT-LIBv2 scripts")
     }
