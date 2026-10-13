@@ -61,6 +61,7 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     num::NonZero,
+    pin::Pin,
     sync::{
         Arc, Weak,
         atomic::{AtomicU32, AtomicUsize, Ordering},
@@ -151,7 +152,7 @@ fn qe_in(
             quantifiers.reverse();
 
             let body = qe_in(&body, pool.clone(), env.clone(), backend, jobs, bindings)?;
-            QE::new(pool, env, backend, jobs).qe(quantifiers, body)
+            QE::new(pool, env, backend, jobs).qe(quantifiers, body, Strategy::Delayed)
         }
         TermKind::Let(let_) => {
             let mut nested = bindings.clone();
@@ -197,6 +198,13 @@ enum BddMode {
     Fine,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[allow(unused)]
+enum Strategy {
+    Immediate,
+    Delayed,
+}
+
 struct QE {
     this: Weak<QE>,
     manager: BCDDManagerRef,
@@ -206,6 +214,7 @@ struct QE {
     env: Env,
     backend: &'static dyn Backend,
     atoms: SyncBiMap<Term, VarNo>,
+    partials: MemoMap<VarNo, Result<Term>>,
     variables: BiMap<Variable, usize>,
     order: Vec<OrderBlock>,
     booleans: BitSet,
@@ -231,11 +240,12 @@ impl QE {
             this: Weak::new(),
             top: manager.with_manager_shared(|m| BCDDFunction::t(m)),
             bottom: manager.with_manager_shared(|m| BCDDFunction::f(m)),
-            manager,
+            manager: manager.clone(),
             pool,
             env,
             backend,
             atoms: SyncBiMap::new(),
+            partials: MemoMap::new(manager),
             variables: BiMap::new(),
             order: Vec::new(),
             booleans: BitSet::new(),
@@ -295,7 +305,7 @@ impl QE {
         Some(level)
     }
 
-    fn qe(mut self, quantifiers: Vec<Quantifier>, body: Term) -> Result<Term> {
+    fn qe(mut self, quantifiers: Vec<Quantifier>, body: Term, strategy: Strategy) -> Result<Term> {
         self.setup(&quantifiers);
 
         let manager = self.manager.clone();
@@ -303,12 +313,17 @@ impl QE {
             this: weak.clone(),
             ..self
         });
-        let main = manager.spawn(async move { this.qe_in(quantifiers, body).await });
+        let main = manager.spawn(async move { this.qe_in(quantifiers, body, strategy).await });
 
         futures::executor::block_on(main)
     }
 
-    async fn qe_in(&self, quantifiers: Vec<Quantifier>, body: Term) -> Result<Term> {
+    async fn qe_in(
+        &self,
+        quantifiers: Vec<Quantifier>,
+        body: Term,
+        strategy: Strategy,
+    ) -> Result<Term> {
         let mut prevq = smt::Quantifier::Exists;
         eprintln!("computing initial bdd...");
         let mut body = self.bdd(&body, BddMode::Fine, Insertion::Earliest)?;
@@ -323,12 +338,14 @@ impl QE {
             }
             prevq = quantifier;
 
-            if *target.sort() == Core::Bool() {
+            if strategy == Strategy::Immediate && *target.sort() == Core::Bool() {
                 body = self.project(&target, body)?;
                 eprintln!("eliminated with Boolean projection!");
             } else {
                 let calls = Arc::new(AtomicUsize::new(0));
-                body = self.eliminate(target, body, calls.clone()).await?;
+                body = self
+                    .eliminate(target, body, strategy, calls.clone())
+                    .await?;
 
                 eprintln!(
                     "eliminated with {} QE calls!",
@@ -341,7 +358,7 @@ impl QE {
             body = body.not()?;
         }
 
-        Ok(self.term(&body))
+        self.term(&body).await
     }
 
     #[allow(unused)]
@@ -414,10 +431,13 @@ impl QE {
         &self,
         target: Variable,
         body: BCDDFunction,
+        strategy: Strategy,
         calls: Arc<AtomicUsize>,
     ) -> Result<BCDDFunction> {
         let cache = Arc::new(MemoMap::new(self.manager.clone()));
-        self.arc().eliminate_in(target, body, cache, calls).await
+        self.arc()
+            .eliminate_in(target, body, strategy, cache, calls)
+            .await
     }
 
     #[async_recursion]
@@ -425,12 +445,13 @@ impl QE {
         self: Arc<Self>,
         target: Variable,
         body: BCDDFunction,
+        strategy: Strategy,
         cache: Arc<MemoMap<BCDDFunction, Result<BCDDFunction>>>,
         calls: Arc<AtomicUsize>,
     ) -> Result<BCDDFunction> {
         cache
             .clone()
-            .get_or_insert(body, async |body| match body.cofactors() {
+            .get_or_insert(body, async move |body| match body.cofactors() {
                 Some((high, low)) => {
                     let (level, guard) = body.with_manager_shared(|m, edge| -> Result<_> {
                         let Node::Inner(node) = m.get_node(edge) else {
@@ -444,32 +465,52 @@ impl QE {
 
                     let cutoff = self.cutoff(&target).unwrap();
                     if level < cutoff {
-                        let manager = self.manager.clone();
+                        let m = self.manager.clone();
                         let self2 = self.clone();
                         let target2 = target.clone();
                         let cache2 = cache.clone();
                         let calls2 = calls.clone();
-                        let high = manager.spawn(self.eliminate_in(target, high, cache, calls));
-                        let low = manager.spawn(self2.eliminate_in(target2, low, cache2, calls2));
+                        let high = m.spawn(self.eliminate_in(target, high, strategy, cache, calls));
+                        let low =
+                            m.spawn(self2.eliminate_in(target2, low, strategy, cache2, calls2));
 
                         Ok(guard.ite(&high.await?, &low.await?)?)
                     } else {
-                        let quant = Quantified {
-                            quantifier: smt::Quantifier::Exists,
-                            variables: Arc::new([target.clone()]),
-                            body: self.term(&body),
-                            span: None,
+                        let env = self.env.clone();
+                        let pool = self.pool.clone();
+                        let backend = self.backend;
+                        let this = self.clone();
+                        let qe = async move || -> Result<Term> {
+                            let quant = Quantified {
+                                quantifier: smt::Quantifier::Exists,
+                                variables: Arc::new([target.clone()]),
+                                body: this.clone().term(&body).await?,
+                                span: None,
+                            }
+                            .into_term_in(&*pool);
+
+                            let manager = TermManager::with_pool(backend, pool.clone())?;
+                            let mut solver = Solver::with_manager(&Config::default(), manager)?;
+                            solver.import(env)?;
+
+                            Ok(solver.qe(quant)?)
+                        };
+
+                        match strategy {
+                            Strategy::Immediate => {
+                                let eliminated = qe().await?;
+                                calls.fetch_add(1, Ordering::Relaxed);
+                                self.bdd(&eliminated, BddMode::Coarse, Insertion::Bottom)
+                            }
+                            Strategy::Delayed => {
+                                let var = self.new_var(None);
+                                self.partials.provide(var, async move |_| qe().await);
+                                calls.fetch_add(1, Ordering::Relaxed);
+                                Ok(self
+                                    .manager
+                                    .with_manager_shared(|m| BCDDFunction::var(m, var))?)
+                            }
                         }
-                        .into_term_in(&*self.pool);
-
-                        let manager = TermManager::with_pool(self.backend, self.pool.clone())?;
-                        let mut solver = Solver::with_manager(&Config::default(), manager)?;
-                        solver.import(self.env.clone())?;
-
-                        calls.fetch_add(1, Ordering::Relaxed);
-                        let eliminated = solver.qe(quant)?;
-
-                        self.bdd(&eliminated, BddMode::Coarse, Insertion::Bottom)
                     }
                 }
                 None => Ok(body),
@@ -487,6 +528,53 @@ impl QE {
     //    - maintain the cutoffs and insertion points of each block (possibly at the bottom)
     // We need basically the same logic of a vector for each block: cutoff, len, capacity.
     // For the initial configuration see setup()
+    fn new_var(&self, index: Option<usize>) -> VarNo {
+        let block = match index {
+            Some(index) => &self.order[index],
+            None => &self.order[self.order.len() - 1],
+        };
+
+        // we reserve our place by incrementing `len` atomically.
+        // nobody will reuse that spot
+        let len = block.len.fetch_add(1, Ordering::Relaxed);
+
+        // we check if len >= capacity
+        // not `==` because some other thread may have incremented `len` concurrently
+        if len >= *block.capacity.read() {
+            // Here len *was* equal to capacity at some point.
+            // Some other thread may have increased it already, but we don't care about
+            // double increases.
+            // For the allocation we lock both `capacity` and the manager.
+            self.manager.with_manager_exclusive(|m| {
+                let mut capacity = block.capacity.write();
+
+                // to double the capacity we add the same amount of variables
+                let vars = m.add_vars(*capacity);
+
+                // the insertion level is the end of the block
+                let level = (m.var_to_level(block.start) + *capacity) as usize;
+
+                // we set up the vector of vars in the right order and call `set_var_order_seq`
+                let mut order = (0..m.num_levels()).map(|l| m.level_to_var(l)).collect_vec();
+
+                // the variables were added at the end of the order so to move them after
+                // `level` we rotate everything to the right of the right amount
+                order[level..].rotate_right(vars.len());
+
+                // The new variables are not yet mentioned by any BDD so this should be cheap
+                set_var_order_seq(m, &order);
+
+                // double the capacity
+                *capacity *= 2;
+            });
+        }
+
+        // here we have the old `len` we reserved before, and we know *at least* one
+        // reallocation happened if needed at all.
+        self.manager
+            .with_manager_shared(|m| m.level_to_var(m.var_to_level(block.start) + len))
+    }
+
     fn atom(&self, term: Term, insertion: Insertion) -> VarNo {
         let size = self.atoms.size();
         self.atoms.by_key_or_insert(term, |term| {
@@ -494,57 +582,19 @@ impl QE {
             // other blocks are at variable's index + 1. The last block is the "bottom" block.
             let index = match insertion {
                 Insertion::Earliest => match self.earliest(term) {
-                    Some(variable) => self.variables.by_key(&variable).unwrap() + 1,
-                    None => 0,
+                    Some(variable) => Some(self.variables.by_key(&variable).unwrap() + 1),
+                    None => Some(0),
                 },
-                Insertion::Bottom => self.order.len() - 1,
+                Insertion::Bottom => None,
             };
 
-            let block = &self.order[index];
-
-            // we reserve our place by incrementing `len` atomically.
-            // nobody will reuse that spot
-            let len = block.len.fetch_add(1, Ordering::Relaxed);
-
-            // we check if len >= capacity
-            // not `==` because some other thread may have incremented `len` concurrently
-            if len >= *block.capacity.read() {
-                // Here len *was* equal to capacity at some point.
-                // Some other thread may have increased it already, but we don't care about
-                // double increases.
-                // For the allocation we lock both `capacity` and the manager.
-                self.manager.with_manager_exclusive(|m| {
-                    let mut capacity = block.capacity.write();
-
-                    // to double the capacity we add the same amount of variables
-                    let vars = m.add_vars(*capacity);
-
-                    // the insertion level is the end of the block
-                    let level = (m.var_to_level(block.start) + *capacity) as usize;
-
-                    // we set up the vector of vars in the right order and call `set_var_order_seq`
-                    let mut order = (0..m.num_levels()).map(|l| m.level_to_var(l)).collect_vec();
-
-                    // the variables were added at the end of the order so to move them after
-                    // `level` we rotate everything to the right of the right amount
-                    order[level..].rotate_right(vars.len());
-
-                    // The new variables are not yet mentioned by any BDD so this should be cheap
-                    set_var_order_seq(m, &order);
-
-                    // double the capacity
-                    *capacity *= 2;
-                });
-            }
+            let var = self.new_var(index);
 
             self.manager
                 .workers()
                 .set_split_depth(Some(std::cmp::max(15, (size / 4 * 3) as u32)));
 
-            // here we have the old `len` we reserved before, and we know *at least* one
-            // reallocation happened if needed at all.
-            self.manager
-                .with_manager_shared(|m| m.level_to_var(m.var_to_level(block.start) + len))
+            var
         })
     }
 
@@ -701,44 +751,54 @@ impl QE {
     }
 
     #[allow(clippy::mutable_key_type)]
-    fn term(&self, bdd: &BCDDFunction) -> Term {
-        self.term_in(bdd, &mut HashMap::new())
-            .simplified(&*self.pool)
+    async fn term(&self, bdd: &BCDDFunction) -> Result<Term> {
+        Ok(self
+            .term_in(bdd.clone(), &mut HashMap::new())
+            .await?
+            .simplified(&*self.pool))
     }
 
     #[allow(clippy::mutable_key_type)]
-    fn term_in(&self, bdd: &BCDDFunction, cache: &mut HashMap<BCDDFunction, Term>) -> Term {
-        if let Some(term) = cache.get(bdd) {
-            return term.clone();
-        }
-
-        let term = match bdd.cofactors() {
-            Some((high, low)) => {
-                let guard = self.manager.with_manager_shared(|m| {
-                    let edge = bdd.as_edge(m);
-                    let Node::Inner(node) = m.get_node(edge) else {
-                        unreachable!()
-                    };
-                    self.atoms
-                        .by_index(&m.level_to_var(node.level()))
-                        .unwrap()
-                        .clone()
-                });
-
-                let high = self.term_in(&high, cache);
-                let low = self.term_in(&low, cache);
-
-                Core::ite()
-                    .call([guard, high, low])
-                    .into_term_in(&*self.pool)
+    fn term_in<'s>(
+        &'s self,
+        bdd: BCDDFunction,
+        cache: &'s mut HashMap<BCDDFunction, Term>,
+    ) -> Pin<Box<dyn 's + Send + Future<Output = Result<Term>>>> {
+        Box::pin(async move {
+            if let Some(term) = cache.get(&bdd) {
+                return Ok(term.clone());
             }
-            None => bdd.with_manager_shared(|_, edge| match edge.tag() {
-                EdgeTag::None => Core::True().into_term_in(&*self.pool),
-                EdgeTag::Complemented => Core::False().into_term_in(&*self.pool),
-            }),
-        };
 
-        cache.insert(bdd.clone(), term.clone());
-        term
+            let term = match bdd.cofactors() {
+                Some((high, low)) => {
+                    let guard = self.manager.with_manager_shared(|m| {
+                        let edge = bdd.as_edge(m);
+                        let Node::Inner(node) = m.get_node(edge) else {
+                            unreachable!()
+                        };
+                        m.level_to_var(node.level())
+                    });
+
+                    let guard = match self.atoms.by_index(&guard) {
+                        Some(guard) => guard,
+                        None => self.partials.get(&guard).unwrap().get().await.clone()?,
+                    };
+
+                    let high = self.term_in(high, cache).await?;
+                    let low = self.term_in(low, cache).await?;
+
+                    Core::ite()
+                        .call([guard, high, low])
+                        .into_term_in(&*self.pool)
+                }
+                None => bdd.with_manager_shared(|_, edge| match edge.tag() {
+                    EdgeTag::None => Core::True().into_term_in(&*self.pool),
+                    EdgeTag::Complemented => Core::False().into_term_in(&*self.pool),
+                }),
+            };
+
+            cache.insert(bdd.clone(), term.clone());
+            Ok(term)
+        })
     }
 }
