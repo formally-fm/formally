@@ -43,8 +43,8 @@ use formally::{
 
 use oxidd::{
     BooleanFunction as _, BooleanFunctionQuant, Function as _, HasLevel, HasWorkers, LevelNo,
-    Manager as _, ManagerRef, Node, VarNo, WorkerPool,
-    bcdd::{BCDDFunction, BCDDManagerRef},
+    Manager as _, ManagerRef as _, Node, VarNo, WorkerPool,
+    bcdd::{BCDDFunction as BDD, BCDDManagerRef as ManagerRef},
     error::OutOfMemory,
 };
 
@@ -64,7 +64,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Weak,
-        atomic::{AtomicU32, AtomicUsize, Ordering},
+        atomic::{AtomicU32, Ordering},
     },
 };
 
@@ -207,9 +207,9 @@ enum Strategy {
 
 struct QE {
     this: Weak<QE>,
-    manager: BCDDManagerRef,
-    top: BCDDFunction,
-    bottom: BCDDFunction,
+    manager: ManagerRef,
+    top: BDD,
+    bottom: BDD,
     pool: Arc<dyn TermPool + Send + Sync>,
     env: Env,
     backend: &'static dyn Backend,
@@ -238,8 +238,8 @@ impl QE {
         manager.workers().set_split_depth(Some(0));
         QE {
             this: Weak::new(),
-            top: manager.with_manager_shared(|m| BCDDFunction::t(m)),
-            bottom: manager.with_manager_shared(|m| BCDDFunction::f(m)),
+            top: manager.with_manager_shared(|m| BDD::t(m)),
+            bottom: manager.with_manager_shared(|m| BDD::f(m)),
             manager: manager.clone(),
             pool,
             env,
@@ -325,14 +325,8 @@ impl QE {
         strategy: Strategy,
     ) -> Result<Term> {
         let mut prevq = smt::Quantifier::Exists;
-        eprintln!("computing initial bdd...");
         let mut body = self.bdd(&body, BddMode::Fine, Insertion::Earliest)?;
         for Quantifier { quantifier, target } in quantifiers {
-            match quantifier {
-                smt::Quantifier::Forall => eprint!("eliminating forall {}... ", target.name()),
-                smt::Quantifier::Exists => eprint!("eliminating exists {}... ", target.name()),
-            }
-
             if prevq != quantifier {
                 body = body.not()?;
             }
@@ -340,17 +334,8 @@ impl QE {
 
             if strategy == Strategy::Immediate && *target.sort() == Core::Bool() {
                 body = self.project(&target, body)?;
-                eprintln!("eliminated with Boolean projection!");
             } else {
-                let calls = Arc::new(AtomicUsize::new(0));
-                body = self
-                    .eliminate(target, body, strategy, calls.clone())
-                    .await?;
-
-                eprintln!(
-                    "eliminated with {} QE calls!",
-                    calls.load(Ordering::Relaxed)
-                );
+                body = self.eliminate(target, body, strategy).await?;
             }
         }
 
@@ -406,49 +391,38 @@ impl QE {
         })
     }
 
-    fn top(&self) -> BCDDFunction {
+    fn top(&self) -> BDD {
         self.top.clone()
     }
 
-    fn bottom(&self) -> BCDDFunction {
+    fn bottom(&self) -> BDD {
         self.bottom.clone()
     }
 
     #[allow(unused)]
-    fn project(&self, target: &Variable, body: BCDDFunction) -> Result<BCDDFunction> {
+    fn project(&self, target: &Variable, body: BDD) -> Result<BDD> {
         debug_assert_eq!(*target.sort(), Core::Bool());
 
         let target = target.into_term_in(&*self.pool);
         let var = self.atom(target, Insertion::Earliest);
-        let var = self
-            .manager
-            .with_manager_shared(|m| BCDDFunction::var(m, var))?;
+        let var = self.manager.with_manager_shared(|m| BDD::var(m, var))?;
 
         Ok(body.exists(&var)?)
     }
 
-    async fn eliminate(
-        &self,
-        target: Variable,
-        body: BCDDFunction,
-        strategy: Strategy,
-        calls: Arc<AtomicUsize>,
-    ) -> Result<BCDDFunction> {
+    async fn eliminate(&self, target: Variable, body: BDD, strategy: Strategy) -> Result<BDD> {
         let cache = Arc::new(MemoMap::new(self.manager.clone()));
-        self.arc()
-            .eliminate_in(target, body, strategy, cache, calls)
-            .await
+        self.arc().eliminate_in(target, body, strategy, cache).await
     }
 
     #[async_recursion]
     async fn eliminate_in(
         self: Arc<Self>,
         target: Variable,
-        body: BCDDFunction,
+        body: BDD,
         strategy: Strategy,
-        cache: Arc<MemoMap<BCDDFunction, Result<BCDDFunction>>>,
-        calls: Arc<AtomicUsize>,
-    ) -> Result<BCDDFunction> {
+        cache: Arc<MemoMap<BDD, Result<BDD>>>,
+    ) -> Result<BDD> {
         cache
             .clone()
             .get_or_insert(body, async move |body| match body.cofactors() {
@@ -460,7 +434,7 @@ impl QE {
                         let level = node.level();
                         let var = m.level_to_var(level);
 
-                        Ok((level, BCDDFunction::var(m, var)?))
+                        Ok((level, BDD::var(m, var)?))
                     })?;
 
                     let cutoff = self.cutoff(&target).unwrap();
@@ -469,10 +443,8 @@ impl QE {
                         let self2 = self.clone();
                         let target2 = target.clone();
                         let cache2 = cache.clone();
-                        let calls2 = calls.clone();
-                        let high = m.spawn(self.eliminate_in(target, high, strategy, cache, calls));
-                        let low =
-                            m.spawn(self2.eliminate_in(target2, low, strategy, cache2, calls2));
+                        let high = m.spawn(self.eliminate_in(target, high, strategy, cache));
+                        let low = m.spawn(self2.eliminate_in(target2, low, strategy, cache2));
 
                         Ok(guard.ite(&high.await?, &low.await?)?)
                     } else {
@@ -499,16 +471,12 @@ impl QE {
                         match strategy {
                             Strategy::Immediate => {
                                 let eliminated = qe().await?;
-                                calls.fetch_add(1, Ordering::Relaxed);
                                 self.bdd(&eliminated, BddMode::Coarse, Insertion::Bottom)
                             }
                             Strategy::Delayed => {
                                 let var = self.new_var(None);
                                 self.partials.provide(var, async move |_| qe().await);
-                                calls.fetch_add(1, Ordering::Relaxed);
-                                Ok(self
-                                    .manager
-                                    .with_manager_shared(|m| BCDDFunction::var(m, var))?)
+                                Ok(self.manager.with_manager_shared(|m| BDD::var(m, var))?)
                             }
                         }
                     }
@@ -643,12 +611,7 @@ impl QE {
         (self.free(term) & &self.booleans).any()
     }
 
-    fn bdd(
-        &self,
-        term: &Term,
-        construction: BddMode,
-        insertion: Insertion,
-    ) -> Result<BCDDFunction> {
+    fn bdd(&self, term: &Term, construction: BddMode, insertion: Insertion) -> Result<BDD> {
         self.bdd_in(term, construction, insertion, &mut HashMap::new())
     }
 
@@ -658,8 +621,8 @@ impl QE {
         term: &Term,
         mode: BddMode,
         insertion: Insertion,
-        cache: &mut HashMap<Term, BCDDFunction>,
-    ) -> Result<BCDDFunction> {
+        cache: &mut HashMap<Term, BDD>,
+    ) -> Result<BDD> {
         if let Some(bdd) = cache.get(term) {
             return Ok(bdd.clone());
         }
@@ -673,9 +636,7 @@ impl QE {
             }
 
             let var = self.atom(term.simplified(&*self.pool), Insertion::Bottom);
-            let bdd = self
-                .manager
-                .with_manager_shared(|m| BCDDFunction::var(m, var))?;
+            let bdd = self.manager.with_manager_shared(|m| BDD::var(m, var))?;
             cache.insert(term.clone(), bdd.clone());
             return Ok(bdd);
         }
@@ -731,15 +692,13 @@ impl QE {
                                 //     })?
                             } else {
                                 let var = self.atom(term.simplified(&*self.pool), insertion);
-                                self.manager
-                                    .with_manager_shared(|m| BCDDFunction::var(m, var))?
+                                self.manager.with_manager_shared(|m| BDD::var(m, var))?
                             }
                         }
                     }
                 } else {
                     let var = self.atom(term.simplified(&*self.pool), insertion);
-                    self.manager
-                        .with_manager_shared(|m| BCDDFunction::var(m, var))?
+                    self.manager.with_manager_shared(|m| BDD::var(m, var))?
                 }
             }
             _ => unreachable!(),
@@ -751,7 +710,7 @@ impl QE {
     }
 
     #[allow(clippy::mutable_key_type)]
-    async fn term(&self, bdd: &BCDDFunction) -> Result<Term> {
+    async fn term(&self, bdd: &BDD) -> Result<Term> {
         Ok(self
             .term_in(bdd.clone(), &mut HashMap::new())
             .await?
@@ -761,8 +720,8 @@ impl QE {
     #[allow(clippy::mutable_key_type)]
     fn term_in<'s>(
         &'s self,
-        bdd: BCDDFunction,
-        cache: &'s mut HashMap<BCDDFunction, Term>,
+        bdd: BDD,
+        cache: &'s mut HashMap<BDD, Term>,
     ) -> Pin<Box<dyn 's + Send + Future<Output = Result<Term>>>> {
         Box::pin(async move {
             if let Some(term) = cache.get(&bdd) {
