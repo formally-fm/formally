@@ -62,7 +62,7 @@ use std::{
     fmt::Debug,
     num::NonZero,
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicU32, AtomicUsize, Ordering},
     },
 };
@@ -186,12 +186,19 @@ struct OrderBlock {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum BddConstruction {
+enum Insertion {
+    Earliest,
+    Bottom,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BddMode {
     Coarse,
     Fine,
 }
 
 struct QE {
+    this: Weak<QE>,
     manager: BCDDManagerRef,
     top: BCDDFunction,
     bottom: BCDDFunction,
@@ -199,7 +206,7 @@ struct QE {
     env: Env,
     backend: &'static dyn Backend,
     atoms: SyncBiMap<Term, VarNo>,
-    free: scc::HashMap<Term, BitSet>,
+    free: MemoMap<Term, BitSet>,
     variables: BiMap<Variable, usize>,
     order: Vec<OrderBlock>,
     booleans: BitSet,
@@ -222,18 +229,23 @@ impl QE {
         let manager = oxidd::bcdd::new_manager(2usize.pow(30), 2usize.pow(20), jobs);
         manager.workers().set_split_depth(Some(0));
         QE {
+            this: Weak::new(),
             top: manager.with_manager_shared(|m| BCDDFunction::t(m)),
             bottom: manager.with_manager_shared(|m| BCDDFunction::f(m)),
+            free: MemoMap::new(manager.clone()),
             manager,
             pool,
             env,
             backend,
             atoms: SyncBiMap::new(),
-            free: scc::HashMap::new(),
             variables: BiMap::new(),
             order: Vec::new(),
             booleans: BitSet::new(),
         }
+    }
+
+    fn arc(&self) -> Arc<Self> {
+        self.this.upgrade().unwrap()
     }
 
     fn setup(&mut self, quantifiers: &[Quantifier]) {
@@ -265,6 +277,15 @@ impl QE {
                     capacity: RwLock::new(BLOCK),
                 })
             }
+
+            // last block for atoms corresponding to QE calls
+            let vars = m.add_vars(BLOCK);
+            self.order.push(OrderBlock {
+                target: None,
+                start: vars.start,
+                len: AtomicU32::new(0),
+                capacity: RwLock::new(BLOCK),
+            });
         })
     }
 
@@ -280,16 +301,19 @@ impl QE {
         self.setup(&quantifiers);
 
         let manager = self.manager.clone();
-        let this = Arc::new(self);
-        let main = manager.spawn(async { this.qe_in(quantifiers, body).await });
+        let this = Arc::new_cyclic(|weak| QE {
+            this: weak.clone(),
+            ..self
+        });
+        let main = manager.spawn(async move { this.qe_in(quantifiers, body).await });
 
         futures::executor::block_on(main)
     }
 
-    async fn qe_in(self: Arc<Self>, quantifiers: Vec<Quantifier>, body: Term) -> Result<Term> {
+    async fn qe_in(&self, quantifiers: Vec<Quantifier>, body: Term) -> Result<Term> {
         let mut prevq = smt::Quantifier::Exists;
         eprintln!("computing initial bdd...");
-        let mut body = self.bdd(&body, BddConstruction::Fine)?;
+        let mut body = self.bdd(&body, BddMode::Fine, Insertion::Earliest)?;
         for Quantifier { quantifier, target } in quantifiers {
             match quantifier {
                 smt::Quantifier::Forall => eprint!("eliminating forall {}... ", target.name()),
@@ -301,18 +325,18 @@ impl QE {
             }
             prevq = quantifier;
 
-            // if *target.sort() == Core::Bool() {
-            //     body = self.project(&target, body)?;
-            //     eprintln!("eliminated with Boolean projection!");
-            // } else {
-            let calls = Arc::new(AtomicUsize::new(0));
-            body = self.clone().eliminate(target, body, calls.clone()).await?;
+            if *target.sort() == Core::Bool() {
+                body = self.project(&target, body)?;
+                eprintln!("eliminated with Boolean projection!");
+            } else {
+                let calls = Arc::new(AtomicUsize::new(0));
+                body = self.eliminate(target, body, calls.clone()).await?;
 
-            eprintln!(
-                "eliminated with {} QE calls!",
-                calls.load(Ordering::Relaxed)
-            );
-            //}
+                eprintln!(
+                    "eliminated with {} QE calls!",
+                    calls.load(Ordering::Relaxed)
+                );
+            }
         }
 
         if prevq == smt::Quantifier::Forall {
@@ -380,7 +404,7 @@ impl QE {
         debug_assert_eq!(*target.sort(), Core::Bool());
 
         let target = target.into_term_in(&*self.pool);
-        let var = self.atom(target);
+        let var = self.atom(target, Insertion::Earliest);
         let var = self
             .manager
             .with_manager_shared(|m| BCDDFunction::var(m, var))?;
@@ -389,13 +413,13 @@ impl QE {
     }
 
     async fn eliminate(
-        self: Arc<Self>,
+        &self,
         target: Variable,
         body: BCDDFunction,
         calls: Arc<AtomicUsize>,
     ) -> Result<BCDDFunction> {
-        let cache = Arc::new(AsyncMemoMap::new(self.manager.clone()));
-        self.eliminate_in(target, body, cache, calls).await
+        let cache = Arc::new(MemoMap::new(self.manager.clone()));
+        self.arc().eliminate_in(target, body, cache, calls).await
     }
 
     #[async_recursion]
@@ -403,7 +427,7 @@ impl QE {
         self: Arc<Self>,
         target: Variable,
         body: BCDDFunction,
-        cache: Arc<AsyncMemoMap<BCDDFunction, Result<BCDDFunction>>>,
+        cache: Arc<MemoMap<BCDDFunction, Result<BCDDFunction>>>,
         calls: Arc<AtomicUsize>,
     ) -> Result<BCDDFunction> {
         cache
@@ -447,14 +471,7 @@ impl QE {
                         calls.fetch_add(1, Ordering::Relaxed);
                         let eliminated = solver.qe(quant)?;
 
-                        let var = self.manager.with_manager_exclusive(|m| m.add_vars(1).start);
-                        let bdd = self
-                            .manager
-                            .with_manager_shared(|m| BCDDFunction::var(m, var))?;
-                        self.atoms.insert(eliminated, var);
-
-                        Ok(bdd)
-                        //self.bdd(&eliminated, BddConstruction::Coarse)
+                        self.bdd(&eliminated, BddMode::Coarse, Insertion::Bottom)
                     }
                 }
                 None => Ok(body),
@@ -472,17 +489,20 @@ impl QE {
     //    - maintain the cutoffs and insertion points of each block (possibly at the bottom)
     // We need basically the same logic of a vector for each block: cutoff, len, capacity.
     // For the initial configuration see setup()
-    fn atom(&self, term: Term) -> VarNo {
+    fn atom(&self, term: Term, insertion: Insertion) -> VarNo {
         let size = self.atoms.size();
         self.atoms.by_key_or_insert(term, |term| {
             // block zero is for atoms mentioning no variables to be eliminated.
-            // other blocks are at variable's index + 1
-            let earliest = match self.earliest(term) {
-                Some(variable) => self.variables.by_key(&variable).unwrap() + 1,
-                None => 0,
+            // other blocks are at variable's index + 1. The last block is the "bottom" block.
+            let index = match insertion {
+                Insertion::Earliest => match self.earliest(term) {
+                    Some(variable) => self.variables.by_key(&variable).unwrap() + 1,
+                    None => 0,
+                },
+                Insertion::Bottom => self.order.len() - 1,
             };
 
-            let block = &self.order[earliest];
+            let block = &self.order[index];
 
             // we reserve our place by incrementing `len` atomically.
             // nobody will reuse that spot
@@ -537,55 +557,59 @@ impl QE {
     }
 
     fn free(&self, term: &Term) -> BitSet {
-        if let Some(bits) = self.free.get_sync(term) {
-            return bits.clone();
-        }
+        self.arc().free_in(term)
+    }
 
-        let bits = match term.kind() {
-            TermKind::Constant(_) => BitSet::new(),
-            TermKind::Atom(atom) => {
-                let mut bits = BitSet::new();
-                if let FunctionRef::Bound(bound) = &atom.head
-                    && let Function::Variable(variable) = &bound.function
-                    && let Some(index) = self.variables.by_key(variable)
-                {
-                    bits.set(index, true);
+    fn free_in(self: Arc<Self>, term: &Term) -> BitSet {
+        self.clone()
+            .free
+            .get_or_insert_sync(term.clone(), move |term| match term.kind() {
+                TermKind::Constant(_) => BitSet::new(),
+                TermKind::Atom(atom) => {
+                    let mut bits = BitSet::new();
+                    if let FunctionRef::Bound(bound) = &atom.head
+                        && let Function::Variable(variable) = &bound.function
+                        && let Some(index) = self.variables.by_key(variable)
+                    {
+                        bits.set(index, true);
+                    }
+
+                    for arg in &*atom.arguments {
+                        bits |= self.clone().free(arg)
+                    }
+
+                    bits
                 }
-
-                for arg in &*atom.arguments {
-                    bits |= self.free(arg)
-                }
-
-                bits
-            }
-            _ => unreachable!(),
-        };
-
-        self.free.insert_sync(term.clone(), bits.clone()).ok();
-
-        bits
+                _ => unreachable!(),
+            })
     }
 
     fn has_booleans(&self, term: &Term) -> bool {
         (self.free(term) & &self.booleans).any()
     }
 
-    fn bdd(&self, term: &Term, construction: BddConstruction) -> Result<BCDDFunction> {
-        self.bdd_in(term, construction, &mut HashMap::new())
+    fn bdd(
+        &self,
+        term: &Term,
+        construction: BddMode,
+        insertion: Insertion,
+    ) -> Result<BCDDFunction> {
+        self.bdd_in(term, construction, insertion, &mut HashMap::new())
     }
 
     #[allow(clippy::mutable_key_type)]
     fn bdd_in(
         &self,
         term: &Term,
-        construction: BddConstruction,
+        mode: BddMode,
+        insertion: Insertion,
         cache: &mut HashMap<Term, BCDDFunction>,
     ) -> Result<BCDDFunction> {
         if let Some(bdd) = cache.get(term) {
             return Ok(bdd.clone());
         }
 
-        if construction == BddConstruction::Coarse && !self.has_booleans(term) {
+        if mode == BddMode::Coarse && !self.has_booleans(term) {
             if *term == true {
                 return Ok(self.top());
             }
@@ -593,7 +617,7 @@ impl QE {
                 return Ok(self.bottom());
             }
 
-            let var = self.atom(term.simplified(&*self.pool));
+            let var = self.atom(term.simplified(&*self.pool), Insertion::Bottom);
             let bdd = self
                 .manager
                 .with_manager_shared(|m| BCDDFunction::var(m, var))?;
@@ -607,34 +631,34 @@ impl QE {
                     match atom {
                         CoreAtom::True => self.top(),
                         CoreAtom::False => self.bottom(),
-                        CoreAtom::Not(arg) => self.bdd_in(arg, construction, cache)?.not()?,
+                        CoreAtom::Not(arg) => self.bdd_in(arg, mode, insertion, cache)?.not()?,
                         CoreAtom::Implies(args) => args
                             .iter()
                             .enumerate()
                             .map(|(i, arg)| {
                                 if i == args.len() - 1 {
-                                    self.bdd_in(arg, construction, cache)
+                                    self.bdd_in(arg, mode, insertion, cache)
                                 } else {
-                                    Ok(self.bdd_in(arg, construction, cache)?.not()?)
+                                    Ok(self.bdd_in(arg, mode, insertion, cache)?.not()?)
                                 }
                             })
                             .try_fold(self.bottom(), |acc, arg| Ok::<_, Error>(acc.or(&arg?)?))?,
                         CoreAtom::And(args) => args
                             .iter()
-                            .map(|arg| self.bdd_in(arg, construction, cache))
+                            .map(|arg| self.bdd_in(arg, mode, insertion, cache))
                             .try_fold(self.top(), |acc, arg| Ok::<_, Error>(acc.and(&arg?)?))?,
                         CoreAtom::Or(args) => args
                             .iter()
-                            .map(|arg| self.bdd_in(arg, construction, cache))
+                            .map(|arg| self.bdd_in(arg, mode, insertion, cache))
                             .try_fold(self.bottom(), |acc, arg| Ok::<_, Error>(acc.or(&arg?)?))?,
                         CoreAtom::Xor(args) => args
                             .iter()
-                            .map(|arg| self.bdd_in(arg, construction, cache))
+                            .map(|arg| self.bdd_in(arg, mode, insertion, cache))
                             .try_fold(self.bottom(), |acc, arg| Ok::<_, Error>(acc.xor(&arg?)?))?,
                         CoreAtom::Ite(guard, high, low) => {
-                            let guard = self.bdd_in(guard, construction, cache)?;
-                            let high = self.bdd_in(high, construction, cache)?;
-                            let low = self.bdd_in(low, construction, cache)?;
+                            let guard = self.bdd_in(guard, mode, insertion, cache)?;
+                            let high = self.bdd_in(high, mode, insertion, cache)?;
+                            let low = self.bdd_in(low, mode, insertion, cache)?;
 
                             guard.ite(&high, &low)?
                         }
@@ -651,14 +675,14 @@ impl QE {
                                 //         Ok::<_, Error>(acc.imp(&arg)?.and(&arg.imp(&acc)?)?)
                                 //     })?
                             } else {
-                                let var = self.atom(term.simplified(&*self.pool));
+                                let var = self.atom(term.simplified(&*self.pool), insertion);
                                 self.manager
                                     .with_manager_shared(|m| BCDDFunction::var(m, var))?
                             }
                         }
                     }
                 } else {
-                    let var = self.atom(term.simplified(&*self.pool));
+                    let var = self.atom(term.simplified(&*self.pool), insertion);
                     self.manager
                         .with_manager_shared(|m| BCDDFunction::var(m, var))?
                 }

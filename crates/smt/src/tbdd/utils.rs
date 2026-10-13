@@ -208,9 +208,9 @@ impl<K: Clone + Hash + Eq, I: Clone + Hash + Eq> BiMap<K, I> {
     }
 }
 
-pub struct AsyncMemoMap<K, R> {
+pub struct MemoMap<K, R> {
     manager: BCDDManagerRef,
-    map: scc::HashMap<K, Arc<SetOnce<R>>>,
+    map: DashMap<K, Arc<SetOnce<R>>>,
 }
 
 pub struct MemoEntry<R>(Arc<SetOnce<R>>);
@@ -221,27 +221,18 @@ impl<R> MemoEntry<R> {
     }
 }
 
-impl<K, R> AsyncMemoMap<K, R> {
-    pub fn new(manager: BCDDManagerRef) -> Self {
-        AsyncMemoMap {
-            manager,
-            map: scc::HashMap::new(),
-        }
-    }
-}
-
-impl<K: 'static + Clone + Send + Sync + Hash + Eq, R: 'static + Send + Sync> AsyncMemoMap<K, R> {
-    pub async fn provide<F, Ft>(&self, key: K, f: F) -> MemoEntry<R>
+impl<K: 'static + Clone + Send + Sync + Hash + Eq, R: 'static + Send + Sync> MemoMap<K, R> {
+    pub fn provide<F, Ft>(&self, key: K, f: F) -> MemoEntry<R>
     where
         F: 'static + Send + FnOnce(K) -> Ft,
         Ft: Send + Future<Output = R>,
     {
-        match self.map.entry_async(key).await {
-            scc::hash_map::Entry::Occupied(entry) => MemoEntry(entry.get().clone()),
-            scc::hash_map::Entry::Vacant(entry) => {
+        match self.map.entry(key) {
+            Entry::Occupied(entry) => MemoEntry(entry.get().clone()),
+            Entry::Vacant(entry) => {
                 let once = Arc::new(SetOnce::new());
                 let key = entry.key().clone();
-                entry.insert_entry(once.clone());
+                entry.insert(once.clone());
                 let once2 = once.clone();
                 self.manager.spawn(async move {
                     once.set(f(key).await).ok();
@@ -254,92 +245,35 @@ impl<K: 'static + Clone + Send + Sync + Hash + Eq, R: 'static + Send + Sync> Asy
     pub async fn get_or_insert<F, Ft>(&self, key: K, f: F) -> R
     where
         R: Clone,
-        K: 'static + Clone + Send + Sync,
         F: 'static + Send + FnOnce(K) -> Ft,
         Ft: Send + Future<Output = R>,
     {
-        self.provide(key, f).await.get().await.clone()
+        self.provide(key, f).get().await.clone()
+    }
+
+    pub fn get_or_insert_sync<F>(&self, key: K, f: F) -> R
+    where
+        R: Clone,
+        F: 'static + Send + FnOnce(K) -> R,
+    {
+        futures::executor::block_on(self.get_or_insert(key, async move |key| f(key)))
     }
 }
 
-impl<K: Hash + Eq, R> AsyncMemoMap<K, R> {
-    pub async fn get(&self, key: K) -> Option<MemoEntry<R>> {
-        self.map
-            .get_async(&key)
-            .await
-            .map(|entry| MemoEntry(entry.get().clone()))
+impl<K: Hash + Eq, R> MemoMap<K, R> {
+    pub fn new(manager: BCDDManagerRef) -> Self {
+        MemoMap {
+            manager,
+            map: DashMap::new(),
+        }
+    }
+
+    pub fn get(&self, key: &K) -> Option<MemoEntry<R>> {
+        self.map.get(key).map(|entry| MemoEntry((*entry).clone()))
     }
 
     pub fn size(&self) -> usize {
         self.map.len()
-    }
-}
-
-pub struct AsyncBiMap<K: Hash + Eq, I: Hash + Eq> {
-    key_to_index: scc::HashMap<K, I>,
-    index_to_key: scc::HashMap<I, K>,
-}
-
-impl<K: Hash + Eq, I: Hash + Eq> Default for AsyncBiMap<K, I> {
-    fn default() -> Self {
-        AsyncBiMap::new()
-    }
-}
-
-impl<K: Hash + Eq, I: Hash + Eq> AsyncBiMap<K, I> {
-    pub fn new() -> Self {
-        AsyncBiMap {
-            key_to_index: scc::HashMap::new(),
-            index_to_key: scc::HashMap::new(),
-        }
-    }
-
-    pub fn size(&self) -> usize {
-        self.index_to_key.len()
-    }
-}
-
-impl<K: Clone + Hash + Eq, I: Clone + Hash + Eq> AsyncBiMap<K, I> {
-    pub async fn by_index(&self, index: &I) -> Option<K> {
-        self.index_to_key.get_async(index).await.as_deref().cloned()
-    }
-
-    pub async fn by_key(&self, key: &K) -> Option<I> {
-        self.key_to_index.get_async(key).await.as_deref().cloned()
-    }
-
-    pub async fn insert(&self, key: K, index: I) {
-        let e1 = self.key_to_index.entry_async(key).await;
-        let e2 = self.index_to_key.entry_async(index).await;
-
-        let key = e1.key().clone();
-        let index = e2.key().clone();
-
-        e1.insert_entry(index);
-        e2.insert_entry(key);
-    }
-
-    pub async fn by_key_or_insert<F, Ft>(&self, key: K, f: F) -> I
-    where
-        F: FnOnce(K) -> Ft,
-        Ft: Future<Output = I>,
-    {
-        if let Some(index) = self.key_to_index.get_async(&key).await {
-            return index.clone();
-        }
-
-        let index = f(key.clone()).await;
-
-        match self.key_to_index.entry_async(key).await {
-            scc::hash_map::Entry::Occupied(entry) => entry.get().clone(),
-            scc::hash_map::Entry::Vacant(entry) => {
-                self.index_to_key
-                    .insert_async(index.clone(), entry.key().clone())
-                    .await;
-                entry.insert_entry(index.clone());
-                index
-            }
-        }
     }
 }
 
