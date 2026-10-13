@@ -206,7 +206,6 @@ struct QE {
     env: Env,
     backend: &'static dyn Backend,
     atoms: SyncBiMap<Term, VarNo>,
-    free: MemoMap<Term, BitSet>,
     variables: BiMap<Variable, usize>,
     order: Vec<OrderBlock>,
     booleans: BitSet,
@@ -232,7 +231,6 @@ impl QE {
             this: Weak::new(),
             top: manager.with_manager_shared(|m| BCDDFunction::t(m)),
             bottom: manager.with_manager_shared(|m| BCDDFunction::f(m)),
-            free: MemoMap::new(manager.clone()),
             manager,
             pool,
             env,
@@ -557,31 +555,38 @@ impl QE {
     }
 
     fn free(&self, term: &Term) -> BitSet {
-        self.arc().free_in(term)
+        self.free_in(term, &mut HashMap::new())
     }
 
-    fn free_in(self: Arc<Self>, term: &Term) -> BitSet {
-        self.clone()
-            .free
-            .get_or_insert_sync(term.clone(), move |term| match term.kind() {
-                TermKind::Constant(_) => BitSet::new(),
-                TermKind::Atom(atom) => {
-                    let mut bits = BitSet::new();
-                    if let FunctionRef::Bound(bound) = &atom.head
-                        && let Function::Variable(variable) = &bound.function
-                        && let Some(index) = self.variables.by_key(variable)
-                    {
-                        bits.set(index, true);
-                    }
+    #[allow(clippy::mutable_key_type)]
+    fn free_in(&self, term: &Term, cache: &mut HashMap<Term, BitSet>) -> BitSet {
+        if let Some(bits) = cache.get(term) {
+            return bits.clone();
+        }
 
-                    for arg in &*atom.arguments {
-                        bits |= self.clone().free(arg)
-                    }
-
-                    bits
+        let bits = match term.kind() {
+            TermKind::Constant(_) => BitSet::new(),
+            TermKind::Atom(atom) => {
+                let mut bits = BitSet::new();
+                if let FunctionRef::Bound(bound) = &atom.head
+                    && let Function::Variable(variable) = &bound.function
+                    && let Some(index) = self.variables.by_key(variable)
+                {
+                    bits.set(index, true);
                 }
-                _ => unreachable!(),
-            })
+
+                for arg in &*atom.arguments {
+                    bits |= self.free(arg)
+                }
+
+                bits
+            }
+            _ => unreachable!(),
+        };
+
+        cache.insert(term.clone(), bits.clone());
+
+        bits
     }
 
     fn has_booleans(&self, term: &Term) -> bool {

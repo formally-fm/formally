@@ -250,14 +250,6 @@ impl<K: 'static + Clone + Send + Sync + Hash + Eq, R: 'static + Send + Sync> Mem
     {
         self.provide(key, f).get().await.clone()
     }
-
-    pub fn get_or_insert_sync<F>(&self, key: K, f: F) -> R
-    where
-        R: Clone,
-        F: 'static + Send + FnOnce(K) -> R,
-    {
-        futures::executor::block_on(self.get_or_insert(key, async move |key| f(key)))
-    }
 }
 
 impl<K: Hash + Eq, R> MemoMap<K, R> {
