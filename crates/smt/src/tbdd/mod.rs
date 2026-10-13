@@ -683,13 +683,25 @@ impl QE {
                                 .iter()
                                 .any(|arg| Sort::of(arg).unwrap() == Core::Bool())
                             {
-                                todo!()
-                                // args.iter()
-                                //     .map(|arg| self.bdd_in(arg, construction, cache, depth))
-                                //     .try_fold(self.top(), |acc, arg| {
-                                //         let arg = arg?;
-                                //         Ok::<_, Error>(acc.imp(&arg)?.and(&arg.imp(&acc)?)?)
-                                //     })?
+                                let bdds: Vec<_> = args
+                                    .iter()
+                                    .map(|t| self.bdd_in(t, mode, insertion, cache))
+                                    .try_collect()?;
+
+                                if let CoreAtom::Equals(_) = atom {
+                                    let mut acc = self.top();
+                                    for (a, b) in bdds.into_iter().tuple_windows() {
+                                        acc = acc.and(&a.imp(&b)?.and(&b.imp(&a)?)?)?;
+                                    }
+                                    acc
+                                } else {
+                                    let mut acc = self.bottom();
+                                    for (a, b) in bdds.into_iter().tuple_windows() {
+                                        acc =
+                                            acc.or(&a.and(&b.not()?)?.or(&b.and(&a.not()?)?)?)?;
+                                    }
+                                    acc
+                                }
                             } else {
                                 let var = self.atom(term.simplified(&*self.pool), insertion);
                                 self.manager.with_manager_shared(|m| BDD::var(m, var))?
