@@ -31,9 +31,8 @@ use utils::*;
 use crate::formally;
 
 use formally::{
-    io::print::*,
     smt::{
-        self, Config, Env, Function, FunctionRef, Quantified, Solver, Sort, Term, TermKind,
+        self, Atom, Config, Env, Function, FunctionRef, Quantified, Solver, Sort, Term, TermKind,
         TermManager, TermPool, ToTerm, Variable,
         backends::Backend,
         theories::{Core, CoreAtom},
@@ -55,6 +54,9 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use thiserror::Error;
 use transitive::Transitive;
+
+#[allow(unused)]
+use rand::prelude::*;
 
 use async_recursion::async_recursion;
 use std::{
@@ -103,7 +105,139 @@ pub fn qe(
     backend: &'static dyn Backend,
     jobs: Option<NonZero<u32>>,
 ) -> Result<Term> {
-    qe_in(term, pool, env, backend, jobs, &HashMap::new())
+    let term = expand_let(term, &*pool, &HashMap::new());
+    let term = hoist_ite(&term, &*pool, &mut HashMap::new());
+    qe_in(&term, pool, env, backend, jobs)
+}
+
+// (f (ite b x y) z w) -> (ite b (f x z w) (f y z w))
+#[allow(clippy::mutable_key_type)]
+fn hoist_ite_in(
+    head: &FunctionRef,
+    arguments: &[Term],
+    pool: &dyn TermPool,
+    cache: &mut HashMap<Term, Term>,
+) -> Term {
+    for (i, arg) in arguments.iter().enumerate() {
+        if let Ok(CoreAtom::Ite(guard, high, low)) = CoreAtom::try_from(arg)
+            && Sort::of(arg).unwrap() != Core::Bool()
+        {
+            let mut argshigh = arguments.to_vec();
+            argshigh[i] = high.clone();
+
+            let mut argslow = arguments.to_vec();
+            argslow[i] = low.clone();
+
+            let high = Atom {
+                head: head.clone(),
+                arguments: Arc::from(argshigh.into_boxed_slice()),
+                span: None,
+            }
+            .into_term_in(pool);
+
+            let low = Atom {
+                head: head.clone(),
+                arguments: Arc::from(argslow.into_boxed_slice()),
+                span: None,
+            }
+            .into_term_in(pool);
+
+            let high = hoist_ite(&high, pool, cache);
+            let low = hoist_ite(&low, pool, cache);
+
+            return Core::ite()
+                .call([guard.clone(), high, low])
+                .into_term_in(pool);
+        }
+    }
+
+    Atom {
+        head: head.clone(),
+        arguments: arguments.iter().cloned().collect(),
+        span: None,
+    }
+    .into_term_in(pool)
+}
+
+#[allow(clippy::mutable_key_type)]
+fn hoist_ite(term: &Term, pool: &dyn TermPool, cache: &mut HashMap<Term, Term>) -> Term {
+    if let Some(term) = cache.get(term) {
+        return term.clone();
+    }
+
+    let result = match term.kind() {
+        TermKind::Constant(_) => term.clone(),
+        TermKind::Atom(atom) => {
+            if let Ok(CoreAtom::Ite(guard, high, low)) = CoreAtom::try_from(atom) {
+                Core::ite()
+                    .call([
+                        hoist_ite(guard, pool, cache),
+                        hoist_ite(high, pool, cache),
+                        hoist_ite(low, pool, cache),
+                    ])
+                    .into_term_in(pool)
+            } else {
+                let mut arguments = Vec::with_capacity(atom.arguments.len());
+                for arg in &*atom.arguments {
+                    arguments.push(hoist_ite(arg, pool, cache));
+                }
+
+                hoist_ite_in(&atom.head, &arguments, pool, cache)
+            }
+        }
+        TermKind::Quantified(quant) => Quantified {
+            quantifier: quant.quantifier,
+            variables: quant.variables.clone(),
+            body: hoist_ite(&quant.body, pool, cache),
+            span: None,
+        }
+        .into_term_in(pool),
+        TermKind::Let(_) => unreachable!(),
+    };
+
+    cache.insert(term.clone(), result.clone());
+
+    result
+}
+
+#[allow(clippy::mutable_key_type)]
+fn expand_let(term: &Term, pool: &dyn TermPool, scope: &HashMap<Variable, Term>) -> Term {
+    match term.kind() {
+        TermKind::Constant(_) => term.clone(),
+        TermKind::Atom(atom) => {
+            if let FunctionRef::Bound(bound) = &atom.head
+                && let Function::Variable(var) = &bound.function
+                && let Some(term) = scope.get(var)
+            {
+                expand_let(term, pool, scope)
+            } else {
+                Atom {
+                    head: atom.head.clone(),
+                    arguments: atom
+                        .arguments
+                        .iter()
+                        .map(|arg| expand_let(arg, pool, scope))
+                        .collect(),
+                    span: atom.span(),
+                }
+                .into_term_in(pool)
+            }
+        }
+        TermKind::Quantified(quant) => Quantified {
+            quantifier: quant.quantifier,
+            variables: quant.variables.clone(),
+            body: expand_let(&quant.body, pool, scope),
+            span: None,
+        }
+        .into_term_in(pool),
+        TermKind::Let(let_) => {
+            let mut nested = scope.clone();
+            for bind in &*let_.bindings {
+                nested.insert(bind.variable.clone(), expand_let(&bind.def, pool, scope));
+            }
+            expand_let(&let_.body, pool, &nested)
+        }
+    }
 }
 
 #[allow(clippy::mutable_key_type)]
@@ -113,29 +247,19 @@ fn qe_in(
     env: Env,
     backend: &'static dyn Backend,
     jobs: Option<NonZero<u32>>,
-    bindings: &HashMap<Variable, Term>,
 ) -> Result<Term> {
     match term.kind() {
         TermKind::Constant(_) => Ok(term.clone()),
-        TermKind::Atom(atom) => {
-            if let FunctionRef::Bound(bound) = &atom.head
-                && let Function::Variable(var) = &bound.function
-                && let Some(term) = bindings.get(var)
-            {
-                qe_in(term, pool, env, backend, jobs, bindings)
-            } else {
-                Ok(smt::Atom {
-                    head: atom.head.clone(),
-                    arguments: atom
-                        .arguments
-                        .iter()
-                        .map(|arg| qe_in(arg, pool.clone(), env.clone(), backend, jobs, bindings))
-                        .try_collect()?,
-                    span: atom.span(),
-                }
-                .into_term_in(&*pool))
-            }
+        TermKind::Atom(atom) => Ok(Atom {
+            head: atom.head.clone(),
+            arguments: atom
+                .arguments
+                .iter()
+                .map(|arg| qe_in(arg, pool.clone(), env.clone(), backend, jobs))
+                .try_collect()?,
+            span: atom.span(),
         }
+        .into_term_in(&*pool)),
         TermKind::Quantified(_) => {
             let mut quantifiers = Vec::new();
             let mut body = term.clone();
@@ -151,29 +275,14 @@ fn qe_in(
             }
             quantifiers.reverse();
 
-            let body = qe_in(&body, pool.clone(), env.clone(), backend, jobs, bindings)?;
+            let body = qe_in(&body, pool.clone(), env.clone(), backend, jobs)?;
             QE::new(pool, env, backend, jobs).qe(quantifiers, body, Strategy::Delayed)
         }
-        TermKind::Let(let_) => {
-            let mut nested = bindings.clone();
-            for bind in &*let_.bindings {
-                nested.insert(
-                    bind.variable.clone(),
-                    qe_in(
-                        &bind.def,
-                        pool.clone(),
-                        env.clone(),
-                        backend,
-                        jobs,
-                        bindings,
-                    )?,
-                );
-            }
-            qe_in(&let_.body, pool, env, backend, jobs, &nested)
-        }
+        TermKind::Let(_) => unreachable!(),
     }
 }
 
+#[derive(Clone)]
 struct Quantifier {
     quantifier: smt::Quantifier,
     target: Variable,
@@ -186,13 +295,13 @@ struct OrderBlock {
     capacity: RwLock<u32>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Insertion {
     Earliest,
     Bottom,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BddMode {
     Coarse,
     Fine,
@@ -256,7 +365,23 @@ impl QE {
         self.this.upgrade().unwrap()
     }
 
-    fn setup(&mut self, quantifiers: &[Quantifier]) {
+    fn setup(&mut self, quantifiers: &mut [Quantifier]) {
+        self.elimination_order(quantifiers);
+        self.setup_order(quantifiers)
+    }
+
+    fn elimination_order(&self, quantifiers: &mut [Quantifier]) {
+        // The only heuristic for now is that of eliminating Boolean variables as late as possible
+        // and randomly shuffling the order after that.
+        let mut _rng = rand::rng();
+        for block in quantifiers.chunk_by_mut(|a, b| a.quantifier == b.quantifier) {
+            let _pivot = itertools::partition(&mut *block, |q| *q.target.sort() != Core::Bool());
+            // block[..pivot].shuffle(&mut rng);
+            // block[pivot..].shuffle(&mut rng);
+        }
+    }
+
+    fn setup_order(&mut self, quantifiers: &[Quantifier]) {
         const BLOCK: u32 = 10;
 
         self.manager.with_manager_exclusive(|m| {
@@ -305,8 +430,13 @@ impl QE {
         Some(level)
     }
 
-    fn qe(mut self, quantifiers: Vec<Quantifier>, body: Term, strategy: Strategy) -> Result<Term> {
-        self.setup(&quantifiers);
+    fn qe(
+        mut self,
+        mut quantifiers: Vec<Quantifier>,
+        body: Term,
+        strategy: Strategy,
+    ) -> Result<Term> {
+        self.setup(&mut quantifiers);
 
         let manager = self.manager.clone();
         let this = Arc::new_cyclic(|weak| QE {
@@ -325,17 +455,39 @@ impl QE {
         strategy: Strategy,
     ) -> Result<Term> {
         let mut prevq = smt::Quantifier::Exists;
+        eprint!("compiling initial bdd...");
         let mut body = self.bdd(&body, BddMode::Fine, Insertion::Earliest)?;
-        for Quantifier { quantifier, target } in quantifiers {
-            if prevq != quantifier {
+        eprintln!("compiled!");
+        self.print_atoms();
+        for Quantifier { quantifier, target } in &quantifiers {
+            eprint!("eliminating {}...", target.name());
+            if prevq != *quantifier {
                 body = body.not()?;
             }
-            prevq = quantifier;
+            prevq = *quantifier;
 
             if strategy == Strategy::Immediate && *target.sort() == Core::Bool() {
-                body = self.project(&target, body)?;
+                body = self.project(target, body)?;
+                eprintln!(" eliminated with Boolean projection!")
             } else {
-                body = self.eliminate(target, body, strategy).await?;
+                let frontier = Arc::new(HashMap::from_iter(
+                    quantifiers
+                        .iter()
+                        .map(|v| (v.target.clone(), AtomicU32::new(0))),
+                ));
+                body = self
+                    .eliminate(target.clone(), body, strategy, frontier.clone())
+                    .await?;
+                eprintln!(" eliminated!");
+                eprintln!("frontier:");
+                for quantifier in &quantifiers {
+                    let variable = &quantifier.target;
+                    eprintln!(
+                        " - {}: {} nodes",
+                        variable.name(),
+                        frontier[variable].load(Ordering::Relaxed)
+                    );
+                }
             }
         }
 
@@ -350,10 +502,11 @@ impl QE {
     fn print_atoms(&self) {
         self.manager.with_manager_exclusive(|m| {
             eprintln!("atoms:");
-            for block in &self.order {
+            for (i, block) in self.order.iter().enumerate() {
                 match &block.target {
                     Some(target) => eprint!("- `{}` ", target.name()),
-                    None => eprint!("- irrelevant variables "),
+                    None if i == 0 => eprint!("- irrelevant variables "),
+                    None => eprint!("- local QE surrogates "),
                 }
                 let len = block.len.load(Ordering::Relaxed);
                 let capacity = *block.capacity.read();
@@ -373,14 +526,7 @@ impl QE {
                             } else {
                                 eprint!("   ")
                             }
-                            let mut printed = Vec::new();
-                            atom.print(&mut printed).ok();
-                            let mut printed = String::from_utf8(printed).unwrap();
-                            if printed.len() > 60 {
-                                printed.truncate(60);
-                                printed.push_str("...");
-                            }
-                            eprintln!("{printed}");
+                            eprintln!("{atom}");
                         }
                         None => {
                             eprintln!();
@@ -410,9 +556,17 @@ impl QE {
         Ok(body.exists(&var)?)
     }
 
-    async fn eliminate(&self, target: Variable, body: BDD, strategy: Strategy) -> Result<BDD> {
+    async fn eliminate(
+        &self,
+        target: Variable,
+        body: BDD,
+        strategy: Strategy,
+        frontier: Arc<HashMap<Variable, AtomicU32>>,
+    ) -> Result<BDD> {
         let cache = Arc::new(MemoMap::new(self.manager.clone()));
-        self.arc().eliminate_in(target, body, strategy, cache).await
+        self.arc()
+            .eliminate_in(target, body, strategy, cache, frontier)
+            .await
     }
 
     #[async_recursion]
@@ -422,20 +576,31 @@ impl QE {
         body: BDD,
         strategy: Strategy,
         cache: Arc<MemoMap<BDD, Result<BDD>>>,
+        frontier: Arc<HashMap<Variable, AtomicU32>>,
     ) -> Result<BDD> {
         cache
             .clone()
             .get_or_insert(body, async move |body| match body.cofactors() {
                 Some((high, low)) => {
-                    let (level, guard) = body.with_manager_shared(|m, edge| -> Result<_> {
-                        let Node::Inner(node) = m.get_node(edge) else {
-                            unreachable!()
-                        };
-                        let level = node.level();
-                        let var = m.level_to_var(level);
+                    let (level, guard_var, guard) =
+                        body.with_manager_shared(|m, edge| -> Result<_> {
+                            let Node::Inner(node) = m.get_node(edge) else {
+                                unreachable!()
+                            };
+                            let level = node.level();
+                            let var = m.level_to_var(level);
 
-                        Ok((level, BDD::var(m, var)?))
-                    })?;
+                            Ok((level, var, BDD::var(m, var)?))
+                        })?;
+
+                    if let Some(term) = self.atoms.by_index(&guard_var)
+                        && let Some(variable) = self.earliest(&term)
+                    {
+                        frontier
+                            .get(&variable)
+                            .unwrap()
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
 
                     let cutoff = self.cutoff(&target).unwrap();
                     if level < cutoff {
@@ -443,8 +608,15 @@ impl QE {
                         let self2 = self.clone();
                         let target2 = target.clone();
                         let cache2 = cache.clone();
-                        let high = m.spawn(self.eliminate_in(target, high, strategy, cache));
-                        let low = m.spawn(self2.eliminate_in(target2, low, strategy, cache2));
+                        let high = m.spawn(self.eliminate_in(
+                            target,
+                            high,
+                            strategy,
+                            cache,
+                            frontier.clone(),
+                        ));
+                        let low =
+                            m.spawn(self2.eliminate_in(target2, low, strategy, cache2, frontier));
 
                         Ok(guard.ite(&high.await?, &low.await?)?)
                     } else {
@@ -465,7 +637,10 @@ impl QE {
                             let mut solver = Solver::with_manager(&Config::default(), manager)?;
                             solver.import(env)?;
 
-                            Ok(solver.qe(quant)?)
+                            let eliminated = solver.qe(quant)?;
+                            eprint!(".");
+
+                            Ok(eliminated)
                         };
 
                         match strategy {
