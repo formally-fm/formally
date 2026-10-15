@@ -656,7 +656,7 @@ impl Ast {
             Z3_goal_inc_ref(ctx, goal);
             Z3_goal_assert(ctx, goal, self.ast);
 
-            let qe = Z3_mk_tactic(ctx, c"qe".as_ptr()).unwrap();
+            let qe = Z3_mk_tactic(ctx, c"qe2".as_ptr()).unwrap();
             Z3_tactic_inc_ref(ctx, qe);
 
             let result = Z3_tactic_apply(ctx, qe, goal).unwrap();

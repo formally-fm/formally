@@ -50,6 +50,7 @@ async-recursion = "1.2.0"
 async-task = "4"
 futures = "0.3.34"
 rayon = "1.12.0"
+rand = "0.10.3"
 
 [dev-dependencies]
 rstest = "0.27.0"
