@@ -26,7 +26,7 @@ use crate::*;
 
 use perfect_derive::perfect_derive;
 
-use std::{hash::Hash, sync::Arc};
+use std::{cmp::Ordering, hash::Hash, sync::Arc};
 
 use itertools::Itertools;
 
@@ -170,20 +170,54 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
             all.push(t);
         }
 
+        Self::diagnose(self.name, filtered, all)
+    }
+
+    pub fn best_by<F>(self, cmp: F) -> Result<V>
+    where
+        F: Fn(&V, &V) -> Ordering,
+    {
+        let mut all = Vec::new();
+        let mut filtered = Vec::new();
+
+        for t in self.iterator {
+            if let Some(v) = (self.filter_map)(t)? {
+                filtered.push((t, v));
+            }
+            all.push(t);
+        }
+
+        if !filtered.is_empty() {
+            filtered.sort_by(|(_, v1), (_, v2)| cmp(v1, v2));
+            let pivot = filtered.partition_point(|(_, v)| cmp(v, &filtered[0].1) == Ordering::Equal);
+            filtered.truncate(pivot);
+        }
+
+        Self::diagnose(self.name, filtered, all)
+    }
+    
+    pub fn best(self) -> Result<V> where V: Ord {
+        self.best_by(|v1, v2| v1.cmp(v2))
+    }
+
+    fn diagnose(name: Identifier<'i>, filtered: Vec<(&T, V)>, all: Vec<&T>) -> Result<V> {
         let mut filtered = filtered.into_iter();
         let all = all.into_iter();
 
         match (filtered.next(), filtered.next()) {
             (Some((_, v)), None) => Ok(v),
             (Some((t1, _)), Some((t2, _))) => {
-                error!(
-                    self.name.span(),
-                    "ambiguous reference to symbol '{}'", self.name
-                );
-                note!(t1.span(), "matching symbol declared here");
-                note!(t2.span(), "matching symbol declared here");
+                error!(name.span(), "ambiguous reference to symbol '{}'", name);
+                if t1.span().is_some() {
+                    note!(t1.span(), "matching symbol declared here");
+                }
+                if t2.span().is_some() {
+                    note!(t2.span(), "matching symbol declared here");
+                }
                 for (t, _) in filtered {
-                    note!(t.span(), "matching symbol declared here");
+                    if t.span().is_some() {
+                        note!(t.span(), "matching symbol declared here");
+                    }
                 }
                 Err(DiagnosticEmitted)
             }
@@ -191,7 +225,7 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
                 let mut all = all.peekable();
                 match all.peek() {
                     Some(_) => {
-                        error!(self.name.span(), "no matching symbol '{}'", self.name);
+                        error!(name.span(), "no matching symbol '{}'", name);
 
                         for element in all {
                             if element.span().is_some() {
@@ -201,10 +235,7 @@ impl<'s, 'i, T: 's + Clone + Hash + Eq + Located, V: 's> LookupSet<'s, 'i, T, V>
                         Err(DiagnosticEmitted)
                     }
                     None => {
-                        error!(
-                            self.name.span(),
-                            "undefined reference to symbol '{}'", self.name
-                        );
+                        error!(name.span(), "undefined reference to symbol '{}'", name);
                         Err(DiagnosticEmitted)
                     }
                 }

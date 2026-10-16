@@ -31,7 +31,6 @@ use formally::{
     support::*,
 };
 
-use std::hash::Hash;
 use std::{collections::HashMap, iter::zip};
 use thiserror::Error;
 
@@ -98,8 +97,8 @@ impl TypeCheck for TermKind {
 impl TypeCheck for Constant {
     fn type_check(&self) -> Result<Sort, TypeCheckError> {
         match self {
-            Constant::Integer { .. } => Ok(theories::Ints::Int()),
-            Constant::Rational { .. } => Ok(theories::Reals::Real()),
+            Constant::Integer { .. } => Ok(Ints::Int()),
+            Constant::Rational { .. } => Ok(Reals::Real()),
         }
     }
 }
@@ -120,21 +119,35 @@ impl BoundRef {
 
         #[allow(clippy::mutable_key_type)]
         let mut matches = HashMap::new();
+        let mut mismatches = Vec::new();
         for (sort, arg) in zip(domain, arguments) {
             let argsort = Sort::of(arg)?;
 
             if !sort.matches_with(&argsort, &mut matches) {
-                if argsort == Ints::Int() && sort.matches_with(&Reals::Real(), &mut matches) {
+                mismatches.push((sort, argsort, arg))
+            }
+        }
+
+        for (sort, argsort, arg) in mismatches {
+            if argsort == Ints::Int() || argsort == Reals::Real() {
+                if let SortHead::Bound(func) = &sort.head
+                    && let Function::Variable(var) = &func
+                {
+                    if !matches.contains_key(var) {
+                        matches.insert(var.clone(), Reals::Real());
+                    }
+                    continue;
+                } else if sort == Reals::Real() {
                     continue;
                 }
-                return Err(TypeCheckError {
-                    kind: Box::new(TypeCheckErrorKind::SortMismatch {
-                        argument: argsort,
-                        parameter: sort,
-                    }),
-                    span: arg.span(),
-                });
             }
+            return Err(TypeCheckError {
+                kind: Box::new(TypeCheckErrorKind::SortMismatch {
+                    argument: argsort,
+                    parameter: sort,
+                }),
+                span: arg.span(),
+            });
         }
 
         let range = self.function.range().instantiate(&matches)?;
@@ -233,7 +246,7 @@ impl TypeCheck for Sort {
 impl TypeCheck for SortArgument {
     fn type_check(&self) -> Result<Sort, TypeCheckError> {
         match self {
-            SortArgument::Value(_) => Ok(theories::Ints::Int()),
+            SortArgument::Value(_) => Ok(Ints::Int()),
             SortArgument::Sort(s) => s.type_check(),
         }
     }

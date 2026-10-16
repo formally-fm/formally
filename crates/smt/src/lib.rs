@@ -354,7 +354,7 @@
 //! let x = solver.declare(Declaration::integer("x"))?;
 //! let y = solver.declare(Declaration::integer("y"))?;
 //!
-//! let term = term!(> x y).into_term_in(solver.pool());
+//! let term = term!(> x y).into_term_in(&*solver.pool());
 //!
 //! solver.require(term)?;
 //!

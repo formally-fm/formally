@@ -77,6 +77,11 @@ impl Resolve for Term {
     }
 }
 
+struct Candidate {
+    atom: Atom,
+    promoted: bool,
+}
+
 impl Term {
     fn resolve_atom(atom: &Atom, env: &Env, role: Role, pool: &dyn TermPool) -> Result<Atom> {
         match &atom.head {
@@ -136,9 +141,11 @@ impl Term {
             resolved.push(t);
         }
 
-        env.lookup(head.clone(), role)
+        Ok(env
+            .lookup(head.clone(), role)
             .filter_map(move |f| Self::candidate(f, env, head, &argsorts, &resolved, pool))
-            .one()
+            .best_by(|c1, c2| c1.promoted.cmp(&c2.promoted))?
+            .atom)
     }
 
     fn candidate(
@@ -148,7 +155,7 @@ impl Term {
         argsorts: &[Sort],
         arguments: &[Term],
         pool: &dyn TermPool,
-    ) -> Option<Atom> {
+    ) -> Option<Candidate> {
         let bound = BoundRef {
             function: f.clone(),
             span: head.span(),
@@ -161,8 +168,10 @@ impl Term {
         #[allow(clippy::mutable_key_type)]
         let mut matches = HashMap::new();
         let domain = bound.domain(arguments.len());
+        let mut promoted = false;
         for (sort, argsort) in zip(domain, argsorts) {
             if *argsort == Ints::Int() && sort.matches_with(&Reals::Real(), &mut matches) {
+                promoted = true;
                 continue;
             }
             if !sort.matches_with(argsort, &mut matches) {
@@ -170,7 +179,7 @@ impl Term {
             }
         }
 
-        Some(atom)
+        Some(Candidate { atom, promoted })
     }
 
     fn resolve_quant(
