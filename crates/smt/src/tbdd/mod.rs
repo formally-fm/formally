@@ -60,7 +60,7 @@ use rand::prelude::*;
 
 use async_recursion::async_recursion;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     num::NonZero,
     pin::Pin,
@@ -276,7 +276,7 @@ fn qe_in(
             quantifiers.reverse();
 
             let body = qe_in(&body, pool.clone(), env.clone(), backend, jobs)?;
-            QE::new(pool, env, backend, jobs).qe(quantifiers, body, Strategy::Delayed)
+            QE::new(pool, env, backend, jobs).qe(quantifiers, body, Strategy::Immediate)
         }
         TermKind::Let(_) => unreachable!(),
     }
@@ -365,23 +365,194 @@ impl QE {
         self.this.upgrade().unwrap()
     }
 
-    fn setup(&mut self, quantifiers: &mut [Quantifier]) {
-        self.elimination_order(quantifiers);
-        self.setup_order(quantifiers)
+    fn setup(&mut self, quantifiers: Vec<Quantifier>, body: &Term) -> (Vec<Quantifier>, Term) {
+        let body = body.simplified(&*self.pool);
+
+        self.setup_indexes(&quantifiers);
+        let quantifiers = self.elimination_order(quantifiers, &body);
+
+        self.setup_indexes(&quantifiers);
+        self.init_order(&quantifiers);
+
+        (quantifiers, body)
     }
 
-    fn elimination_order(&self, quantifiers: &mut [Quantifier]) {
-        // The only heuristic for now is that of eliminating Boolean variables as late as possible
-        // and randomly shuffling the order after that.
-        let mut _rng = rand::rng();
-        for block in quantifiers.chunk_by_mut(|a, b| a.quantifier == b.quantifier) {
-            let _pivot = itertools::partition(&mut *block, |q| *q.target.sort() != Core::Bool());
-            // block[..pivot].shuffle(&mut rng);
-            // block[pivot..].shuffle(&mut rng);
+    fn setup_indexes(&mut self, quantifiers: &[Quantifier]) {
+        self.variables = BiMap::new();
+        self.booleans = BitSet::new();
+
+        for (index, q) in quantifiers.iter().rev().enumerate() {
+            self.variables.insert(q.target.clone(), index);
+            if *q.target.sort() == Core::Bool() {
+                self.booleans.set(index, true);
+            }
         }
     }
 
-    fn setup_order(&mut self, quantifiers: &[Quantifier]) {
+    //
+    // New elimination order heuristic.
+    //
+    // Main observation:
+    // - if a subtree mentions a subset of the variables which is not mentioned above, eliminating
+    //   all those variables from the subtree at once reduces the problem to satisfiability.
+    // Conceptually:
+    // - Make an undirected graph with the variables as nodes and an edge between two variables iff
+    //   they appear together in an atom.
+    // - Find the connected components.
+    // - Push down together in the var order the atoms of the same connected components
+    // - Eliminate at once all the variables of the lower connected component, repeat.
+    // In practice:
+    // - we don't need the graph
+    // - start from a variable and collect all the atoms that mention it
+    // - take another variable mentioned by those atoms and collect atoms mentioning it, repeat
+    // - when there are no uncovered variables, you have your component
+    // Problem:
+    // - This can only be done precisely for a single quantifier block.
+    // - Atoms mentioning variables in later blocks prevent the reduction to satisfiability.
+    // - Still it can be useful to eliminate all the variables of the component at once.
+    // - Doing that will generate new atoms mentioning variables in later blocks.
+    // - Where do we put those atoms in the var order?
+    // Observation:
+    // - The new atoms can only mention variables that were already mentioned in the eliminated
+    //   formula.
+    // - Those atoms will either:
+    //   - fit into an existing connected component from a single later block (best case), or
+    //   - connect together existing components from later blocks (bad case), maybe even not
+    //     contiguous in the order (worst case).
+    // Idea:
+    // - New atoms are placed according to their earliest mention. So:
+    //   - If the atom fits an existing component, by construction its position will belong to the
+    //     component
+    //   - If the atom does not fit an existing component, the position does not matter
+    fn elimination_order(&self, mut quantifiers: Vec<Quantifier>, body: &Term) -> Vec<Quantifier> {
+        let atoms = self.collect_atoms(&quantifiers, body);
+        let mut result = Vec::with_capacity(quantifiers.len());
+        for block in quantifiers.chunk_by_mut(|q, r| q.quantifier == r.quantifier) {
+            let quant = block[0].quantifier;
+            let targets = block.iter().map(|q| q.target.clone()).collect_vec();
+            result.extend(self.elimination_order_block(quant, targets, &atoms))
+        }
+
+        result
+    }
+
+    #[allow(clippy::mutable_key_type)]
+    fn elimination_order_block(
+        &self,
+        quantifier: smt::Quantifier,
+        targets: Vec<Variable>,
+        atoms: &HashMap<Variable, HashSet<Term>>,
+    ) -> Vec<Quantifier> {
+        let mut result = Vec::with_capacity(targets.len());
+
+        let mut block = BitSet::new();
+        for target in &targets {
+            block.set(self.variables.by_key(target).unwrap(), true);
+        }
+        let mut remaining = block.clone();
+
+        while let Some(index) = remaining.first_one() {
+            let mut component = BitSet::new();
+            let mut mentioned = BitSet::new();
+            mentioned.set(index, true);
+
+            while let Some(index) = mentioned.first_one() {
+                mentioned.set(index, false);
+                component.set(index, true);
+                remaining.set(index, false);
+
+                let target = self.variables.by_index(&index).unwrap();
+
+                let mut free = BitSet::new();
+                for atom in atoms.get(&target).unwrap() {
+                    free |= self.free(atom);
+                }
+                for index in component.iter_ones() {
+                    free.set(index, false);
+                }
+                mentioned |= free & &block;
+            }
+
+            let component = component
+                .iter_ones()
+                .map(|i| self.variables.by_index(&i).unwrap().clone())
+                .map(|target| Quantifier { quantifier, target });
+            result.extend(component);
+            eprintln!("result extended:");
+            for q in &result {
+                eprintln!(" - {}", q.target.name());
+            }
+        }
+
+        result
+    }
+
+    fn collect_atoms(
+        &self,
+        quantifiers: &[Quantifier],
+        term: &Term,
+    ) -> HashMap<Variable, HashSet<Term>> {
+        let mut variables = HashMap::new();
+        for q in quantifiers {
+            variables.insert(q.target.clone(), HashSet::new());
+        }
+        self.collect_atoms_in(term, &mut variables);
+
+        variables
+    }
+
+    #[allow(clippy::mutable_key_type)]
+    fn collect_atom(&self, term: &Term, atoms: &mut HashMap<Variable, HashSet<Term>>) {
+        let free = self.free(term);
+        for index in free.iter_ones() {
+            if let Some(variable) = self.variables.by_index(&index) {
+                atoms.get_mut(&variable).unwrap().insert(term.clone());
+            }
+        }
+    }
+
+    #[allow(clippy::mutable_key_type)]
+    fn collect_atoms_in(&self, term: &Term, variables: &mut HashMap<Variable, HashSet<Term>>) {
+        match term.kind() {
+            TermKind::Constant(_) => {}
+            TermKind::Atom(atom) => {
+                if let Ok(atom) = CoreAtom::try_from(atom) {
+                    match atom {
+                        CoreAtom::True | CoreAtom::False => {}
+                        CoreAtom::Not(arg) => self.collect_atoms_in(arg, variables),
+                        CoreAtom::Implies(args)
+                        | CoreAtom::And(args)
+                        | CoreAtom::Or(args)
+                        | CoreAtom::Xor(args) => {
+                            for arg in args {
+                                self.collect_atoms_in(arg, variables);
+                            }
+                        }
+                        CoreAtom::Ite(guard, high, low) => {
+                            self.collect_atoms_in(guard, variables);
+                            self.collect_atoms_in(high, variables);
+                            self.collect_atoms_in(low, variables);
+                        }
+                        CoreAtom::Equals(args) | CoreAtom::Distinct(args) => {
+                            if Sort::of(&args[0]).unwrap() == Core::Bool() {
+                                for arg in args {
+                                    self.collect_atoms_in(arg, variables);
+                                }
+                            } else {
+                                self.collect_atom(term, variables);
+                            }
+                        }
+                    }
+                } else {
+                    self.collect_atom(term, variables);
+                }
+            }
+            TermKind::Quantified(quant) => self.collect_atoms_in(&quant.body, variables),
+            TermKind::Let(_) => unreachable!(),
+        }
+    }
+
+    fn init_order(&mut self, quantifiers: &[Quantifier]) {
         const BLOCK: u32 = 10;
 
         self.manager.with_manager_exclusive(|m| {
@@ -396,12 +567,7 @@ impl QE {
 
             // with rev(), variables to be eliminated *earlier* have *higher* indexes,
             // which is conceptually similar to how also levels in the BDD are higher.
-            for (index, q) in quantifiers.iter().rev().enumerate() {
-                self.variables.insert(q.target.clone(), index);
-                if *q.target.sort() == Core::Bool() {
-                    self.booleans.set(index, true);
-                }
-
+            for q in quantifiers.iter().rev() {
                 let vars = m.add_vars(BLOCK);
                 self.order.push(OrderBlock {
                     target: Some(q.target.clone()),
@@ -430,13 +596,8 @@ impl QE {
         Some(level)
     }
 
-    fn qe(
-        mut self,
-        mut quantifiers: Vec<Quantifier>,
-        body: Term,
-        strategy: Strategy,
-    ) -> Result<Term> {
-        self.setup(&mut quantifiers);
+    fn qe(mut self, quantifiers: Vec<Quantifier>, body: Term, strategy: Strategy) -> Result<Term> {
+        let (quantifiers, body) = self.setup(quantifiers, &body);
 
         let manager = self.manager.clone();
         let this = Arc::new_cyclic(|weak| QE {
@@ -565,7 +726,7 @@ impl QE {
     ) -> Result<BDD> {
         let cache = Arc::new(MemoMap::new(self.manager.clone()));
         self.arc()
-            .eliminate_in(target, body, strategy, cache, frontier)
+            .eliminate_in(target, body, strategy, cache, frontier, None)
             .await
     }
 
@@ -577,6 +738,7 @@ impl QE {
         strategy: Strategy,
         cache: Arc<MemoMap<BDD, Result<BDD>>>,
         frontier: Arc<HashMap<Variable, AtomicU32>>,
+        earliest: Option<Variable>,
     ) -> Result<BDD> {
         cache
             .clone()
@@ -593,9 +755,12 @@ impl QE {
                             Ok((level, var, BDD::var(m, var)?))
                         })?;
 
+                    let mut new_earliest = None;
                     if let Some(term) = self.atoms.by_index(&guard_var)
                         && let Some(variable) = self.earliest(&term)
+                        && Some(variable.clone()) != earliest
                     {
+                        new_earliest = Some(variable.clone());
                         frontier
                             .get(&variable)
                             .unwrap()
@@ -614,9 +779,16 @@ impl QE {
                             strategy,
                             cache,
                             frontier.clone(),
+                            new_earliest.clone(),
                         ));
-                        let low =
-                            m.spawn(self2.eliminate_in(target2, low, strategy, cache2, frontier));
+                        let low = m.spawn(self2.eliminate_in(
+                            target2,
+                            low,
+                            strategy,
+                            cache2,
+                            frontier,
+                            new_earliest,
+                        ));
 
                         Ok(guard.ite(&high.await?, &low.await?)?)
                     } else {
@@ -802,17 +974,19 @@ impl QE {
             return Ok(bdd.clone());
         }
 
-        if mode == BddMode::Coarse && !self.has_booleans(term) {
-            if *term == true {
+        let term = term.simplified(&*self.pool);
+
+        if mode == BddMode::Coarse && !self.has_booleans(&term) {
+            if term == true {
                 return Ok(self.top());
             }
-            if *term == false {
+            if term == false {
                 return Ok(self.bottom());
             }
 
-            let var = self.atom(term.simplified(&*self.pool), Insertion::Bottom);
+            let var = self.atom(term.clone(), Insertion::Bottom);
             let bdd = self.manager.with_manager_shared(|m| BDD::var(m, var))?;
-            cache.insert(term.clone(), bdd.clone());
+            cache.insert(term, bdd.clone());
             return Ok(bdd);
         }
 
@@ -854,10 +1028,7 @@ impl QE {
                             guard.ite(&high, &low)?
                         }
                         CoreAtom::Equals(args) | CoreAtom::Distinct(args) => {
-                            if args
-                                .iter()
-                                .any(|arg| Sort::of(arg).unwrap() == Core::Bool())
-                            {
+                            if Sort::of(&args[0]).unwrap() == Core::Bool() {
                                 let bdds: Vec<_> = args
                                     .iter()
                                     .map(|t| self.bdd_in(t, mode, insertion, cache))

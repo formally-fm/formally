@@ -36,7 +36,7 @@ use std::{
     collections::HashMap,
     future::Future,
     hash::Hash,
-    ops::{BitAnd, BitOrAssign, Deref, DerefMut},
+    ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, DerefMut},
     sync::Arc,
 };
 
@@ -279,6 +279,12 @@ impl BitSet {
         BitSet::default()
     }
 
+    pub fn repeat(value: bool, len: usize) -> BitSet {
+        BitSet {
+            bits: BitVec::repeat(value, len),
+        }
+    }
+
     pub fn with_capacity(capacity: usize) -> BitSet {
         BitSet {
             bits: BitVec::with_capacity(capacity),
@@ -294,6 +300,26 @@ impl BitSet {
 
     pub fn get(&self, index: usize) -> bool {
         index < self.bits.len() && self.bits[index]
+    }
+}
+
+impl BitOr<&BitSet> for BitSet {
+    type Output = BitSet;
+
+    fn bitor(self, rhs: &BitSet) -> Self::Output {
+        BitSet {
+            bits: self.bits | &rhs.bits,
+        }
+    }
+}
+
+impl BitOr for BitSet {
+    type Output = BitSet;
+
+    fn bitor(self, rhs: BitSet) -> Self::Output {
+        BitSet {
+            bits: self.bits | rhs.bits,
+        }
     }
 }
 
@@ -314,6 +340,15 @@ impl BitAnd<&BitSet> for BitSet {
         lhs.bits &= &rhs.bits;
 
         lhs
+    }
+}
+
+impl BitAndAssign<&BitSet> for BitSet {
+    fn bitand_assign(&mut self, rhs: &BitSet) {
+        if self.len() < rhs.len() {
+            self.bits.resize(rhs.len(), false);
+        }
+        self.bits &= &rhs.bits
     }
 }
 
