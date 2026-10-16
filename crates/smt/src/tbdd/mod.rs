@@ -63,6 +63,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
     num::NonZero,
+    ops::Range,
     pin::Pin,
     sync::{
         Arc, Weak,
@@ -365,16 +366,20 @@ impl QE {
         self.this.upgrade().unwrap()
     }
 
-    fn setup(&mut self, quantifiers: Vec<Quantifier>, body: &Term) -> (Vec<Quantifier>, Term) {
+    fn setup(
+        &mut self,
+        quantifiers: Vec<Quantifier>,
+        body: &Term,
+    ) -> (Vec<Quantifier>, Vec<Range<usize>>, Term) {
         let body = body.simplified(&*self.pool);
 
         self.setup_indexes(&quantifiers);
-        let quantifiers = self.elimination_order(quantifiers, &body);
+        let (quantifiers, ranges) = self.elimination_order(quantifiers, &body);
 
         self.setup_indexes(&quantifiers);
         self.init_order(&quantifiers);
 
-        (quantifiers, body)
+        (quantifiers, ranges, body)
     }
 
     fn setup_indexes(&mut self, quantifiers: &[Quantifier]) {
@@ -424,26 +429,37 @@ impl QE {
     //   - If the atom fits an existing component, by construction its position will belong to the
     //     component
     //   - If the atom does not fit an existing component, the position does not matter
-    fn elimination_order(&self, mut quantifiers: Vec<Quantifier>, body: &Term) -> Vec<Quantifier> {
+    fn elimination_order(
+        &self,
+        mut quantifiers: Vec<Quantifier>,
+        body: &Term,
+    ) -> (Vec<Quantifier>, Vec<Range<usize>>) {
         let atoms = self.collect_atoms(&quantifiers, body);
-        let mut result = Vec::with_capacity(quantifiers.len());
+        let mut quants = Vec::with_capacity(quantifiers.len());
+        let mut ranges = Vec::with_capacity(quantifiers.len());
+        let mut start = 0;
         for block in quantifiers.chunk_by_mut(|q, r| q.quantifier == r.quantifier) {
             let quant = block[0].quantifier;
             let targets = block.iter().map(|q| q.target.clone()).collect_vec();
-            result.extend(self.elimination_order_block(quant, targets, &atoms))
+            let (q, r) = self.elimination_order_block(start, quant, targets, &atoms);
+            quants.extend(q);
+            ranges.extend(r);
+            start += block.len();
         }
 
-        result
+        (quants, ranges)
     }
 
     #[allow(clippy::mutable_key_type)]
     fn elimination_order_block(
         &self,
+        start: usize,
         quantifier: smt::Quantifier,
         targets: Vec<Variable>,
         atoms: &HashMap<Variable, HashSet<Term>>,
-    ) -> Vec<Quantifier> {
-        let mut result = Vec::with_capacity(targets.len());
+    ) -> (Vec<Quantifier>, Vec<Range<usize>>) {
+        let mut quants = Vec::with_capacity(targets.len());
+        let mut ranges = Vec::with_capacity(targets.len());
 
         let mut block = BitSet::new();
         for target in &targets {
@@ -473,18 +489,18 @@ impl QE {
                 mentioned |= free & &block;
             }
 
+            let len = component.count_ones();
             let component = component
                 .iter_ones()
                 .map(|i| self.variables.by_index(&i).unwrap().clone())
                 .map(|target| Quantifier { quantifier, target });
-            result.extend(component);
-            eprintln!("result extended:");
-            for q in &result {
-                eprintln!(" - {}", q.target.name());
-            }
+            let begin = start + quants.len();
+            quants.extend(component);
+            let end = begin + len;
+            ranges.push(begin..end);
         }
 
-        result
+        (quants, ranges)
     }
 
     fn collect_atoms(
@@ -597,14 +613,15 @@ impl QE {
     }
 
     fn qe(mut self, quantifiers: Vec<Quantifier>, body: Term, strategy: Strategy) -> Result<Term> {
-        let (quantifiers, body) = self.setup(quantifiers, &body);
+        let (quantifiers, ranges, body) = self.setup(quantifiers, &body);
 
         let manager = self.manager.clone();
         let this = Arc::new_cyclic(|weak| QE {
             this: weak.clone(),
             ..self
         });
-        let main = manager.spawn(async move { this.qe_in(quantifiers, body, strategy).await });
+        let main =
+            manager.spawn(async move { this.qe_in(quantifiers, ranges, body, strategy).await });
 
         futures::executor::block_on(main)
     }
@@ -612,6 +629,7 @@ impl QE {
     async fn qe_in(
         &self,
         quantifiers: Vec<Quantifier>,
+        ranges: Vec<Range<usize>>,
         body: Term,
         strategy: Strategy,
     ) -> Result<Term> {
@@ -619,36 +637,44 @@ impl QE {
         eprint!("compiling initial bdd...");
         let mut body = self.bdd(&body, BddMode::Fine, Insertion::Earliest)?;
         eprintln!("compiled!");
-        self.print_atoms();
-        for Quantifier { quantifier, target } in &quantifiers {
-            eprint!("eliminating {}...", target.name());
-            if prevq != *quantifier {
+        // self.print_atoms();
+        eprintln!("variables:");
+        for q in &quantifiers {
+            match q.quantifier {
+                smt::Quantifier::Forall => eprintln!(" - forall {}", q.target.name()),
+                smt::Quantifier::Exists => eprintln!(" - exists {}", q.target.name()),
+            }
+        }
+        eprintln!("ranges:");
+        for range in &ranges {
+            eprintln!("- [{}, {})", range.start, range.end);
+        }
+        for range in ranges {
+            let quantifier = quantifiers[range.clone()][0].quantifier;
+            let variables = quantifiers[range]
+                .iter()
+                .map(|q| q.target.clone())
+                .collect_vec();
+
+            eprint!("eliminating",);
+            for variable in &variables {
+                eprint!(" {}", variable.name());
+            }
+            eprint!(" ...");
+
+            if prevq != quantifier {
                 body = body.not()?;
             }
-            prevq = *quantifier;
+            prevq = quantifier;
 
-            if strategy == Strategy::Immediate && *target.sort() == Core::Bool() {
-                body = self.project(target, body)?;
+            if strategy == Strategy::Immediate
+                && variables.iter().all(|v| *v.sort() == Core::Bool())
+            {
+                body = self.project(&variables, body)?;
                 eprintln!(" eliminated with Boolean projection!")
             } else {
-                let frontier = Arc::new(HashMap::from_iter(
-                    quantifiers
-                        .iter()
-                        .map(|v| (v.target.clone(), AtomicU32::new(0))),
-                ));
-                body = self
-                    .eliminate(target.clone(), body, strategy, frontier.clone())
-                    .await?;
+                body = self.eliminate(variables, body, strategy).await?;
                 eprintln!(" eliminated!");
-                eprintln!("frontier:");
-                for quantifier in &quantifiers {
-                    let variable = &quantifier.target;
-                    eprintln!(
-                        " - {}: {} nodes",
-                        variable.name(),
-                        frontier[variable].load(Ordering::Relaxed)
-                    );
-                }
             }
         }
 
@@ -707,88 +733,64 @@ impl QE {
     }
 
     #[allow(unused)]
-    fn project(&self, target: &Variable, body: BDD) -> Result<BDD> {
-        debug_assert_eq!(*target.sort(), Core::Bool());
+    fn project(&self, targets: &[Variable], body: BDD) -> Result<BDD> {
+        let targets = targets.iter().map(|v| v.to_term_in(&*self.pool));
+        let vars = targets
+            .into_iter()
+            .map(|v| self.atom(v, Insertion::Earliest))
+            .collect_vec();
+        let bdds: Vec<_> = self
+            .manager
+            .with_manager_shared(|m| vars.into_iter().map(|v| BDD::var(m, v)).try_collect())?;
+        let all = bdds
+            .into_iter()
+            .try_fold(self.top(), |acc, arg| acc.and(&arg))?;
 
-        let target = target.into_term_in(&*self.pool);
-        let var = self.atom(target, Insertion::Earliest);
-        let var = self.manager.with_manager_shared(|m| BDD::var(m, var))?;
-
-        Ok(body.exists(&var)?)
+        Ok(body.exists(&all)?)
     }
 
     async fn eliminate(
         &self,
-        target: Variable,
+        targets: Vec<Variable>,
         body: BDD,
         strategy: Strategy,
-        frontier: Arc<HashMap<Variable, AtomicU32>>,
     ) -> Result<BDD> {
         let cache = Arc::new(MemoMap::new(self.manager.clone()));
         self.arc()
-            .eliminate_in(target, body, strategy, cache, frontier, None)
+            .eliminate_in(targets, body, strategy, cache)
             .await
     }
 
     #[async_recursion]
     async fn eliminate_in(
         self: Arc<Self>,
-        target: Variable,
+        targets: Vec<Variable>,
         body: BDD,
         strategy: Strategy,
         cache: Arc<MemoMap<BDD, Result<BDD>>>,
-        frontier: Arc<HashMap<Variable, AtomicU32>>,
-        earliest: Option<Variable>,
     ) -> Result<BDD> {
         cache
             .clone()
             .get_or_insert(body, async move |body| match body.cofactors() {
                 Some((high, low)) => {
-                    let (level, guard_var, guard) =
-                        body.with_manager_shared(|m, edge| -> Result<_> {
-                            let Node::Inner(node) = m.get_node(edge) else {
-                                unreachable!()
-                            };
-                            let level = node.level();
-                            let var = m.level_to_var(level);
+                    let (level, guard) = body.with_manager_shared(|m, edge| -> Result<_> {
+                        let Node::Inner(node) = m.get_node(edge) else {
+                            unreachable!()
+                        };
+                        let level = node.level();
+                        let var = m.level_to_var(level);
 
-                            Ok((level, var, BDD::var(m, var)?))
-                        })?;
+                        Ok((level, BDD::var(m, var)?))
+                    })?;
 
-                    let mut new_earliest = None;
-                    if let Some(term) = self.atoms.by_index(&guard_var)
-                        && let Some(variable) = self.earliest(&term)
-                        && Some(variable.clone()) != earliest
-                    {
-                        new_earliest = Some(variable.clone());
-                        frontier
-                            .get(&variable)
-                            .unwrap()
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-
-                    let cutoff = self.cutoff(&target).unwrap();
+                    let cutoff = self.cutoff(targets.last().unwrap()).unwrap();
                     if level < cutoff {
                         let m = self.manager.clone();
                         let self2 = self.clone();
-                        let target2 = target.clone();
+                        let targets2 = targets.clone();
                         let cache2 = cache.clone();
-                        let high = m.spawn(self.eliminate_in(
-                            target,
-                            high,
-                            strategy,
-                            cache,
-                            frontier.clone(),
-                            new_earliest.clone(),
-                        ));
-                        let low = m.spawn(self2.eliminate_in(
-                            target2,
-                            low,
-                            strategy,
-                            cache2,
-                            frontier,
-                            new_earliest,
-                        ));
+                        let high = m.spawn(self.eliminate_in(targets, high, strategy, cache));
+                        let low = m.spawn(self2.eliminate_in(targets2, low, strategy, cache2));
 
                         Ok(guard.ite(&high.await?, &low.await?)?)
                     } else {
@@ -799,7 +801,7 @@ impl QE {
                         let qe = async move || -> Result<Term> {
                             let quant = Quantified {
                                 quantifier: smt::Quantifier::Exists,
-                                variables: Arc::new([target.clone()]),
+                                variables: Arc::from(targets.into_boxed_slice()),
                                 body: this.clone().term(&body).await?,
                                 span: None,
                             }
@@ -809,8 +811,9 @@ impl QE {
                             let mut solver = Solver::with_manager(&Config::default(), manager)?;
                             solver.import(env)?;
 
+                            assert!(Sort::of(&quant).is_ok());
+
                             let eliminated = solver.qe(quant)?;
-                            eprint!(".");
 
                             Ok(eliminated)
                         };

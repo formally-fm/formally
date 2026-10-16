@@ -31,8 +31,8 @@ use formally::{
     support::*,
 };
 
+use std::hash::Hash;
 use std::{collections::HashMap, iter::zip};
-
 use thiserror::Error;
 
 #[derive(Debug, Clone, Error, Located)]
