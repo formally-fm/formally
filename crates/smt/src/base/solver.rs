@@ -28,7 +28,6 @@ use formally::{
     support::*,
 };
 
-use itertools::Itertools;
 use std::{
     cell::RefCell,
     collections::HashSet,
@@ -708,53 +707,7 @@ impl Solver {
             return Err(DiagnosticEmitted);
         }
 
-        self.qe_in(&term)
-    }
-
-    fn qe_in(&self, term: &Term) -> Result<Term> {
-        if term.is_quantifier_free() {
-            return Ok(term.clone());
-        }
-
-        match term.kind() {
-            TermKind::Constant(_) => Ok(term.clone()),
-            TermKind::Atom(atom) => Ok(Atom {
-                head: atom.head.clone(),
-                arguments: atom
-                    .arguments
-                    .iter()
-                    .map(|arg| self.qe_in(arg))
-                    .try_collect()?,
-                span: atom.span(),
-            }
-            .into_term_in(&*self.manager.pool)),
-            TermKind::Quantified(quant) => {
-                let quant = Quantified {
-                    quantifier: quant.quantifier,
-                    variables: quant.variables.clone(),
-                    body: self.qe_in(&quant.body)?,
-                    span: quant.span(),
-                };
-
-                Ok(self.backend_solver.qe(quant, &*self.manager.pool)?)
-            }
-            TermKind::Let(let_) => {
-                let mut bindings = Vec::with_capacity(let_.bindings.len());
-                for bind in &*let_.bindings {
-                    bindings.push(Binding {
-                        variable: bind.variable.clone(),
-                        def: self.qe_in(&bind.def)?,
-                        span: bind.span(),
-                    })
-                }
-                Ok(Let {
-                    bindings: Arc::from(bindings.into_boxed_slice()),
-                    body: self.qe_in(&let_.body)?,
-                    span: let_.span(),
-                }
-                    .into_term_in(&*self.manager.pool))
-            },
-        }
+        Ok(self.backend_solver.qe(term, &*self.manager.pool)?)
     }
 }
 

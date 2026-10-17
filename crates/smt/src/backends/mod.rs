@@ -375,12 +375,11 @@ pub trait Solver: Any {
     /// unexpected reason (i.e. an I/O error).
     fn model(&self) -> Result<Option<Box<dyn '_ + ModelProvider>>, Error>;
 
-    /// Perform quantifier elimination on the given [Quantified](smt::Quantified) term.
+    /// Perform quantifier elimination on the given [Term](smt::Term) term.
     ///
     /// The method returns an equivalent quntifier-free [Term](smt::Term). The method *can assume*
-    /// the body of the given [Quantified](smt::Quantified) is *quantifier-free* and well-typed
-    /// of sort Bool.
+    /// the term is well-typed of sort Bool.
     ///
     /// The [TermPool](smt::TermPool) argument is used to construct the resulting [Term](smt::Term).
-    fn qe(&self, quant: smt::Quantified, pool: &dyn smt::TermPool) -> Result<smt::Term, Error>;
+    fn qe(&self, term: smt::Term, pool: &dyn smt::TermPool) -> Result<smt::Term, Error>;
 }

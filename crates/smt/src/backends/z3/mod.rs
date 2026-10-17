@@ -210,7 +210,23 @@ impl api::Solver for Solver {
         &self,
         term: <Self::Manager as api::Manager>::Term,
     ) -> Result<<Self::Manager as api::Manager>::Term> {
-        Ok(term.get_quantifier_elimination())
+        let tactics = ["simplify", "qe-light", "qe2", "simplify"]
+            .into_iter()
+            .map(|t| z3::Tactic::new(&self.z3context, t))
+            .collect_vec();
+        let tactic = z3::Tactic::try_from(tactics.as_slice()).ok().unwrap();
+
+        let goal = z3::Goal::new(&self.z3context, false, false, false);
+        goal.assert(term);
+
+        let results = tactic.apply(goal);
+
+        let formulas = results[0].formulas();
+        match formulas.len() {
+            0 => Ok(self.z3context.mk_true()),
+            1 => Ok(formulas[0].clone()),
+            _ => Ok(self.z3context.mk_and(formulas)),
+        }
     }
 }
 

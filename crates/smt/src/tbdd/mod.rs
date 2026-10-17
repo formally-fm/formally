@@ -636,19 +636,11 @@ impl QE {
         let mut prevq = smt::Quantifier::Exists;
         eprint!("compiling initial bdd...");
         let mut body = self.bdd(&body, BddMode::Fine, Insertion::Earliest)?;
-        eprintln!("compiled!");
-        // self.print_atoms();
-        eprintln!("variables:");
-        for q in &quantifiers {
-            match q.quantifier {
-                smt::Quantifier::Forall => eprintln!(" - forall {}", q.target.name()),
-                smt::Quantifier::Exists => eprintln!(" - exists {}", q.target.name()),
-            }
-        }
-        eprintln!("ranges:");
-        for range in &ranges {
-            eprintln!("- [{}, {})", range.start, range.end);
-        }
+        eprintln!(
+            "compiled (size {})!",
+            body.with_manager_shared(|m, _| m.num_inner_nodes())
+        );
+        self.print_atoms();
         for range in ranges {
             let quantifier = quantifiers[range.clone()][0].quantifier;
             let variables = quantifiers[range]
@@ -810,8 +802,6 @@ impl QE {
                             let manager = TermManager::with_pool(backend, pool.clone())?;
                             let mut solver = Solver::with_manager(&Config::default(), manager)?;
                             solver.import(env)?;
-
-                            assert!(Sort::of(&quant).is_ok());
 
                             let eliminated = solver.qe(quant)?;
 

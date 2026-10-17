@@ -24,7 +24,7 @@
 
 use crate::formally;
 use formally::smt::{
-    self, ToTerm as _,
+    self,
     backends::{
         self, Backend,
         api::{Manager, Model, Solver},
@@ -134,8 +134,7 @@ impl<S: 'static + Solver> backends::Solver for ApiSolver<S> {
         })))
     }
 
-    fn qe(&self, quant: smt::Quantified, pool: &dyn smt::TermPool) -> Result<smt::Term> {
-        let term = quant.into_term_in(pool);
+    fn qe(&self, term: smt::Term, pool: &dyn smt::TermPool) -> Result<smt::Term> {
         let term = self.manager.term(&term, &BindMap::default())?;
         let term = self.solver.qe(term)?;
 
