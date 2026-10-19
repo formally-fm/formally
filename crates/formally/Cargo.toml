@@ -27,6 +27,8 @@ smt = ["io", "formally-smt"]
 z3 = ["formally-smt/z3"]
 ## Enable the cvc5 backend for the [formally::smt] module.
 cvc5 = ["formally-smt/cvc5"]
+## Enable the theory-OBDD implementation and QE backend in the [formally::smt] module.
+smt-tbdd = ["formally-smt/tbdd"]
 
 [package.metadata.docs.rs]
 all-features = true

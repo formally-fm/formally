@@ -289,7 +289,7 @@ impl Parse for VariableList {
             content.parse::<Token![#]>()?;
             let ident = content.parse()?;
             input.parse::<Token![*]>()?;
-            
+
             Ok(VariableList::Bound(ident))
         } else {
             let content;

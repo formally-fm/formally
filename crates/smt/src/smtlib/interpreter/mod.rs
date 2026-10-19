@@ -38,11 +38,11 @@ use formally::{
         parse::Parsable as _,
         print::{Print, RenderTarget},
     },
-    smt::{self, Config, ToTerm, backends::Backend, smtlib::ast},
+    smt::{self, Config, DashPool, ToTerm, backends::Backend, smtlib::ast, tbdd},
     support::*,
 };
 
-use std::{fmt::Debug, io, num::NonZero, path::Path};
+use std::{fmt::Debug, io, num::NonZero, path::Path, sync::Arc};
 
 use thiserror::Error;
 
@@ -158,6 +158,7 @@ impl Default for Settings {
 struct State {
     settings: Settings,
     mode: Mode,
+    pool: Arc<DashPool>,
     solver: smt::Solver,
 }
 
@@ -365,7 +366,20 @@ impl Interpreter {
     fn get_qe(state: &mut State, getqe: ast::GetQE) -> Result<()> {
         let term = Interpreter::term_to_smt(&state.solver, getqe.term)?;
         let term = state.solver.lookup(term, smt::Role::Function)?;
-        let term = state.solver.qe(term)?;
+
+        let term = if let Some(jobs) = state.settings.jobs {
+            tbdd::qe(
+                &term,
+                state.pool.clone(),
+                state.solver.env().clone(),
+                state.settings.backend,
+                jobs,
+            )?
+        } else {
+            state.solver.qe(term)?
+        };
+
+        let term = smt::Let::collect(&term, &*state.pool)?;
 
         let term = Box::new(ast::Term::from(term));
         Interpreter::response(
@@ -384,14 +398,19 @@ impl Interpreter {
             logic => Some(Identifier::from(logic).into_owned().over(sl.logic.span())),
         };
 
-        match smt::Solver::with_backend(&settings.config, settings.backend) {
-            Ok(solver) => {
-                *self = Interpreter::Started(State {
-                    mode: Mode::Assert,
-                    settings,
-                    solver,
-                })
-            }
+        let pool = Arc::new(DashPool::new());
+        match smt::TermManager::with_pool(settings.backend, pool.clone()) {
+            Ok(manager) => match smt::Solver::with_manager(&settings.config, manager) {
+                Ok(solver) => {
+                    *self = Interpreter::Started(State {
+                        mode: Mode::Assert,
+                        settings,
+                        pool,
+                        solver,
+                    })
+                }
+                Err(_) => *self = Interpreter::Start(settings),
+            },
             Err(_) => *self = Interpreter::Start(settings),
         }
 

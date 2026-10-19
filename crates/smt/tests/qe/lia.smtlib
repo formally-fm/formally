@@ -1,0 +1,6 @@
+(set-logic LIA)
+
+(declare-const x Int)
+(declare-const y Int)
+
+(get-qe (exists ((z Int)) (and (< x z) (< z y))))

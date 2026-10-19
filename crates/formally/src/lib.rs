@@ -44,7 +44,9 @@
 //!    error reporting infrastructure.
 //! 3. [formally::smt](smt) provides an abstraction over Satisfiability Modulo Theories solvers and
 //!    (what will hopefully become) a fully conformant implementation of the SMT-LIBv2 language.
-//! 4. A simple toy command-line frontend to test the [formally::smt](smt) module.
+//! 4. [formally::dd](dd) implements common variants of *decision diagrams* (currently only a
+//!    concurrent implementation of OBDDs).
+//! 5. A simple toy command-line frontend to test the [formally::smt](smt) module.
 //!
 //! The [formally::smt](smt) module is quite under heavy development but can already handle simple
 //! SMT-LIBv2 scripts, solving them with a [Z3](https://github.com/Z3Prover/z3) or

@@ -13,3 +13,6 @@ resolver = "3"
 [profile.profiling]
 inherits = "release"
 debug = true
+
+[profile.dev.package.oxidd]
+opt-level = 3

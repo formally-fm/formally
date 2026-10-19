@@ -1,0 +1,367 @@
+//
+// ::formally - the open-source formal methods toolchain
+//
+// Copyright (c) 2026 Nicola Gigante
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+//
+
+#![allow(unused)]
+
+use super::executor::*;
+
+use bitvec::vec::BitVec;
+use dashmap::{DashMap, Entry};
+use tokio::sync::SetOnce;
+
+use oxidd::bcdd::BCDDManagerRef;
+
+use std::{
+    collections::HashMap,
+    future::Future,
+    hash::Hash,
+    ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, DerefMut},
+    sync::Arc,
+};
+
+#[derive(Clone)]
+pub struct SyncBiMap<K: Hash + Eq, I: Hash + Eq> {
+    key_to_index: DashMap<K, I>,
+    index_to_key: DashMap<I, K>,
+}
+
+impl<K: Hash + Eq, I: Hash + Eq> Default for SyncBiMap<K, I> {
+    fn default() -> Self {
+        SyncBiMap::new()
+    }
+}
+
+impl<K: Hash + Eq, I: Hash + Eq> SyncBiMap<K, I> {
+    pub fn new() -> Self {
+        SyncBiMap {
+            key_to_index: DashMap::new(),
+            index_to_key: DashMap::new(),
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        self.index_to_key.len()
+    }
+}
+
+impl<K: Clone + Hash + Eq, I: Clone + Hash + Eq> SyncBiMap<K, I> {
+    pub fn by_index(&self, index: &I) -> Option<K> {
+        self.index_to_key.get(index).as_deref().cloned()
+    }
+
+    pub fn by_key(&self, key: &K) -> Option<I> {
+        self.key_to_index.get(key).as_deref().cloned()
+    }
+
+    pub fn insert(&self, key: K, index: I) {
+        let e1 = self.key_to_index.entry(key);
+        let e2 = self.index_to_key.entry(index);
+
+        let key = e1.key().clone();
+        let index = e2.key().clone();
+
+        e1.insert(index);
+        e2.insert(key);
+    }
+
+    pub fn by_key_or_insert<F>(&self, key: K, f: F) -> I
+    where
+        F: FnOnce(&K) -> I,
+    {
+        if let Some(index) = self.key_to_index.get(&key) {
+            return index.clone();
+        }
+
+        let index = f(&key);
+
+        match self.key_to_index.entry(key) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                self.index_to_key.insert(index.clone(), entry.key().clone());
+                entry.insert(index.clone());
+                index
+            }
+        }
+    }
+
+    pub fn by_key_or_try_insert<F, E>(&self, key: K, f: F) -> Result<I, E>
+    where
+        F: FnOnce(&K) -> Result<I, E>,
+    {
+        if let Some(index) = self.key_to_index.get(&key) {
+            return Ok(index.clone());
+        }
+
+        let index = f(&key)?;
+
+        match self.key_to_index.entry(key) {
+            Entry::Occupied(entry) => Ok(entry.get().clone()),
+            Entry::Vacant(entry) => {
+                self.index_to_key.insert(index.clone(), entry.key().clone());
+                entry.insert(index.clone());
+                Ok(index)
+            }
+        }
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = K> {
+        self.key_to_index.iter().map(|r| r.key().clone())
+    }
+
+    pub fn indexes(&self) -> impl Iterator<Item = I> {
+        self.index_to_key.iter().map(|r| r.key().clone())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (K, I)> {
+        self.key_to_index.iter().map(|r| {
+            let (k, i) = r.pair();
+            (k.clone(), i.clone())
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct BiMap<K: Hash + Eq, I: Hash + Eq> {
+    key_to_index: HashMap<K, I>,
+    index_to_key: HashMap<I, K>,
+}
+
+impl<K: Hash + Eq, I: Hash + Eq> Default for BiMap<K, I> {
+    fn default() -> Self {
+        BiMap::new()
+    }
+}
+
+impl<K: Hash + Eq, I: Hash + Eq> BiMap<K, I> {
+    pub fn new() -> Self {
+        BiMap {
+            key_to_index: HashMap::new(),
+            index_to_key: HashMap::new(),
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        self.index_to_key.len()
+    }
+}
+
+impl<K: Clone + Hash + Eq, I: Clone + Hash + Eq> BiMap<K, I> {
+    pub fn by_index(&self, index: &I) -> Option<K> {
+        self.index_to_key.get(index).as_deref().cloned()
+    }
+
+    pub fn by_key(&self, key: &K) -> Option<I> {
+        self.key_to_index.get(key).as_deref().cloned()
+    }
+
+    pub fn insert(&mut self, key: K, index: I) {
+        self.key_to_index.insert(key.clone(), index.clone());
+        self.index_to_key.insert(index, key);
+    }
+
+    pub fn by_key_or_insert<F>(&mut self, key: K, f: F) -> I
+    where
+        F: FnOnce(&K) -> I,
+    {
+        if let Some(index) = self.key_to_index.get(&key) {
+            return index.clone();
+        }
+        let index = f(&key);
+        self.insert(key, index.clone());
+
+        index
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = K> {
+        self.key_to_index.keys().cloned()
+    }
+
+    pub fn indexes(&self) -> impl Iterator<Item = I> {
+        self.key_to_index.values().cloned()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (K, I)> {
+        self.key_to_index
+            .iter()
+            .map(|(k, i)| (k.clone(), i.clone()))
+    }
+}
+
+pub struct MemoMap<K, R> {
+    manager: BCDDManagerRef,
+    map: DashMap<K, Arc<SetOnce<R>>>,
+}
+
+pub struct MemoEntry<R>(Arc<SetOnce<R>>);
+
+impl<R> MemoEntry<R> {
+    pub async fn get(&self) -> &R {
+        self.0.wait().await
+    }
+}
+
+impl<K: 'static + Clone + Send + Sync + Hash + Eq, R: 'static + Send + Sync> MemoMap<K, R> {
+    pub fn provide<F, Ft>(&self, key: K, f: F) -> MemoEntry<R>
+    where
+        F: 'static + Send + FnOnce(K) -> Ft,
+        Ft: Send + Future<Output = R>,
+    {
+        match self.map.entry(key) {
+            Entry::Occupied(entry) => MemoEntry(entry.get().clone()),
+            Entry::Vacant(entry) => {
+                let once = Arc::new(SetOnce::new());
+                let key = entry.key().clone();
+                entry.insert(once.clone());
+                let once2 = once.clone();
+                self.manager.spawn(async move {
+                    once.set(f(key).await).ok();
+                });
+                MemoEntry(once2)
+            }
+        }
+    }
+
+    pub async fn get_or_insert<F, Ft>(&self, key: K, f: F) -> R
+    where
+        R: Clone,
+        F: 'static + Send + FnOnce(K) -> Ft,
+        Ft: Send + Future<Output = R>,
+    {
+        self.provide(key, f).get().await.clone()
+    }
+}
+
+impl<K: Hash + Eq, R> MemoMap<K, R> {
+    pub fn new(manager: BCDDManagerRef) -> Self {
+        MemoMap {
+            manager,
+            map: DashMap::new(),
+        }
+    }
+
+    pub fn get(&self, key: &K) -> Option<MemoEntry<R>> {
+        self.map.get(key).map(|entry| MemoEntry((*entry).clone()))
+    }
+
+    pub fn size(&self) -> usize {
+        self.map.len()
+    }
+}
+
+#[derive(Default, Clone, Hash, PartialEq, Eq)]
+pub struct BitSet {
+    bits: BitVec,
+}
+
+impl BitSet {
+    pub fn new() -> BitSet {
+        BitSet::default()
+    }
+
+    pub fn repeat(value: bool, len: usize) -> BitSet {
+        BitSet {
+            bits: BitVec::repeat(value, len),
+        }
+    }
+
+    pub fn with_capacity(capacity: usize) -> BitSet {
+        BitSet {
+            bits: BitVec::with_capacity(capacity),
+        }
+    }
+
+    pub fn set(&mut self, index: usize, value: bool) {
+        if index >= self.bits.len() {
+            self.bits.resize(index + 1, false);
+        }
+        self.bits.set(index, value);
+    }
+
+    pub fn get(&self, index: usize) -> bool {
+        index < self.bits.len() && self.bits[index]
+    }
+}
+
+impl BitOr<&BitSet> for BitSet {
+    type Output = BitSet;
+
+    fn bitor(self, rhs: &BitSet) -> Self::Output {
+        BitSet {
+            bits: self.bits | &rhs.bits,
+        }
+    }
+}
+
+impl BitOr for BitSet {
+    type Output = BitSet;
+
+    fn bitor(self, rhs: BitSet) -> Self::Output {
+        BitSet {
+            bits: self.bits | rhs.bits,
+        }
+    }
+}
+
+impl BitOrAssign for BitSet {
+    fn bitor_assign(&mut self, rhs: Self) {
+        if self.len() < rhs.len() {
+            self.bits.resize(rhs.len(), false);
+        }
+        self.bits |= rhs.bits
+    }
+}
+
+impl BitAnd<&BitSet> for BitSet {
+    type Output = BitSet;
+
+    fn bitand(self, rhs: &BitSet) -> Self::Output {
+        let mut lhs = self.clone();
+        lhs.bits &= &rhs.bits;
+
+        lhs
+    }
+}
+
+impl BitAndAssign<&BitSet> for BitSet {
+    fn bitand_assign(&mut self, rhs: &BitSet) {
+        if self.len() < rhs.len() {
+            self.bits.resize(rhs.len(), false);
+        }
+        self.bits &= &rhs.bits
+    }
+}
+
+impl Deref for BitSet {
+    type Target = BitVec;
+
+    fn deref(&self) -> &BitVec {
+        &self.bits
+    }
+}
+
+impl DerefMut for BitSet {
+    fn deref_mut(&mut self) -> &mut BitVec {
+        &mut self.bits
+    }
+}
