@@ -22,18 +22,27 @@
 // SOFTWARE.
 //
 
-use crate::*;
-use formally::support::*;
+use crate::formally;
+use formally::{
+    smt::{
+        theories::{Ints, Reals},
+        *,
+    },
+    support::*,
+};
 
 use derive_more::From;
 use transitive::Transitive;
 
+use itertools::Itertools;
 pub use rug::{Integer, Rational};
-use std::fmt::Formatter;
 use std::{
-    fmt::Display,
+    fmt::{Display, Formatter},
     hash::{Hash, Hasher},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 /// A constant term.
@@ -54,6 +63,23 @@ pub enum Constant {
         value: Arc<Rational>,
         span: Option<Span>,
     },
+}
+
+impl Constant {
+    pub fn to_integer(&self) -> Option<Integer> {
+        match self {
+            Constant::Integer { value, .. } => Some((**value).clone()),
+            Constant::Rational { value, .. } if *value.denom() == 1 => Some(value.numer().clone()),
+            Constant::Rational { .. } => None,
+        }
+    }
+
+    pub fn to_rational(&self) -> Rational {
+        match self {
+            Constant::Integer { value, .. } => Rational::from((**value).clone()),
+            Constant::Rational { value, .. } => (**value).clone(),
+        }
+    }
 }
 
 impl From<Integer> for Constant {
@@ -287,41 +313,106 @@ impl<T: Into<Atom>> From<T> for TermKind {
 /// would accept one accept instead generic instances of [ToTerm], which include the result of the
 /// [term!] macro, which is the recommended way of constructing terms.
 ///
-/// See the [ToTerm] trait for more informations about how to construct [Term] objects from [ToTerm]
+/// See the [ToTerm] trait for more information about how to construct [Term] objects from [ToTerm]
 /// instances.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Term(pub(crate) Nominal<Arc<TermInner>>);
 
 #[derive(Debug)]
 pub(crate) struct TermInner {
     pub(crate) kind: TermKind,
-    pub(crate) sort: Mutex<Option<Sort>>,
+    pub(crate) sort: OnceLock<Result<Sort, TypeCheckError>>,
+    pub(crate) simplified: OnceLock<Term>,
+    pub(crate) is_simplified: AtomicBool,
     pub(crate) resolved: bool,
+    pub(crate) qf: bool,
+    pub(crate) size: usize,
 }
 
 impl TermInner {
     pub(crate) fn new(kind: TermKind) -> TermInner {
-        let resolved = match &kind {
-            TermKind::Constant(_) => true,
-            TermKind::Atom(atom) => {
-                matches!(&atom.head, FunctionRef::Bound(_))
-                    && atom.arguments.iter().all(Term::is_resolved)
+        let resolved;
+        let qf;
+        let size = match &kind {
+            TermKind::Constant(_) => {
+                resolved = true;
+                qf = true;
+                1
             }
-            TermKind::Quantified(quant) => quant.body.is_resolved(),
-            TermKind::Let(let_) => let_.body.is_resolved(),
+            TermKind::Atom(atom) => {
+                resolved = matches!(&atom.head, FunctionRef::Bound(_))
+                    && atom.arguments.iter().all(Term::is_resolved);
+                qf = atom.arguments.iter().all(Term::is_quantifier_free);
+
+                1 + atom.arguments.iter().map(|t| t.size()).sum::<usize>()
+            }
+            TermKind::Quantified(quant) => {
+                resolved = quant.body.is_resolved();
+                qf = false;
+                1 + quant.body.size()
+            }
+            TermKind::Let(let_) => {
+                resolved = let_.body.is_resolved();
+                qf = let_.body.is_quantifier_free()
+                    && let_.bindings.iter().all(|b| b.def.is_quantifier_free());
+                1 + let_.bindings.iter().map(|b| b.def.size()).sum::<usize>() + let_.body.size()
+            }
         };
 
         TermInner {
             kind,
-            sort: Mutex::default(),
+            sort: OnceLock::new(),
+            simplified: OnceLock::new(),
+            is_simplified: AtomicBool::new(false),
             resolved,
+            qf,
+            size,
         }
     }
 }
 
 impl Term {
+    /// Tell whether this [Term] is fully resolved (i.e. it does not contain
+    /// [unbound](FunctionRef::Unbound) atoms).
     pub fn is_resolved(&self) -> bool {
         self.0.resolved
+    }
+
+    /// Tell whether this [Term] is quantifier-free (i.e. it does not contain [Quantified]
+    /// subterms).
+    pub fn is_quantifier_free(&self) -> bool {
+        self.0.qf
+    }
+
+    /// The number of nodes (atoms and other kinds) that recursively compose this [Term].
+    pub fn size(&self) -> usize {
+        self.0.size
+    }
+
+    /// Tell whether this [Term] is already simplified according to the [Term::simplified()] method.
+    ///
+    /// Note that this method does not actively check if the term is simplified, because it would
+    /// cost as much as the simplification itself. Instead, [Term::simplified()] sets an internal
+    /// flag on the [Term] when it creates simplified terms, so that the next time the
+    /// simplification is a no-op. This method reads that flag.
+    pub fn is_simplified(&self) -> bool {
+        self.0.is_simplified.load(Ordering::Relaxed)
+    }
+
+    /// Tell whether this [Term] represents a numeric constant, possibly negated.
+    pub fn is_constant(&self) -> bool {
+        match self.kind() {
+            TermKind::Constant(_) => true,
+            TermKind::Atom(atom)
+                if let FunctionRef::Bound(bound) = &atom.head
+                    && let Function::Primitive(prim) = &bound.function =>
+            {
+                (*prim == Ints::unary_minus() || *prim == Reals::unary_minus())
+                    && atom.arguments.len() == 1
+                    && atom.arguments[0].is_constant()
+            }
+            _ => false,
+        }
     }
 }
 
@@ -398,6 +489,107 @@ impl PartialEq<Rational> for Term {
             **value == *other
         } else {
             false
+        }
+    }
+}
+
+impl Term {
+    pub fn simplified(&self, pool: &dyn TermPool) -> Term {
+        if self.is_simplified() {
+            return self.to_term_in(pool);
+        }
+
+        self.0
+            .simplified
+            .get_or_init(|| self.simplify_in(pool))
+            .clone()
+    }
+
+    fn mark_simplified(self) -> Term {
+        self.0.is_simplified.store(true, Ordering::Relaxed);
+        self
+    }
+
+    fn simplify_in(&self, pool: &dyn TermPool) -> Term {
+        match self.kind() {
+            TermKind::Constant(_) => self.clone(),
+            TermKind::Atom(atom) => {
+                let mut arguments = Vec::with_capacity(atom.arguments.len());
+                for arg in &*atom.arguments {
+                    arguments.push(arg.simplified(pool))
+                }
+
+                let atom = Atom {
+                    head: atom.head.clone().over(None),
+                    arguments: Arc::from(arguments.into_boxed_slice()),
+                    span: None,
+                };
+
+                if let FunctionRef::Bound(bound) = &atom.head
+                    && let Function::Primitive(prim) = &bound.function
+                {
+                    let mut atom = atom.clone();
+
+                    if let Some(Associativity::LeftAssoc | Associativity::RightAssoc) =
+                        prim.associativity()
+                    {
+                        let mut arguments = Vec::new();
+                        for arg in &*atom.arguments {
+                            if let TermKind::Atom(atom) = arg.kind()
+                                && let FunctionRef::Bound(bound) = &atom.head
+                                && let Function::Primitive(prim2) = &bound.function
+                                && prim2 == prim
+                            {
+                                arguments.extend(atom.arguments.iter().cloned())
+                            } else {
+                                arguments.push(arg.clone())
+                            }
+                        }
+
+                        atom = Atom {
+                            arguments: Arc::from(arguments.into_boxed_slice()),
+                            ..atom
+                        }
+                    }
+
+                    if prim.commutativity() == Commutativity::Commutative {
+                        let mut arguments = atom.arguments.iter().cloned().collect_vec();
+                        arguments.sort();
+
+                        atom = Atom {
+                            arguments: Arc::from(arguments.into_boxed_slice()),
+                            ..atom
+                        };
+                    }
+
+                    return prim.theory().simplify(&atom.to_term_in(pool), pool);
+                }
+
+                atom.into_term_in(pool)
+            }
+            TermKind::Quantified(quant) => Quantified {
+                quantifier: quant.quantifier,
+                variables: quant.variables.clone(),
+                body: quant.body.simplified(pool),
+                span: None,
+            }
+            .into_term_in(pool)
+            .mark_simplified(),
+            TermKind::Let(let_) => Let {
+                bindings: let_
+                    .bindings
+                    .iter()
+                    .map(|b| Binding {
+                        variable: b.variable.clone(),
+                        def: b.def.simplified(pool),
+                        span: b.span(),
+                    })
+                    .collect(),
+                body: let_.body.simplified(pool),
+                span: None,
+            }
+            .into_term_in(pool)
+            .mark_simplified(),
         }
     }
 }

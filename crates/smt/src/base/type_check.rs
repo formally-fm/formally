@@ -1,0 +1,253 @@
+//
+// ::formally - the open-source formal methods toolchain
+//
+// Copyright (c) 2025 Nicola Gigante
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+//
+
+use crate::formally;
+use formally::{
+    smt::{
+        theories::{Ints, Reals},
+        *,
+    },
+    support::*,
+};
+
+use std::{collections::HashMap, iter::zip};
+use thiserror::Error;
+
+#[derive(Debug, Clone, Error, Located)]
+#[error("{kind}")]
+pub struct TypeCheckError {
+    pub(crate) kind: Box<TypeCheckErrorKind>,
+    pub(crate) span: Option<Span>,
+}
+
+#[derive(Debug, Clone, Error)]
+pub(crate) enum TypeCheckErrorKind {
+    #[error("type checking on a inferrence placeholder")]
+    Infer,
+    #[error("usage of unconstrained sort parameter: {name}")]
+    UnconstrainedSortParameter { name: Identifier<'static> },
+    #[error("unresolved symbol `{name}` during type checking")]
+    UnresolvedSymbol { name: Identifier<'static> },
+    #[error("applied {arguments} arguments to a function of {parameters} parameters")]
+    ArgumentNumberMismatch { arguments: usize, parameters: usize },
+    #[error("argument of sort `{argument}` given to parameter of sort `{parameter}`")]
+    SortMismatch { parameter: Sort, argument: Sort },
+}
+
+impl Diagnosable for TypeCheckError {
+    fn level(&self) -> Level {
+        match &*self.kind {
+            TypeCheckErrorKind::Infer => Level::Internal,
+            TypeCheckErrorKind::UnconstrainedSortParameter { .. } => Level::Internal,
+            TypeCheckErrorKind::UnresolvedSymbol { .. } => Level::Internal,
+            _ => Level::Error,
+        }
+    }
+}
+
+/// Trait for types that can type-check themselves.
+///
+/// Type checking is meant here as the process of computing the [Sort] associated to a given object.
+/// The most prominent example of type-checkable type is [Term], but [Sort] as well needs type
+/// checking.
+pub trait TypeCheck {
+    fn type_check(&self) -> Result<Sort, TypeCheckError>;
+}
+
+impl TypeCheck for Term {
+    fn type_check(&self) -> Result<Sort, TypeCheckError> {
+        self.0.sort.get_or_init(|| self.kind().type_check()).clone()
+    }
+}
+
+impl TypeCheck for TermKind {
+    fn type_check(&self) -> Result<Sort, TypeCheckError> {
+        let sort = match self {
+            TermKind::Constant(cnst) => cnst.type_check()?,
+            TermKind::Atom(atom) => atom.type_check()?,
+            TermKind::Quantified(quant) => quant.type_check()?,
+            TermKind::Let(let_) => let_.type_check()?,
+        };
+
+        Ok(sort)
+    }
+}
+
+impl TypeCheck for Constant {
+    fn type_check(&self) -> Result<Sort, TypeCheckError> {
+        match self {
+            Constant::Integer { .. } => Ok(Ints::Int()),
+            Constant::Rational { .. } => Ok(Reals::Real()),
+        }
+    }
+}
+
+impl BoundRef {
+    fn type_check(&self, arguments: &[Term]) -> Result<Sort, TypeCheckError> {
+        let domain = self.domain(arguments.len());
+
+        if domain.len() != arguments.len() {
+            return Err(TypeCheckError {
+                kind: Box::new(TypeCheckErrorKind::ArgumentNumberMismatch {
+                    arguments: arguments.len(),
+                    parameters: domain.len(),
+                }),
+                span: self.function.span(),
+            });
+        }
+
+        #[allow(clippy::mutable_key_type)]
+        let mut matches = HashMap::new();
+        let mut mismatches = Vec::new();
+        for (sort, arg) in zip(domain, arguments) {
+            let argsort = Sort::of(arg)?;
+
+            if !sort.matches_with(&argsort, &mut matches) {
+                mismatches.push((sort, argsort, arg))
+            }
+        }
+
+        for (sort, argsort, arg) in mismatches {
+            if argsort == Ints::Int() || argsort == Reals::Real() {
+                if let SortHead::Bound(func) = &sort.head
+                    && let Function::Variable(var) = &func
+                {
+                    if !matches.contains_key(var) {
+                        matches.insert(var.clone(), Reals::Real());
+                    }
+                    continue;
+                } else if sort == Reals::Real() {
+                    continue;
+                }
+            }
+            return Err(TypeCheckError {
+                kind: Box::new(TypeCheckErrorKind::SortMismatch {
+                    argument: argsort,
+                    parameter: sort,
+                }),
+                span: arg.span(),
+            });
+        }
+
+        let range = self.function.range().instantiate(&matches)?;
+
+        Ok(range)
+    }
+}
+
+impl BoundRef {
+    pub(crate) fn domain(&self, nargs: usize) -> Vec<Sort> {
+        let domain = self.function.domain();
+
+        let Function::Primitive(prim) = &self.function else {
+            return domain;
+        };
+
+        match prim.domain() {
+            [first, second, ..] if nargs >= 2 && prim.associativity().is_some() => {
+                if *first == *second {
+                    std::iter::repeat_n(first.clone(), nargs).collect()
+                } else {
+                    domain
+                }
+            }
+            _ => domain,
+        }
+    }
+}
+
+impl TypeCheck for Atom {
+    fn type_check(&self) -> Result<Sort, TypeCheckError> {
+        match &self.head {
+            FunctionRef::Bound(bound) => bound.type_check(&self.arguments),
+            FunctionRef::Unbound(unbound) => Err(TypeCheckError {
+                kind: Box::new(TypeCheckErrorKind::UnresolvedSymbol {
+                    name: unbound.clone(),
+                }),
+                span: self.head.span(),
+            }),
+        }
+    }
+}
+
+impl TypeCheck for Quantified {
+    fn type_check(&self) -> Result<Sort, TypeCheckError> {
+        self.body.type_check()
+    }
+}
+
+impl TypeCheck for Let {
+    fn type_check(&self) -> Result<Sort, TypeCheckError> {
+        self.body.type_check()
+    }
+}
+
+impl TypeCheck for Declared {
+    fn type_check(&self) -> Result<Sort, TypeCheckError> {
+        Ok(self.range.clone())
+    }
+}
+
+impl TypeCheck for Defined {
+    fn type_check(&self) -> Result<Sort, TypeCheckError> {
+        Ok(self.range.clone())
+    }
+}
+
+impl TypeCheck for Sort {
+    fn type_check(&self) -> Result<Sort, TypeCheckError> {
+        match &self.head {
+            SortHead::Bound(f) => {
+                for (param, arg) in zip(f.domain().iter(), self.arguments.iter()) {
+                    let argsort = arg.type_check()?;
+                    if *param != argsort {
+                        return Err(TypeCheckError {
+                            kind: Box::new(TypeCheckErrorKind::SortMismatch {
+                                parameter: param.clone(),
+                                argument: argsort,
+                            }),
+                            span: None,
+                        });
+                    }
+                }
+                Ok(Sort::sort())
+            }
+            SortHead::Unbound(unbound) => Err(TypeCheckError {
+                kind: Box::new(TypeCheckErrorKind::UnresolvedSymbol {
+                    name: unbound.clone(),
+                }),
+                span: None,
+            }),
+        }
+    }
+}
+
+impl TypeCheck for SortArgument {
+    fn type_check(&self) -> Result<Sort, TypeCheckError> {
+        match self {
+            SortArgument::Value(_) => Ok(Ints::Int()),
+            SortArgument::Sort(s) => s.type_check(),
+        }
+    }
+}

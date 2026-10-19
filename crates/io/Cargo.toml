@@ -18,5 +18,6 @@ __subcratedoc = []
 formally-support = { path = "../support", version = "0.2.0" }
 itertools = "0.15.0"
 pretty = "0.12.4"
+stacker = "0.1.25"
 termsize = "0.1.9"
 thiserror = "2"

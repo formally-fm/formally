@@ -103,14 +103,7 @@ impl LogicRequirement for Linear {
                         let nonlinear = atom
                             .arguments
                             .iter()
-                            .filter(|arg| {
-                                !matches!(
-                                    arg.kind(),
-                                    TermKind::Constant(
-                                        Constant::Integer { .. } | Constant::Rational { .. }
-                                    )
-                                )
-                            })
+                            .filter(|t| t.is_constant())
                             .count();
                         if nonlinear > 1 {
                             error!(

@@ -26,7 +26,7 @@ use crate::smtlib::ast::*;
 use formally_io::parse::{combinators::*, parsers::*, *};
 
 use rug::ops::CompleteRound;
-use std::str::FromStr as _;
+use std::{str::FromStr as _, sync::Arc};
 
 impl<'c> Parsable<'c> for Boolean {
     fn parser() -> Parser<'c, Self> {
@@ -49,7 +49,7 @@ impl<'c> Parsable<'c> for Numeral {
             )
             .to_string()
             .map(|s| Numeral {
-                value: rug::Integer::from_str(s.as_str()).unwrap(),
+                value: Arc::new(rug::Integer::from_str(s.as_str()).unwrap()),
                 span: None,
             })
             .located()
@@ -78,11 +78,13 @@ impl<'c> Parsable<'c> for Decimal {
             .map(|((int, _), frac)| format!("{int}.{frac}"))
             .skipping(nothing())
             .map(|s| Decimal {
-                value: rug::Float::parse(s)
-                    .unwrap()
-                    .complete(53)
-                    .to_rational()
-                    .unwrap(),
+                value: Arc::new(
+                    rug::Float::parse(s)
+                        .unwrap()
+                        .complete(53)
+                        .to_rational()
+                        .unwrap(),
+                ),
                 span: None,
             })
             .located()
@@ -584,6 +586,10 @@ impl<'c> Parsable<'c> for Command {
             succeed().map(|_| Command::GetProof(None)),
         ))
         .or(command(
+            "get-qe",
+            Term::parser().map(|term| Command::GetQE(GetQE { term, span: None })),
+        ))
+        .or(command(
             "get-unsat-assumptions",
             succeed().map(|_| Command::GetUnsatAssumptions(None)),
         ))
@@ -611,7 +617,12 @@ impl<'c> Parsable<'c> for Command {
             succeed().map(|_| Command::ResetAssertions(None)),
         ))
         .or(command("reset", succeed().map(|_| Command::Reset(None))))
-        // .or(keyword("set-info").then(Attribute::ast()).map(SetInfo))
+        .or(command("set-info", Attribute::parser()).map(|attribute| {
+            Command::SetInfo(SetInfo {
+                attribute,
+                span: None,
+            })
+        }))
         .or(command(
             "set-logic",
             Symbol::parser().map(|logic| Command::SetLogic(SetLogic { logic, span: None })),
@@ -620,6 +631,7 @@ impl<'c> Parsable<'c> for Command {
             "set-option",
             AstOption::parser().map(|option| Command::SetOption(SetOption { option, span: None })),
         ))
+        .or(command("exit", succeed().map(|_| Command::Exit(None))))
         .located()
         .named("SMT-LIBv2 command", "SMT-LIBv2 commands")
         .parens()
@@ -666,6 +678,12 @@ impl<'c> Parsable<'c> for Script {
                 span: None,
             })
             .whole()
+            .skipping(
+                whitespace()
+                    .ignore()
+                    .or(not(char('\n')).skip().between(char(';'), char('\n')).ignore())
+                    .skipping(nothing()),
+            )
             .located()
             .named("SMT-LIBv2 script", "SMT-LIBv2 scripts")
     }

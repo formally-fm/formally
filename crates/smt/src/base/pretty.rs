@@ -58,11 +58,11 @@ impl From<Constant> for ast::Constant {
     fn from(cnst: Constant) -> Self {
         match cnst {
             Constant::Integer { value, span } => ast::Constant::Numeral(ast::Numeral {
-                value: (*value).clone(),
+                value: value.clone(),
                 span,
             }),
             Constant::Rational { value, span } => ast::Constant::Decimal(ast::Decimal {
-                value: (*value).clone(),
+                value: value.clone(),
                 span,
             }),
         }

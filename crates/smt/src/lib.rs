@@ -354,7 +354,7 @@
 //! let x = solver.declare(Declaration::integer("x"))?;
 //! let y = solver.declare(Declaration::integer("y"))?;
 //!
-//! let term = term!(> x y).into_term_in(solver.pool());
+//! let term = term!(> x y).into_term_in(&*solver.pool());
 //!
 //! solver.require(term)?;
 //!
@@ -398,15 +398,6 @@ pub mod exports {
     pub use paste::paste;
 }
 
-mod decl;
-mod pool;
-mod pretty;
-mod resolve;
-mod solver;
-mod sort;
-mod term;
-mod type_check;
-
 #[doc(hidden)]
 pub mod macros;
 pub use macros::backend;
@@ -416,10 +407,5 @@ pub mod logics;
 pub mod smtlib;
 pub mod theories;
 
-pub use decl::*;
-pub use pool::*;
-pub use resolve::*;
-pub use solver::*;
-pub use sort::*;
-pub use term::*;
-pub use type_check::*;
+mod base;
+pub use base::*;

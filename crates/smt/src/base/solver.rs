@@ -207,33 +207,9 @@ impl Env {
 #[derive(Clone)]
 pub struct TermManager {
     backend_manager: Rc<dyn backends::Manager>,
-    pool: Rc<dyn TermPool>,
+    pool: Arc<dyn TermPool>,
     decls: RefCell<HashSet<Arc<Declaration<Sort, Sort>>>>,
     defs: RefCell<HashSet<Arc<Definition<Sort, Sort, Term>>>>,
-}
-
-impl TermManager {
-    fn decl(&self, decl: Declaration<Sort, Sort>) -> Declared {
-        if let Some(decl) = self.decls.borrow().get(&decl) {
-            return Declared(Nominal(decl.clone()));
-        }
-
-        let arc = Arc::new(decl);
-        self.decls.borrow_mut().insert(arc.clone());
-
-        Declared(Nominal(arc))
-    }
-
-    fn def(&self, def: Definition<Sort, Sort, Term>) -> Defined {
-        if let Some(def) = self.defs.borrow().get(&def) {
-            return Defined(Nominal(def.clone()));
-        }
-
-        let arc = Arc::new(def);
-        self.defs.borrow_mut().insert(arc.clone());
-
-        Defined(Nominal(arc))
-    }
 }
 
 impl Debug for TermManager {
@@ -259,14 +235,14 @@ impl TermManager {
     pub fn with_backend(backend: impl Backend) -> Result<TermManager> {
         Ok(TermManager {
             backend_manager: Rc::from(backend.manager()?),
-            pool: Rc::new(HashPool::new()),
+            pool: Arc::new(HashPool::new()),
             decls: RefCell::default(),
             defs: RefCell::default(),
         })
     }
 
     /// Construct a [TermManager] over a given [Backend] and [TermPool].
-    pub fn with_pool(backend: impl Backend, pool: Rc<dyn TermPool>) -> Result<TermManager> {
+    pub fn with_pool(backend: impl Backend, pool: Arc<dyn TermPool>) -> Result<TermManager> {
         Ok(TermManager {
             backend_manager: Rc::from(backend.manager()?),
             pool,
@@ -275,9 +251,46 @@ impl TermManager {
         })
     }
 
+    /// Return the [backends::Manager] this [TermManager] was built on.
+    pub fn manager(&self) -> Rc<dyn backends::Manager> {
+        self.backend_manager.clone()
+    }
+
     /// Return a reference to the underlying [TermPool].
-    pub fn pool(&self) -> &dyn TermPool {
-        &*self.pool
+    pub fn pool(&self) -> Arc<dyn TermPool> {
+        self.pool.clone()
+    }
+}
+
+impl TermManager {
+    fn decl(&self, decl: Declaration<Sort, Sort>) -> Declared {
+        if let Some(decl) = self.decls.borrow().get(&decl) {
+            return Declared(Nominal(decl.clone()));
+        }
+
+        let arc = Arc::new(decl);
+        self.decls.borrow_mut().insert(arc.clone());
+
+        Declared(Nominal(arc))
+    }
+
+    fn def(&self, def: Definition<Sort, Sort, Term>) -> Defined {
+        if let Some(def) = self.defs.borrow().get(&def) {
+            return Defined(Nominal(def.clone()));
+        }
+
+        let arc = Arc::new(def);
+        self.defs.borrow_mut().insert(arc.clone());
+
+        Defined(Nominal(arc))
+    }
+
+    fn import_declared(&self, decl: Declared) {
+        self.decls.borrow_mut().insert((*decl.0).clone());
+    }
+
+    fn import_defined(&self, def: Defined) {
+        self.defs.borrow_mut().insert((*def.0).clone());
     }
 }
 
@@ -342,6 +355,46 @@ impl Solver {
         Solver::with_manager(config, TermManager::new()?)
     }
 
+    /// Import into this [Solver] the declarations and definitions of an existing [Env].
+    ///
+    /// Only the topmost frame in the [Env]'s stack is considered. The stack frames are ignored.
+    pub fn import(&mut self, env: Env) -> Result<()> {
+        for sort in env.sorts.elements() {
+            self.env.sorts.add(sort.name(), sort.clone());
+        }
+        
+        for func in env.functions.elements() {
+            self.env.functions.add(func.name(), func.clone());
+        }
+        
+        for func in std::iter::chain(env.sorts.elements(), env.functions.elements()) {
+            if let Function::User(func) = func {
+                match func {
+                    UserFunction::Declared(decl) => {
+                        self.manager.import_declared(decl.clone());
+                        self.backend_solver.declare(decl.clone())?;
+                    }
+                    UserFunction::Defined(def) => {
+                        self.manager.import_defined(def.clone());
+                        self.backend_solver.define(def.clone())?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get the [TermManager] of this [Solver].
+    pub fn manager(&self) -> Rc<TermManager> {
+        self.manager.clone()
+    }
+
+    /// Return the [backends::Solver] this [Solver] was built on.
+    pub fn solver(&self) -> &dyn backends::Solver {
+        &*self.backend_solver
+    }
+
     /// Get the currently selected [Logic].
     pub fn logic(&self) -> &dyn Logic {
         self.backend_solver.logic()
@@ -362,7 +415,7 @@ impl Solver {
     }
 
     /// Return a reference to the [TermPool] of the underlying [TermManager].
-    pub fn pool(&self) -> &dyn TermPool {
+    pub fn pool(&self) -> Arc<dyn TermPool> {
         self.manager.pool()
     }
 
@@ -377,8 +430,8 @@ impl Solver {
     /// sorts and functions, the [Role] argument is needed to tell whether the term has to be
     /// interpreted as a sort or as a value term.
     pub fn lookup<T: ToTerm>(&self, term: T, role: Role) -> Result<Term> {
-        let interned = term.into_term_in(self.manager.pool());
-        let resolved = interned.resolve(self.env(), self.manager.pool(), role)?;
+        let interned = term.into_term_in(&*self.manager.pool);
+        let resolved = interned.resolve(self.env(), &*self.manager.pool, role)?;
         resolved.type_check()?;
 
         Ok(resolved)
@@ -391,7 +444,7 @@ impl Solver {
     ///
     /// The resulting sort is guaranteed to be well-formed and fully resolved.
     pub fn lookup_sort<S: ToSort>(&self, sort: &S) -> Result<Sort> {
-        let resolved = sort.resolve(self.env(), self.manager.pool(), Role::Sort)?;
+        let resolved = sort.resolve(self.env(), &*self.manager.pool, Role::Sort)?;
         resolved.type_check()?;
 
         Ok(resolved.try_into()?)
@@ -529,9 +582,9 @@ impl Solver {
         }
 
         let range = self.lookup_sort(&def.range)?;
-        let body = def.body.into_term_in(self.manager.pool()).resolve(
+        let body = def.body.into_term_in(&*self.manager.pool).resolve(
             &nested,
-            self.manager.pool(),
+            &*self.manager.pool,
             Role::Function,
         )?;
         let bodysort = body.type_check()?;
@@ -632,6 +685,30 @@ impl Solver {
             None => Ok(None),
         }
     }
+
+    /// Perform quantifier elimination on the given [Term] relative to the current assertion stack.
+    ///
+    /// The [Term] `term` must be of Boolean sort and supported by the currently selected logic.
+    ///
+    /// The method returns a [Term] `t` such that, if `A` is the conjunction of the currently
+    /// asserted terms, `A ⋀ term` is logically equivalent to `A ⋀ t`.
+    pub fn qe(&self, term: impl ToTerm) -> Result<Term> {
+        let term = self.lookup(term, Role::Function)?;
+        self.backend_solver.logic().check_term(&term)?;
+
+        let sort = Sort::of(&term)?;
+
+        if sort != theories::Core::Bool() {
+            error!(
+                term.span(),
+                "can only perform quantifier elimination on Boolean terms"
+            );
+            note!(term.span(), "given term is of sort `{}`", sort);
+            return Err(DiagnosticEmitted);
+        }
+
+        Ok(self.backend_solver.qe(term, &*self.manager.pool)?)
+    }
 }
 
 impl Stack for Solver {
@@ -690,7 +767,7 @@ impl Model<'_> {
     pub fn value(&self, term: impl ToTerm) -> Result<Option<Term>> {
         Ok(self.provider.value(
             &self.solver.lookup(term, Role::Function)?,
-            self.solver.pool(),
+            &*self.solver.pool(),
         ))
     }
 }

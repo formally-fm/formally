@@ -112,6 +112,12 @@ impl IsTerminal for io::Empty {
     }
 }
 
+impl IsTerminal for Vec<u8> {
+    fn is_terminal(&self) -> bool {
+        false
+    }
+}
+
 /// Types that can print themselves accounting for the number of available columns.
 pub trait Print {
     /// Render an object to the given `target` write stream in `width` number of columns.

@@ -24,38 +24,74 @@
 mod bindings;
 
 use crate::formally;
-use bindings as cvc5;
 use formally::smt::{
     self, ToTerm as _,
-    backends::{self, Backend, api},
+    backends::{
+        self, Backend,
+        api::{self, Manager as _},
+    },
     logic,
     logics::{Logic, LogicEx},
     theories,
 };
-use std::rc::Rc;
+
+use bindings as cvc5;
+
+pub use cvc5::Sort;
+pub use cvc5::Term;
+
+use std::{cell::RefCell, ffi, ptr::NonNull, rc::Rc, sync::Arc};
 
 type Result<T, E = backends::Error> = std::result::Result<T, E>;
 
+/// The `cvc5` backend.
+///
+/// See the [high-level documentation](crate) for how to use the backend.
+///
+/// Some `cvc5`-specific features and the native [cvc5_sys] handles are available by downcasting the
+/// result of the [Cvc5::solver()] method to `api::ApiSolver<cvc5::Solver>` and calling the
+/// [api::ApiSolver::solver()] method.
 #[smt::backend]
 #[derive(Clone, Copy, Default)]
 pub struct Cvc5;
 
+/// The [api::Manager] implementation for the [Cvc5] backend.
 #[derive(Default)]
-struct Manager {
+pub struct Manager {
     cvc5manager: Rc<cvc5::TermManager>,
 }
 
-struct Solver {
-    cvc5solver: Rc<cvc5::Solver>,
-    logic: &'static dyn Logic,
+impl Manager {
+    /// Return the underlying [cvc5_sys::TermManager] handle.
+    pub fn cvc5_term_manager(&self) -> NonNull<cvc5_sys::TermManager> {
+        self.cvc5manager.manager
+    }
 }
 
-struct Model<'s> {
+/// The [api::Solver] implementation for the [Cvc5] backend.
+pub struct Solver {
+    cvc5solver: Rc<cvc5::Solver>,
+    logic: &'static dyn Logic,
+    plugins: RefCell<Vec<Rc<dyn Plugin>>>,
+    #[allow(clippy::vec_box)]
+    cvc5_plugins: RefCell<Vec<Box<cvc5::Plugin>>>,
+}
+
+impl Solver {
+    /// Return the underlying [cvc5_sys::Solver] handle.
+    pub fn cvc5_solver(&self) -> NonNull<cvc5_sys::Solver> {
+        self.cvc5solver.solver
+    }
+}
+
+/// The [api::Model] implementation for the [Cvc5] backend.
+pub struct Model<'s> {
     solver: &'s Solver,
 }
 
 logic! {
-    name: ALL,
+    /// The SMT logic corresponding to `(set-logic ALL)` for the [Cvc5] backend.
+    name: pub ALL,
     theories: [
         theories::Core,
         theories::Ints,
@@ -109,11 +145,20 @@ impl api::Solver for Solver {
             None => &ALL,
         };
 
-        let solver = Solver { cvc5solver, logic };
+        let solver = Solver {
+            cvc5solver,
+            logic,
+            plugins: RefCell::default(),
+            cvc5_plugins: RefCell::default(),
+        };
 
         solver.config(config)?;
 
         Ok(solver)
+    }
+
+    fn backend(&self) -> &'static <Self::Manager as api::Manager>::Backend {
+        &Cvc5
     }
 
     fn logic(&self) -> &dyn Logic {
@@ -158,6 +203,92 @@ impl api::Solver for Solver {
     fn model(&self) -> Result<Self::Model<'_>> {
         Ok(Model { solver: self })
     }
+
+    fn qe(
+        &self,
+        term: <Self::Manager as api::Manager>::Term,
+    ) -> Result<<Self::Manager as api::Manager>::Term> {
+        Ok(self.cvc5solver.get_quantifier_elimination(term))
+    }
+}
+
+/// A plugin for the `cvc5` solver.
+///
+/// This mimics the [the cvc5 C API plug-in interface](https://cvc5.github.io/docs/cvc5-1.4.0/api/c/structs/cvc5plugin.html).
+///
+/// Install a plugin into a [cvc5::Solver](Solver) with the
+/// [cvc5::Solver::add_plugin()](Solver::add_plugin()) method.
+pub trait Plugin: 'static {
+    /// Return a list of lemmas to add to the SAT solver. Called periodically, roughly at every SAT
+    /// decision.
+    fn check(&self) -> &[cvc5::Term] {
+        &[]
+    }
+
+    /// Notify SAT clause, called when `clause` is learned by the SAT solver.
+    #[allow(unused)]
+    fn notify_sat_clause(&self, clause: cvc5::Term) {
+        // nop
+    }
+
+    /// Notify theory lemma, called when `lemma` is sent by a theory solver.
+    #[allow(unused)]
+    fn notify_theory_lemma(&self, lemma: cvc5::Term) {
+        // nop
+    }
+
+    /// Get the name of the plugin (for debugging).
+    fn get_name() -> &'static ffi::CStr
+    where
+        Self: Sized;
+}
+
+impl Solver {
+    unsafe extern "C" fn plugin_check<P: Plugin>(
+        size: *mut usize,
+        state: *mut ffi::c_void,
+    ) -> *const *mut cvc5_sys::cvc5_term_t {
+        unsafe {
+            let slice = P::check(&*state.cast());
+            size.write(slice.len());
+            slice.as_ptr().cast()
+        }
+    }
+
+    unsafe extern "C" fn plugin_notify_sat_clause<P: Plugin>(
+        clause: *mut cvc5_sys::cvc5_term_t,
+        state: *mut ffi::c_void,
+    ) {
+        unsafe { P::notify_sat_clause(&*state.cast(), NonNull::new(clause).unwrap()) }
+    }
+
+    unsafe extern "C" fn plugin_notify_theory_lemma<P: Plugin>(
+        lemma: *mut cvc5_sys::cvc5_term_t,
+        state: *mut ffi::c_void,
+    ) {
+        unsafe { P::notify_theory_lemma(&*state.cast(), NonNull::new(lemma).unwrap()) }
+    }
+
+    unsafe extern "C" fn plugin_get_name<P: Plugin>() -> *const ffi::c_char {
+        P::get_name().as_ptr()
+    }
+
+    pub fn add_plugin<P: Plugin>(&self, plugin: Rc<P>) {
+        let mut cvc5_plugin = Box::new(cvc5::Plugin {
+            check: Some(Self::plugin_check::<P>),
+            notify_sat_clause: Some(Self::plugin_notify_sat_clause::<P>),
+            notify_theory_lemma: Some(Self::plugin_notify_theory_lemma::<P>),
+            get_name: Some(Self::plugin_get_name::<P>),
+            d_check_state: Rc::as_ptr(&plugin) as *mut ffi::c_void,
+            d_notify_sat_clause_state: Rc::as_ptr(&plugin) as *mut ffi::c_void,
+            d_notify_theory_lemma_state: Rc::as_ptr(&plugin) as *mut ffi::c_void,
+        });
+
+        self.cvc5solver
+            .add_plugin(Box::as_mut_ptr(&mut cvc5_plugin));
+        self.cvc5_plugins.borrow_mut().push(cvc5_plugin);
+        self.plugins.borrow_mut().push(plugin);
+    }
 }
 
 impl api::Model for Model<'_> {
@@ -177,7 +308,7 @@ impl api::Manager for Manager {
     type Term = cvc5::Term;
     const FUNC_DEF_SUPPORTED: bool = true;
 
-    fn backend(&self) -> &Self::Backend {
+    fn backend(&self) -> &'static Self::Backend {
         &Cvc5
     }
 
@@ -302,26 +433,52 @@ impl api::Manager for Manager {
 
     fn export(
         &self,
-        term: Self::Term,
+        term: cvc5::Term,
         pool: &dyn smt::TermPool,
-        _to_func: impl Clone + Fn(Self::FuncDecl) -> Option<smt::UserFunction>,
-        _to_sort: impl Clone + Fn(Self::Sort) -> Option<smt::Sort>,
-    ) -> Option<smt::Term> {
+        to_func: impl Clone + Fn(cvc5::Term) -> Option<smt::UserFunction>,
+        to_var: impl Clone + Fn(cvc5::Term) -> Option<smt::Variable>,
+        to_sort: impl Clone + Fn(cvc5::Sort) -> Option<smt::Sort>,
+    ) -> Result<smt::Term, cvc5::Term> {
         use smt::theories::*;
 
-        if let Some(value) = self.cvc5manager.get_boolean_value(term) {
-            return if value {
-                Some(Core::True().into_term_in(pool))
-            } else {
-                Some(Core::False().into_term_in(pool))
-            };
-        } else if let Some(value) = self.cvc5manager.get_integer_value(term) {
-            return Some(smt::Constant::from(value).into_term_in(pool));
-        } else if let Some(value) = self.cvc5manager.get_real_value(term) {
-            return Some(smt::Constant::from(value).into_term_in(pool));
-        }
+        match self.cvc5manager.get_term_kind(term) {
+            cvc5::Kind::Constant => Ok(to_func(term).map(|f| f.into_term_in(pool)).unwrap()),
+            cvc5::Kind::Variable => Ok(to_var(term).map(|v| v.into_term_in(pool)).unwrap()),
+            cvc5::Kind::ApplyUf => {
+                let mut children = Vec::new();
+                let head = to_func(self.cvc5manager.get_term_child(term, 0)).unwrap();
+                for child in 1..self.cvc5manager.get_term_num_children(term) {
+                    children.push(self.export(
+                        self.cvc5manager.get_term_child(term, child),
+                        pool,
+                        to_func.clone(),
+                        to_var.clone(),
+                        to_sort.clone(),
+                    )?)
+                }
 
-        None
+                Ok(smt::term!(#head #(#children)*).into_term_in(pool))
+            }
+            cvc5::Kind::ConstBoolean => {
+                if self.cvc5manager.get_boolean_value(term).unwrap() {
+                    Ok(Core::True().into_term_in(pool))
+                } else {
+                    Ok(Core::False().into_term_in(pool))
+                }
+            }
+            cvc5::Kind::ConstRational => Ok(smt::Constant::Rational {
+                value: Arc::new(self.cvc5manager.get_real_value(term).unwrap()),
+                span: None,
+            }
+            .into_term_in(pool)),
+            cvc5::Kind::ConstInteger => Ok(smt::Constant::Integer {
+                value: Arc::new(self.cvc5manager.get_integer_value(term).unwrap()),
+                span: None,
+            }
+            .into_term_in(pool)),
+            cvc5::Kind::Forall | cvc5::Kind::Exists => todo!(),
+            _ => self.export_app(term, pool, to_func, to_var, to_sort),
+        }
     }
 }
 
@@ -399,7 +556,7 @@ impl Manager {
             }
             theories::IntsAtom::Div(args) => {
                 let args = to_terms(args)?;
-                self.cvc5manager.mk_term(cvc5::Kind::Distinct, &args)
+                self.cvc5manager.mk_term(cvc5::Kind::IntsDivision, &args)
             }
             theories::IntsAtom::Mod_(left, right) => {
                 let left = to_term(left)?;
@@ -456,7 +613,7 @@ impl Manager {
             }
             theories::RealsAtom::Div(args) => {
                 let args = to_terms(args)?;
-                self.cvc5manager.mk_term(cvc5::Kind::Distinct, &args)
+                self.cvc5manager.mk_term(cvc5::Kind::Division, &args)
             }
             theories::RealsAtom::Le(args) => {
                 let args = to_terms(args)?;
@@ -520,5 +677,77 @@ impl Manager {
                     .mk_term(cvc5::Kind::Store, &[array, index, elem])
             }
         })
+    }
+
+    fn export_app(
+        &self,
+        term: cvc5::Term,
+        pool: &dyn smt::TermPool,
+        to_func: impl Clone + Fn(cvc5::Term) -> Option<smt::UserFunction>,
+        to_var: impl Clone + Fn(cvc5::Term) -> Option<smt::Variable>,
+        to_sort: impl Clone + Fn(cvc5::Sort) -> Option<smt::Sort>,
+    ) -> Result<smt::Term, cvc5::Term> {
+        use smt::theories::*;
+
+        let mut intargs = true;
+        let mut realargs = true;
+
+        let numchildren = self.cvc5manager.get_term_num_children(term);
+        let mut children = Vec::with_capacity(numchildren);
+        for child in 0..numchildren {
+            let child = self.cvc5manager.get_term_child(term, child);
+            let sort = self.cvc5manager.get_term_sort(child);
+
+            intargs = intargs && self.cvc5manager.sort_is_integer(sort);
+            realargs = realargs && self.cvc5manager.sort_is_real(sort);
+
+            children.push(self.export(
+                child,
+                pool,
+                to_func.clone(),
+                to_var.clone(),
+                to_sort.clone(),
+            )?);
+        }
+
+        let kind = self.cvc5manager.get_term_kind(term);
+        let head = match kind {
+            cvc5::Kind::Equal => Core::equals(),
+            cvc5::Kind::Distinct => Core::distinct(),
+            cvc5::Kind::Not => Core::not(),
+            cvc5::Kind::And => Core::and(),
+            cvc5::Kind::Implies => Core::implies(),
+            cvc5::Kind::Or => Core::or(),
+            cvc5::Kind::Xor => Core::xor(),
+            cvc5::Kind::Ite => Core::ite(),
+            cvc5::Kind::Add if intargs => Ints::plus(),
+            cvc5::Kind::Add if realargs => Reals::plus(),
+            cvc5::Kind::Mult if intargs => Ints::mult(),
+            cvc5::Kind::Mult if realargs => Reals::mult(),
+            cvc5::Kind::Sub if intargs => Ints::minus(),
+            cvc5::Kind::Sub if realargs => Reals::minus(),
+            cvc5::Kind::Neg if intargs => Ints::unary_minus(),
+            cvc5::Kind::Neg if realargs => Reals::unary_minus(),
+            cvc5::Kind::Division => Reals::div(),
+            cvc5::Kind::IntsDivision => Ints::div(),
+            cvc5::Kind::IntsModulus => Ints::mod_(),
+            cvc5::Kind::Abs => Ints::abs(),
+            cvc5::Kind::Lt if intargs => Ints::lt(),
+            cvc5::Kind::Lt if realargs => Reals::lt(),
+            cvc5::Kind::Leq if intargs => Ints::le(),
+            cvc5::Kind::Leq if realargs => Reals::le(),
+            cvc5::Kind::Gt if intargs => Ints::gt(),
+            cvc5::Kind::Gt if realargs => Reals::gt(),
+            cvc5::Kind::Geq if intargs => Ints::ge(),
+            cvc5::Kind::Geq if realargs => Reals::ge(),
+            cvc5::Kind::IsInteger => RealsInts::is_int(),
+            cvc5::Kind::ToInteger => RealsInts::to_int(),
+            cvc5::Kind::ToReal => RealsInts::to_real(),
+            cvc5::Kind::Select => Arrays::select(),
+            cvc5::Kind::Store => Arrays::store(),
+            _ => return Err(term),
+        };
+
+        Ok(smt::term!(#head #(#children)*).into_term_in(pool))
     }
 }

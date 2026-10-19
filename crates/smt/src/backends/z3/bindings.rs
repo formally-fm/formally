@@ -90,6 +90,16 @@ pub struct Model {
     pub model: Z3_model,
 }
 
+pub struct Tactic {
+    pub ctx: Rc<Context>,
+    pub tactic: Z3_tactic,
+}
+
+pub struct Goal {
+    pub ctx: Rc<Context>,
+    pub goal: Z3_goal,
+}
+
 pub struct Params {
     pub ctx: Rc<Context>,
     pub params: Z3_params,
@@ -164,7 +174,7 @@ impl Context {
     }
 
     pub fn mk_false(&self) -> Ast {
-        Ast::new(self, unsafe { Z3_mk_true(self.ctx).unwrap() })
+        Ast::new(self, unsafe { Z3_mk_false(self.ctx).unwrap() })
     }
 
     pub fn mk_int(&self, value: c_int) -> Ast {
@@ -173,15 +183,10 @@ impl Context {
         })
     }
 
-    pub fn mk_numeral(&self, value: &str) -> Ast {
+    pub fn mk_numeral(&self, value: &str, sort: Sort) -> Ast {
         let numeral = CString::new(value.as_bytes()).unwrap();
         Ast::new(self, unsafe {
-            Z3_mk_numeral(
-                self.ctx,
-                numeral.as_ptr(),
-                Z3_mk_int_sort(self.ctx).unwrap(),
-            )
-            .unwrap()
+            Z3_mk_numeral(self.ctx, numeral.as_ptr(), sort.sort).unwrap()
         })
     }
 
@@ -385,7 +390,7 @@ impl Context {
         let mut apps = Vec::new();
         for var in variables {
             assert!(unsafe { Z3_is_app(self.ctx, var.ast) });
-            apps.push(var.ast.cast::<_Z3_app>())
+            apps.push(var.ast.cast())
         }
 
         Ast::new(self, unsafe {
@@ -406,7 +411,7 @@ impl Context {
         let mut apps = Vec::new();
         for var in variables {
             assert!(unsafe { Z3_is_app(self.ctx, var.ast) });
-            apps.push(var.ast.cast::<_Z3_app>())
+            apps.push(var.ast.cast())
         }
 
         Ast::new(self, unsafe {
@@ -562,6 +567,10 @@ impl Ast {
         }
     }
 
+    pub fn id(&self) -> u32 {
+        unsafe { Z3_get_ast_id(self.ctx.ctx, self.ast) }
+    }
+
     pub fn kind(&self) -> AstKind {
         unsafe { Z3_get_ast_kind(self.ctx.ctx, self.ast) }
     }
@@ -705,12 +714,35 @@ impl Drop for Ast {
     }
 }
 
+impl Hash for Ast {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id().hash(state)
+    }
+}
+
+impl PartialEq for Ast {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for Ast {}
+
 impl Clone for App {
     fn clone(&self) -> Self {
         unsafe { Z3_inc_ref(self.ctx.ctx, self.app.cast()) }
         App {
             ctx: self.ctx.clone(),
             app: self.app,
+        }
+    }
+}
+
+impl From<App> for Ast {
+    fn from(app: App) -> Self {
+        Ast {
+            ctx: app.ctx.clone(),
+            ast: app.app.cast(),
         }
     }
 }
@@ -725,7 +757,7 @@ impl From<FuncDecl> for Ast {
     fn from(app: FuncDecl) -> Self {
         Ast {
             ctx: app.ctx.clone(),
-            ast: app.decl.cast::<_Z3_ast>(),
+            ast: app.decl.cast(),
         }
     }
 }
@@ -734,7 +766,7 @@ impl From<Sort> for Ast {
     fn from(sort: Sort) -> Self {
         Ast {
             ctx: sort.ctx.clone(),
-            ast: sort.sort.cast::<_Z3_ast>(),
+            ast: sort.sort.cast(),
         }
     }
 }
@@ -744,7 +776,7 @@ impl FuncDecl {
         FuncDecl {
             ctx: ctx.this.upgrade().unwrap(),
             decl: unsafe {
-                Z3_inc_ref(ctx.ctx, decl.cast::<_Z3_ast>());
+                Z3_inc_ref(ctx.ctx, decl.cast());
                 decl
             },
         }
@@ -761,7 +793,7 @@ impl FuncDecl {
 
 impl Clone for FuncDecl {
     fn clone(&self) -> Self {
-        unsafe { Z3_inc_ref(self.ctx.ctx, self.decl.cast::<_Z3_ast>()) }
+        unsafe { Z3_inc_ref(self.ctx.ctx, self.decl.cast()) }
         FuncDecl {
             ctx: self.ctx.clone(),
             decl: self.decl,
@@ -771,7 +803,7 @@ impl Clone for FuncDecl {
 
 impl Drop for FuncDecl {
     fn drop(&mut self) {
-        unsafe { Z3_dec_ref(self.ctx.ctx, self.decl.cast::<_Z3_ast>()) }
+        unsafe { Z3_dec_ref(self.ctx.ctx, self.decl.cast()) }
     }
 }
 
@@ -794,7 +826,7 @@ impl Sort {
         Sort {
             ctx: ctx.this.upgrade().unwrap(),
             sort: unsafe {
-                Z3_inc_ref(ctx.ctx, sort.cast::<_Z3_ast>());
+                Z3_inc_ref(ctx.ctx, sort.cast());
                 sort
             },
         }
@@ -823,7 +855,7 @@ impl Sort {
 
 impl Clone for Sort {
     fn clone(&self) -> Self {
-        unsafe { Z3_inc_ref(self.ctx.ctx, self.sort.cast::<_Z3_ast>()) }
+        unsafe { Z3_inc_ref(self.ctx.ctx, self.sort.cast()) }
         Sort {
             ctx: self.ctx.clone(),
             sort: self.sort,
@@ -847,7 +879,135 @@ impl Eq for Sort {}
 
 impl Drop for Sort {
     fn drop(&mut self) {
-        unsafe { Z3_dec_ref(self.ctx.ctx, self.sort.cast::<_Z3_ast>()) }
+        unsafe { Z3_dec_ref(self.ctx.ctx, self.sort.cast()) }
+    }
+}
+
+impl Tactic {
+    pub fn new(ctx: &Context, name: &str) -> Tactic {
+        Tactic {
+            ctx: ctx.this.upgrade().unwrap(),
+            tactic: unsafe {
+                let name = CString::new(name.as_bytes()).unwrap();
+                let tactic = Z3_mk_tactic(ctx.ctx, name.as_ptr()).unwrap();
+                Z3_tactic_inc_ref(ctx.ctx, tactic);
+                tactic
+            },
+        }
+    }
+
+    pub fn then(t1: &Tactic, t2: &Tactic) -> Tactic {
+        Tactic {
+            ctx: t1.ctx.clone(),
+            tactic: unsafe {
+                let tactic = Z3_tactic_and_then(t1.ctx.ctx, t1.tactic, t2.tactic).unwrap();
+                Z3_tactic_inc_ref(t1.ctx.ctx, tactic);
+                tactic
+            },
+        }
+    }
+
+    pub fn apply(&self, goal: Goal) -> Vec<Goal> {
+        unsafe {
+            let result = Z3_tactic_apply(self.ctx.ctx, self.tactic, goal.goal).unwrap();
+            let ngoals = Z3_apply_result_get_num_subgoals(self.ctx.ctx, result);
+            let mut goals = Vec::with_capacity(ngoals as usize);
+            for i in 0..ngoals {
+                goals.push(Goal {
+                    ctx: self.ctx.clone(),
+                    goal: {
+                        let goal = Z3_apply_result_get_subgoal(self.ctx.ctx, result, i).unwrap();
+                        Z3_goal_inc_ref(self.ctx.ctx, goal);
+                        goal
+                    },
+                })
+            }
+
+            goals
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a [Tactic]> for Tactic {
+    type Error = &'a [Tactic];
+
+    fn try_from(tactics: &'a [Tactic]) -> Result<Self, Self::Error> {
+        tactics
+            .iter()
+            .cloned()
+            .reduce(|t1, t2| Tactic::then(&t1, &t2))
+            .ok_or(tactics)
+    }
+}
+
+impl Clone for Tactic {
+    fn clone(&self) -> Self {
+        Tactic {
+            ctx: self.ctx.clone(),
+            tactic: unsafe {
+                Z3_tactic_inc_ref(self.ctx.ctx, self.tactic);
+                self.tactic
+            },
+        }
+    }
+}
+
+impl Drop for Tactic {
+    fn drop(&mut self) {
+        unsafe { Z3_tactic_dec_ref(self.ctx.ctx, self.tactic) }
+    }
+}
+
+impl Goal {
+    pub fn new(ctx: &Context, models: bool, unsat_cores: bool, proofs: bool) -> Goal {
+        Goal {
+            ctx: ctx.this.upgrade().unwrap(),
+            goal: unsafe {
+                let goal = Z3_mk_goal(ctx.ctx, models, unsat_cores, proofs).unwrap();
+                Z3_goal_inc_ref(ctx.ctx, goal);
+                goal
+            },
+        }
+    }
+
+    pub fn assert(&self, ast: Ast) {
+        unsafe { Z3_goal_assert(self.ctx.ctx, self.goal, ast.ast) }
+    }
+
+    pub fn size(&self) -> u32 {
+        unsafe { Z3_goal_size(self.ctx.ctx, self.goal) }
+    }
+
+    pub fn formulas(&self) -> Vec<Ast> {
+        unsafe {
+            let mut formulas = Vec::with_capacity(self.size() as usize);
+            for i in 0..self.size() {
+                formulas.push(Ast::new(
+                    &self.ctx,
+                    Z3_goal_formula(self.ctx.ctx, self.goal, i).unwrap(),
+                ))
+            }
+
+            formulas
+        }
+    }
+}
+
+impl Clone for Goal {
+    fn clone(&self) -> Self {
+        Goal {
+            ctx: self.ctx.clone(),
+            goal: unsafe {
+                Z3_goal_inc_ref(self.ctx.ctx, self.goal);
+                self.goal
+            },
+        }
+    }
+}
+
+impl Drop for Goal {
+    fn drop(&mut self) {
+        unsafe { Z3_goal_dec_ref(self.ctx.ctx, self.goal) }
     }
 }
 

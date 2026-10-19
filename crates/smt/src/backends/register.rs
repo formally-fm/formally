@@ -38,7 +38,7 @@ pub static BACKENDS: [&'static dyn Backend];
 ///
 /// This error type is [Diagnosable], meaning that you can convert it to [DiagnosticEmitted] with
 /// the `?` operator and it emits itself as diagnostics automatically when this happens.
-#[derive(Debug, Error, Located)]
+#[derive(Debug, Clone, Error, Located)]
 #[error("SMT backend `{0}` not found")]
 pub struct BackendNotFound<'s>(pub Identifier<'s>);
 
@@ -67,7 +67,7 @@ impl Diagnosable for BackendNotFound<'_> {
 /// `&backends::Default`) can be passed to anyone expecting a `&dyn Backend`.
 ///
 /// The difference with calling [backends::default()](default()) directly is that the latter returns
-/// a [Result], so [backends::Default](Default) is useful when the default backend is needed
+/// a [Result], so [backends::Default](struct@Default) is useful when the default backend is needed
 /// in a function that should not fail (i.e. that does not return [Result]). The failure is
 /// postponed to the first call to the methods of [Backend].
 pub struct Default;

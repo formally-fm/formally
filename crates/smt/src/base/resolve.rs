@@ -22,8 +22,14 @@
 // SOFTWARE.
 //
 
-use crate::*;
-use formally::support::*;
+use crate::formally;
+use formally::{
+    smt::{
+        theories::{Ints, Reals},
+        *,
+    },
+    support::*,
+};
 
 use std::{collections::HashMap, iter::zip, sync::Arc};
 
@@ -69,6 +75,11 @@ impl Resolve for Term {
             }
         })
     }
+}
+
+struct Candidate {
+    atom: Atom,
+    promoted: bool,
 }
 
 impl Term {
@@ -130,9 +141,11 @@ impl Term {
             resolved.push(t);
         }
 
-        env.lookup(head.clone(), role)
+        Ok(env
+            .lookup(head.clone(), role)
             .filter_map(move |f| Self::candidate(f, env, head, &argsorts, &resolved, pool))
-            .one()
+            .best_by(|c1, c2| c1.promoted.cmp(&c2.promoted))?
+            .atom)
     }
 
     fn candidate(
@@ -142,7 +155,7 @@ impl Term {
         argsorts: &[Sort],
         arguments: &[Term],
         pool: &dyn TermPool,
-    ) -> Option<Atom> {
+    ) -> Option<Candidate> {
         let bound = BoundRef {
             function: f.clone(),
             span: head.span(),
@@ -155,13 +168,18 @@ impl Term {
         #[allow(clippy::mutable_key_type)]
         let mut matches = HashMap::new();
         let domain = bound.domain(arguments.len());
-        for (sort, arg) in zip(domain, argsorts) {
-            if !sort.matches_with(arg, &mut matches) {
+        let mut promoted = false;
+        for (sort, argsort) in zip(domain, argsorts) {
+            if *argsort == Ints::Int() && sort.matches_with(&Reals::Real(), &mut matches) {
+                promoted = true;
+                continue;
+            }
+            if !sort.matches_with(argsort, &mut matches) {
                 return None;
             }
         }
 
-        Some(atom)
+        Some(Candidate { atom, promoted })
     }
 
     fn resolve_quant(
@@ -194,17 +212,25 @@ impl Term {
     fn resolve_let(let_: &Let, env: &Env, role: Role, pool: &dyn TermPool) -> Result<Let> {
         let mut nested = Env::new().with_parent(env.clone());
 
+        let mut bindings = Vec::with_capacity(let_.bindings.len());
         for bind in &*let_.bindings {
-            nested.functions.add(
-                bind.variable.name().name(),
-                Function::from(bind.variable.clone()),
-            );
+            let def = bind.def.resolve(env, pool, role)?;
+            let variable = Variable::new(bind.variable.name().name(), Sort::of(&def)?);
+
+            nested
+                .functions
+                .add(bind.variable.name().name(), variable.clone().into());
+            bindings.push(Binding {
+                variable,
+                def,
+                span: bind.span(),
+            })
         }
 
         let body = let_.body.resolve(&nested, pool, role)?;
 
         Ok(Let {
-            bindings: let_.bindings.clone(),
+            bindings: Arc::from(bindings.into_boxed_slice()),
             body,
             span: let_.span.clone(),
         })

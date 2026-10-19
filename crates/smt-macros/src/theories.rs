@@ -256,6 +256,25 @@ impl Parse for Decl {
     }
 }
 
+fn is_commutative_from_attr(attr: &syn::Attribute) -> bool {
+    if let Ok(path) = attr.meta.require_path_only()
+        && path.is_ident("commutative")
+    {
+        true
+    } else {
+        false
+    }
+}
+
+fn is_commutative_from_attrs(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if is_commutative_from_attr(attr) {
+            return true;
+        }
+    }
+    false
+}
+
 fn get_name_from_attr(attr: &syn::Attribute) -> Option<&syn::Expr> {
     match &attr.meta {
         Meta::NameValue(syn::MetaNameValue { path, value, .. }) if path.is_ident("name") => {
@@ -275,10 +294,15 @@ fn get_name_from_attrs(attrs: &[syn::Attribute]) -> Option<&syn::Expr> {
     None
 }
 
-fn const_static(cnst: Attributed<&Const>) -> TokenStream {
+fn const_static(theory: &syn::Ident, cnst: Attributed<&Const>) -> TokenStream {
     let ident = &cnst.node.ident;
     let sident = syn::LitStr::new(&ident.to_string(), ident.span());
     let name = get_name_from_attrs(&cnst.attrs).map(|name| quote!(name = #name));
+    let commutativity = if is_commutative_from_attrs(&cnst.attrs) {
+        quote!(formally::smt::Commutativity::Commutative)
+    } else {
+        quote!(formally::smt::Commutativity::NonCommutative)
+    };
     let sort = &cnst.node.sort;
 
     quote! {
@@ -292,7 +316,9 @@ fn const_static(cnst: Attributed<&Const>) -> TokenStream {
                     std::iter::empty().collect(),
                     std::iter::empty().collect(),
                     #sort,
-                    None
+                    None,
+                    #commutativity,
+                    &#theory as &dyn formally::smt::theories::Theory
                 )
             });
     }
@@ -336,7 +362,7 @@ impl ToTokens for Flag {
     }
 }
 
-fn func_static(func: Attributed<&Function>) -> TokenStream {
+fn func_static(theory: &syn::Ident, func: Attributed<&Function>) -> TokenStream {
     let ident = &func.node.ident;
     let sident = syn::LitStr::new(&ident.to_string(), ident.span());
     let name = get_name_from_attrs(&func.attrs).map(|name| quote!(name = #name));
@@ -350,6 +376,11 @@ fn func_static(func: Attributed<&Function>) -> TokenStream {
     let flag = get_flag_from_attrs(&func.attrs)
         .map(|f| quote!(Some(#f)))
         .unwrap_or(quote!(None));
+    let commutativity = if is_commutative_from_attrs(&func.attrs) {
+        quote!(formally::smt::Commutativity::Commutative)
+    } else {
+        quote!(formally::smt::Commutativity::NonCommutative)
+    };
 
     quote! {
         pub static #ident : std::sync::LazyLock<formally::smt::Primitive> =
@@ -366,38 +397,42 @@ fn func_static(func: Attributed<&Function>) -> TokenStream {
                     vec![#(#params2.clone()),*],
                     vec![#(formally::smt::Sort::from(#args.clone())),*] as Vec<formally::smt::Sort>,
                     formally::smt::Sort::from(#range.clone()),
-                    #flag
+                    #flag,
+                    #commutativity,
+                    &#theory as &dyn formally::smt::theories::Theory
                 )
             });
     }
 }
 
-fn sort_static(sort: Attributed<&Sort>) -> TokenStream {
-    func_static(sort.replace(&Function {
-        _fn_token: Default::default(),
-        ident: sort.node.ident.clone(),
-        params: Default::default(),
-        _paren_token: Default::default(),
-        args: sort.node.params.iter().map(|p| p.sort.clone()).collect(),
-        _arrow_token: Default::default(),
-        range: parse_quote!(formally::smt::Sort::sort()),
-        _semi_token: Default::default(),
-    }))
+fn sort_static(theory: &syn::Ident, sort: Attributed<&Sort>) -> TokenStream {
+    func_static(
+        theory,
+        sort.replace(&Function {
+            _fn_token: Default::default(),
+            ident: sort.node.ident.clone(),
+            params: Default::default(),
+            _paren_token: Default::default(),
+            args: sort.node.params.iter().map(|p| p.sort.clone()).collect(),
+            _arrow_token: Default::default(),
+            range: parse_quote!(formally::smt::Sort::sort()),
+            _semi_token: Default::default(),
+        }),
+    )
 }
 
-impl ToTokens for Attributed<Decl> {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let code = match &self.node {
-            Decl::Sort(sort) => sort_static(self.replace(sort)),
-            Decl::Const(cnst) => const_static(self.replace(cnst)),
-            Decl::Function(func) => func_static(self.replace(func)),
-        };
-        tokens.extend(code)
+fn decl_static(theory: &syn::Ident, decl: &Attributed<Decl>) -> TokenStream {
+    match &decl.node {
+        Decl::Sort(sort) => sort_static(theory, decl.replace(sort)),
+        Decl::Const(cnst) => const_static(theory, decl.replace(cnst)),
+        Decl::Function(func) => func_static(theory, decl.replace(func)),
     }
 }
 
 fn is_custom_attr(attr: &syn::Attribute) -> bool {
-    get_name_from_attr(attr).is_some() || get_flag_from_attr(attr).is_some()
+    get_name_from_attr(attr).is_some()
+        || get_flag_from_attr(attr).is_some()
+        || is_commutative_from_attr(attr)
 }
 
 impl ToTokens for SortParam {
@@ -473,10 +508,10 @@ fn capitalize(ident: &syn::Ident) -> syn::Ident {
 
 impl ToTokens for Attributed<Theory> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let attrs = &self.attrs;
         let vis = &self.node.visibility;
         let theory = &self.node.ident;
-        let decls = &self.node.decls;
+        let theory_name = theory.to_string();
+        let decls = self.node.decls.iter().map(|d| decl_static(theory, d));
         let extended: Vec<_> = self.node.extended.extended.iter().collect();
         let module = syn::Ident::new(&format!("{}__details", theory), theory.span());
         let extendoc = if !extended.is_empty() {
@@ -487,6 +522,26 @@ impl ToTokens for Attributed<Theory> {
             }
         } else {
             quote! {}
+        };
+
+        let mut attrs = Vec::with_capacity(self.attrs.len());
+        let mut custom_simplifier = false;
+        for attr in self.attrs.iter() {
+            if let Ok(path) = attr.meta.require_path_only()
+                && path.is_ident("simplify")
+            {
+                custom_simplifier = true;
+            } else {
+                attrs.push(attr.clone())
+            }
+        }
+
+        let simplify_impl = if custom_simplifier {
+            quote!()
+        } else {
+            quote! {
+                impl formally::smt::theories::Simplify for #theory {}
+            }
         };
 
         let mut sorts = Vec::new();
@@ -771,6 +826,14 @@ impl ToTokens for Attributed<Theory> {
                 #(#funcitems)*
             }
 
+            #simplify_impl
+
+            impl std::fmt::Debug for #theory {
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    write!(f, #theory_name)
+                }
+            }
+
             impl formally::smt::theories::Theory for #theory {
                 fn functions(&self) -> formally::support::Scope<formally::smt::Function> {
                     #module::FUNCS.clone()
@@ -802,6 +865,20 @@ impl ToTokens for Attributed<Theory> {
                     if false { unreachable!() }
                     #(#atom_try_from)* else {
                         Err(atom)
+                    }
+                }
+            }
+
+            impl<'t> TryFrom<&'t formally::smt::Term> for #atomenum<'t> {
+                type Error = &'t formally::smt::Term;
+
+                fn try_from(term: &'t formally::smt::Term) -> Result<#atomenum<'t>, Self::Error> {
+                    let formally::smt::TermKind::Atom(atom) = term.kind() else {
+                        return Err(term);
+                    };
+                    match #atomenum::try_from(atom) {
+                        Ok(atom) => Ok(atom),
+                        Err(_) => Err(term)
                     }
                 }
             }

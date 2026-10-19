@@ -25,7 +25,8 @@
 use crate::*;
 use formally::support::*;
 
-use derive_more::{Display, From};
+use derive_more::From;
+use thiserror::Error;
 use transitive::Transitive;
 
 use std::{
@@ -68,9 +69,11 @@ impl Resolve for Infer {
 }
 
 impl TypeCheck for Infer {
-    fn type_check(&self) -> Result<Sort> {
-        internal!(None, "type checking of an inference placeholder");
-        Err(DiagnosticEmitted)
+    fn type_check(&self) -> Result<Sort, TypeCheckError> {
+        Err(TypeCheckError {
+            kind: Box::new(TypeCheckErrorKind::Infer),
+            span: None,
+        })
     }
 }
 
@@ -229,8 +232,8 @@ impl Debug for Sort {
 }
 
 /// Error type for `TryFrom<Term> for Sort`
-#[derive(Debug, Clone, Located, Display)]
-#[display("sort term must be an atom")]
+#[derive(Debug, Clone, Located, Error)]
+#[error("sort term must be an atom")]
 pub struct InvalidSortTerm {
     span: Option<Span>,
 }
@@ -269,7 +272,7 @@ impl TryFrom<Term> for Sort {
 
 impl Sort {
     /// Alias for `term.type_check(ctx)` which provide a better notation.
-    pub fn of(term: &Term) -> Result<Sort> {
+    pub fn of(term: &Term) -> Result<Sort, TypeCheckError> {
         term.type_check()
     }
 
@@ -322,16 +325,17 @@ impl Sort {
     }
 
     #[allow(clippy::mutable_key_type)]
-    pub(crate) fn instantiate(&self, matches: &HashMap<Variable, Sort>) -> Result<Sort> {
+    pub(crate) fn instantiate(
+        &self,
+        matches: &HashMap<Variable, Sort>,
+    ) -> Result<Sort, TypeCheckError> {
         match &self.head {
             SortHead::Bound(func) if let Function::Variable(var) = &func => {
-                return matches.get(var).cloned().ok_or_else(|| {
-                    internal!(
-                        None,
-                        "usage of unconstrained sort parameter: {}",
-                        var.name()
-                    );
-                    DiagnosticEmitted
+                return matches.get(var).cloned().ok_or(TypeCheckError {
+                    kind: Box::new(TypeCheckErrorKind::UnconstrainedSortParameter {
+                        name: var.name().clone(),
+                    }),
+                    span: None,
                 });
             }
             _ => {}

@@ -188,7 +188,7 @@ impl Error {
 impl From<BackendNotFound<'_>> for Error {
     fn from(err: BackendNotFound<'_>) -> Self {
         let err = BackendNotFound(err.0.into_owned());
-        Error::new(&err.0.name().to_string(), ErrorKind::BackendNotFound(err))
+        Error::new(err.clone().0.name(), ErrorKind::BackendNotFound(err))
     }
 }
 
@@ -298,7 +298,7 @@ pub trait Manager: Any {
     ///
     /// This is useful to obtain a new solver or manager of the same backend or the name of the
     /// backend.
-    fn backend(&self) -> &dyn Backend;
+    fn backend(&self) -> &'static dyn Backend;
 }
 
 /// The trait for *solvers* of SMT backends.
@@ -309,7 +309,7 @@ pub trait Manager: Any {
 /// the method can assume to hold when the backend is used through a [Solver].
 ///
 /// However, please read before the documentation on [how to write a new backend](smt::backends).
-pub trait Solver {
+pub trait Solver: Any {
     /// Return the manager this solver was built on.
     fn manager(&self) -> &dyn Manager;
 
@@ -374,4 +374,12 @@ pub trait Solver {
     /// `Ok(None)`. An error should be returned only if extracting a model failed for some
     /// unexpected reason (i.e. an I/O error).
     fn model(&self) -> Result<Option<Box<dyn '_ + ModelProvider>>, Error>;
+
+    /// Perform quantifier elimination on the given [Term](smt::Term) term.
+    ///
+    /// The method returns an equivalent quntifier-free [Term](smt::Term). The method *can assume*
+    /// the term is well-typed of sort Bool.
+    ///
+    /// The [TermPool](smt::TermPool) argument is used to construct the resulting [Term](smt::Term).
+    fn qe(&self, term: smt::Term, pool: &dyn smt::TermPool) -> Result<smt::Term, Error>;
 }

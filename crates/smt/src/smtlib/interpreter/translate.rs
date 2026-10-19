@@ -39,7 +39,7 @@ impl Interpreter {
         match sort {
             ast::Sort::Simple(ast::Identifier::Symbol(name)) => Identifier::from(name.inner())
                 .over(name.span())
-                .into_term_in(solver.pool()),
+                .into_term_in(&*solver.pool()),
             ast::Sort::Application(ast::SortApplication {
                 head: ast::Identifier::Symbol(head),
                 args,
@@ -55,7 +55,7 @@ impl Interpreter {
 
                 term!(#head #(#args)*)
                     .over(span.clone())
-                    .into_term_in(solver.pool())
+                    .into_term_in(&*solver.pool())
             }
             _ => todo!(),
         }
@@ -64,15 +64,15 @@ impl Interpreter {
     fn constant_to_smt(solver: &smt::Solver, cnst: ast::Constant) -> smt::Term {
         let span = cnst.span();
         let cnst = match cnst {
-            ast::Constant::Numeral(n) => smt::Constant::from(n.value),
-            ast::Constant::Decimal(d) => smt::Constant::from(d.value),
+            ast::Constant::Numeral(n) => smt::Constant::from((*n.value).clone()),
+            ast::Constant::Decimal(d) => smt::Constant::from((*d.value).clone()),
             ast::Constant::Hexadecimal(n) => smt::Constant::from(n.value),
             ast::Constant::Binary(n) => smt::Constant::from(n.value),
             ast::Constant::String(_) => todo!(),
         }
         .over(span);
 
-        term!(#cnst).into_term_in(solver.pool())
+        term!(#cnst).into_term_in(&*solver.pool())
     }
 
     fn app_to_smt(
@@ -99,7 +99,7 @@ impl Interpreter {
                     span: idspan,
                 })
                 .over(span)
-                .into_term_in(solver.pool());
+                .into_term_in(&*solver.pool());
 
                 Ok(term)
             }
@@ -119,16 +119,19 @@ impl Interpreter {
             }
             ast::Term::Let(let_) => {
                 let mut bindings = Vec::new();
+                let infer = smt::Sort {
+                    head: smt::SortHead::Unbound("inferred".into()),
+                    arguments: SArc::default(),
+                };
                 for bind in let_.bindings {
-                    bindings.push(
-                        solver.lookup_binding(
-                            smt::Binding::new(
-                                Identifier::new(bind.name.inner()),
-                                Interpreter::term_to_smt(solver, bind.body)?,
-                            )
-                            .over(bind.span.clone()),
-                        )?,
-                    )
+                    bindings.push(smt::Binding {
+                        variable: smt::Variable::new(
+                            Identifier::new(bind.name.inner()),
+                            infer.clone(),
+                        ),
+                        def: Interpreter::term_to_smt(solver, bind.body)?,
+                        span: bind.span,
+                    })
                 }
                 let body = Interpreter::term_to_smt(solver, *let_.body)?;
                 let term = smt::Let {
@@ -136,7 +139,7 @@ impl Interpreter {
                     body,
                     span: let_.span.clone(),
                 }
-                .into_term_in(solver.pool());
+                .into_term_in(&*solver.pool());
 
                 Ok(term)
             }
@@ -153,7 +156,7 @@ impl Interpreter {
                     body,
                     span: exists.span.clone(),
                 }
-                .into_term_in(solver.pool());
+                .into_term_in(&*solver.pool());
 
                 Ok(term)
             }
@@ -169,7 +172,7 @@ impl Interpreter {
                     body,
                     span: forall.span.clone(),
                 })
-                .into_term_in(solver.pool());
+                .into_term_in(&*solver.pool());
 
                 Ok(term)
             }

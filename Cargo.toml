@@ -5,6 +5,11 @@ members = [
     "crates/io",
     "crates/smt",
     "crates/formally",
-    "crates/cli", "crates/smt-macros",
+    "crates/cli",
+    "crates/smt-macros",
 ]
 resolver = "3"
+
+[profile.profiling]
+inherits = "release"
+debug = true

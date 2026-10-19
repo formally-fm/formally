@@ -67,8 +67,8 @@
 //!    2. on macOS, setting the `rpath` of the final executable by specifying the
 //!       `-Wl,-rpath,$CVC5_LIB_DIR` option
 //!
-//! This can be done conveniently and once and for all by editing Cargo's `config.toml` (see the 
-//! *Configuration* section in the 
+//! This can be done conveniently and once and for all by editing Cargo's `config.toml` (see the
+//! *Configuration* section in the
 //! [Cargo Book](https://doc.rust-lang.org/cargo/reference/config.html)):
 //!
 //! For example, suppose you are on a macOS system, Z3 has been installed with Homebrew and

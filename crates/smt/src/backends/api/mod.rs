@@ -57,7 +57,7 @@ use formally::smt::{
     logics::{Logic, LogicEx},
 };
 
-use std::{hash::Hash, rc::Rc};
+use std::{fmt::Debug, hash::Hash, rc::Rc};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -92,7 +92,7 @@ pub trait Manager: Default + Sized {
     type Sort: Clone + Hash + PartialEq + Eq;
 
     /// The type of the backend's API representing a term.
-    type Term: Clone;
+    type Term: Debug + Clone + Hash + PartialEq + Eq;
 
     /// A Boolean constant telling whether your API supports directly the definition of functions.
     ///
@@ -101,7 +101,7 @@ pub trait Manager: Default + Sized {
     const FUNC_DEF_SUPPORTED: bool = false;
 
     /// Return the backend instance this manager has been built on.
-    fn backend(&self) -> &Self::Backend;
+    fn backend(&self) -> &'static Self::Backend;
 
     /// Return an uninterpreted sort of a given name.
     fn uninterpreted_sort(&self, name: &str) -> Result<Self::Sort>;
@@ -196,7 +196,7 @@ pub trait Manager: Default + Sized {
         to_terms: impl Fn(&[smt::Term]) -> Result<Vec<Self::Term>>,
     ) -> Result<Self::Term>;
 
-    /// Translates back a [Self::Term] to a [Term](smt::Term).
+    /// Translate back a [Self::Term] to a [Term](smt::Term).
     ///
     /// The term is supposed to be built using the provided [TermPool](smt::TermPool).
     ///
@@ -210,9 +210,10 @@ pub trait Manager: Default + Sized {
         term: Self::Term,
         pool: &dyn smt::TermPool,
         to_func: impl Clone + Fn(Self::FuncDecl) -> Option<smt::UserFunction>,
+        to_var: impl Clone + Fn(Self::Term) -> Option<smt::Variable>,
         to_sort: impl Clone + Fn(Self::Sort) -> Option<smt::Sort>,
-    ) -> Option<smt::Term> {
-        None
+    ) -> Result<smt::Term, Self::Term> {
+        Err(term)
     }
 }
 
@@ -254,6 +255,9 @@ pub trait Solver: Sized {
         manager: Rc<Self::Manager>,
     ) -> Result<Self>;
 
+    /// Return the backend instance this solver has been built on.
+    fn backend(&self) -> &'static <Self::Manager as Manager>::Backend;
+
     /// Return the [Logic] object selected during construction.
     fn logic(&self) -> &dyn Logic;
 
@@ -278,6 +282,15 @@ pub trait Solver: Sized {
 
     /// Return the model if one exists.
     fn model(&self) -> Result<Self::Model<'_>>;
+
+    /// Perform quantifier elimination on the given term.
+    ///
+    /// The method *can assume* the given term is in prenex form with a single block of either all
+    /// existential or all universal quantifiers over a quantifier-free body.
+    fn qe(
+        &self,
+        term: <Self::Manager as Manager>::Term,
+    ) -> Result<<Self::Manager as Manager>::Term>;
 }
 
 /// Trait to represent a model from a [Solver].

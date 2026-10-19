@@ -42,7 +42,7 @@ use formally::{
     support::*,
 };
 
-use std::{fmt::Debug, io, path::Path};
+use std::{fmt::Debug, io, num::NonZero, path::Path};
 
 use thiserror::Error;
 
@@ -107,13 +107,15 @@ impl From<Mode> for smt::Answer {
 
 /// Type specifying the operating settings for the interpreter.
 pub struct Settings {
-    /// The [Config] for the underlying [Solver].
+    /// The [Config] for the underlying [Solver](smt::Solver).
     pub config: Config,
     /// The SMT backend to use.
     pub backend: &'static dyn Backend,
     /// The output write stream to use for the output messages (not the diagnostics, which are
     /// handled by the global emitter).
     pub output: Box<dyn RenderTarget>,
+    /// The level of parallelism to use, if supported by the backend
+    pub jobs: Option<Option<NonZero<u32>>>,
 }
 
 impl Settings {
@@ -126,7 +128,10 @@ impl Settings {
     }
 
     pub fn output(self, output: impl 'static + RenderTarget) -> Settings {
-        Settings { output: Box::new(output), ..self }
+        Settings {
+            output: Box::new(output),
+            ..self
+        }
     }
 }
 
@@ -145,15 +150,15 @@ impl Default for Settings {
             config: Config::default(),
             backend: &smt::backends::Default,
             output: Box::new(io::stdout()),
+            jobs: None,
         }
     }
 }
 
 struct State {
+    settings: Settings,
     mode: Mode,
-    config: Config,
     solver: smt::Solver,
-    output: Box<dyn RenderTarget>,
 }
 
 impl Default for Interpreter {
@@ -203,7 +208,7 @@ impl Interpreter {
                 GetOption(_) => Self::unsupported(&mut **output),
                 Reset(_) => Self::unsupported(&mut **output),
                 ResetAssertions(_) => Self::unsupported(&mut **output),
-                SetInfo(_) => Self::unsupported(&mut **output),
+                SetInfo(_) => Self::ignore(),
                 SetLogic(sl) => Self::set_logic(self, sl),
                 SetOption(so) => Self::set_option_start(config, &mut **output, so),
                 command => Self::fail(config, RequiredMode::Started, command),
@@ -211,43 +216,52 @@ impl Interpreter {
             Started(state) => match command {
                 Assert(assert) => Self::assert(state, assert),
                 CheckSat(_) => Self::check_sat(state),
-                CheckSatAssuming(_) => Self::unsupported(&mut *state.output),
+                CheckSatAssuming(_) => Self::unsupported(&mut *state.settings.output),
                 DeclareConst(decl) => Self::declare_const(state, decl),
-                DeclareDatatype(_) => Self::unsupported(&mut *state.output),
-                DeclareDatatypes(_) => Self::unsupported(&mut *state.output),
+                DeclareDatatype(_) => Self::unsupported(&mut *state.settings.output),
+                DeclareDatatypes(_) => Self::unsupported(&mut *state.settings.output),
                 DeclareFun(decl) => Self::declare_fun(state, decl),
                 DeclareSort(decl) => Self::declare_sort(state, decl),
-                DeclareSortParameter(_) => Self::unsupported(&mut *state.output),
+                DeclareSortParameter(_) => Self::unsupported(&mut *state.settings.output),
                 DefineConst(def) => Self::define_const(state, def),
                 DefineFun(def) => Self::define_fun(state, def),
-                DefineFunRec(_) => Self::unsupported(&mut *state.output),
-                DefineFunsRec(_) => Self::unsupported(&mut *state.output),
-                DefineSort(_) => Self::unsupported(&mut *state.output),
-                Echo(msg) => Self::echo(&mut *state.output, msg),
+                DefineFunRec(_) => Self::unsupported(&mut *state.settings.output),
+                DefineFunsRec(_) => Self::unsupported(&mut *state.settings.output),
+                DefineSort(_) => Self::unsupported(&mut *state.settings.output),
+                Echo(msg) => Self::echo(&mut *state.settings.output, msg),
                 Exit(_) => Self::exit(self),
-                GetAssertions(_) => Self::unsupported(&mut *state.output),
-                GetInfo(_) => Self::unsupported(&mut *state.output),
-                GetOption(_) => Self::unsupported(&mut *state.output),
+                GetAssertions(_) => Self::unsupported(&mut *state.settings.output),
+                GetInfo(_) => Self::unsupported(&mut *state.settings.output),
+                GetOption(_) => Self::unsupported(&mut *state.settings.output),
+                GetQE(qe) => Self::get_qe(state, qe),
                 Pop(pop) => Self::pop(state, pop),
                 Push(push) => Self::push(state, push),
-                Reset(_) => Self::unsupported(&mut *state.output),
-                ResetAssertions(_) => Self::unsupported(&mut *state.output),
-                SetInfo(_) => Self::unsupported(&mut *state.output),
+                Reset(_) => Self::unsupported(&mut *state.settings.output),
+                ResetAssertions(_) => Self::unsupported(&mut *state.settings.output),
+                SetInfo(_) => Self::ignore(),
                 SetOption(so) => Self::set_option_started(state, so),
                 _ => match (command, state.mode) {
-                    (GetAssignments(_), Mode::Sat) => Self::unsupported(&mut *state.output),
-                    (GetModel(_), Mode::Sat) => Self::unsupported(&mut *state.output),
+                    (GetAssignments(_), Mode::Sat) => {
+                        Self::unsupported(&mut *state.settings.output)
+                    }
+                    (GetModel(_), Mode::Sat) => Self::unsupported(&mut *state.settings.output),
                     (GetValue(cmd), Mode::Sat) => Self::get_value(state, cmd),
-                    (GetProof(_), Mode::Unsat) => Self::unsupported(&mut *state.output),
-                    (GetUnsatAssumptions(_), Mode::Unsat) => Self::unsupported(&mut *state.output),
-                    (GetUnsatCore(_), Mode::Unsat) => Self::unsupported(&mut *state.output),
+                    (GetProof(_), Mode::Unsat) => Self::unsupported(&mut *state.settings.output),
+                    (GetUnsatAssumptions(_), Mode::Unsat) => {
+                        Self::unsupported(&mut *state.settings.output)
+                    }
+                    (GetUnsatCore(_), Mode::Unsat) => {
+                        Self::unsupported(&mut *state.settings.output)
+                    }
                     (command @ (GetModel(_) | GetValue(_) | GetAssignments(_)), _) => {
-                        Self::fail(&state.config, RequiredMode::Sat, command)
+                        Self::fail(&state.settings.config, RequiredMode::Sat, command)
                     }
                     (command @ (GetProof(_) | GetUnsatAssumptions(_) | GetUnsatCore(_)), _) => {
-                        Self::fail(&state.config, RequiredMode::Unsat, command)
+                        Self::fail(&state.settings.config, RequiredMode::Unsat, command)
                     }
-                    (command, _) => Self::fail(&state.config, RequiredMode::Start, command),
+                    (command, _) => {
+                        Self::fail(&state.settings.config, RequiredMode::Start, command)
+                    }
                 },
             },
             Exited(_, _) => self.exited(command),
@@ -308,6 +322,10 @@ impl Interpreter {
         Err(DiagnosticEmitted)
     }
 
+    fn ignore() -> Result<()> {
+        Ok(())
+    }
+
     fn unsupported(output: &mut dyn RenderTarget) -> Result<()> {
         Interpreter::response(output, ast::Response::Unsupported)
     }
@@ -336,12 +354,24 @@ impl Interpreter {
     fn exit(&mut self) -> Result<()> {
         let (config, mode) = match self {
             Interpreter::Start(Settings { config, .. }) => (config, Mode::Assert),
-            Interpreter::Started(State { config, mode, .. }) => (config, *mode),
+            Interpreter::Started(State { settings, mode, .. }) => (&mut settings.config, *mode),
             Interpreter::Exited(config, mode) => (config, *mode),
         };
         *self = Interpreter::Exited(std::mem::take(config), mode);
 
         Ok(())
+    }
+
+    fn get_qe(state: &mut State, getqe: ast::GetQE) -> Result<()> {
+        let term = Interpreter::term_to_smt(&state.solver, getqe.term)?;
+        let term = state.solver.lookup(term, smt::Role::Function)?;
+        let term = state.solver.qe(term)?;
+
+        let term = Box::new(ast::Term::from(term));
+        Interpreter::response(
+            &mut *state.settings.output,
+            ast::Response::GetQE(ast::GetQEResponse { term, span: None }),
+        )
     }
 
     fn set_logic(&mut self, sl: ast::SetLogic) -> Result<()> {
@@ -358,9 +388,8 @@ impl Interpreter {
             Ok(solver) => {
                 *self = Interpreter::Started(State {
                     mode: Mode::Assert,
-                    config: settings.config,
+                    settings,
                     solver,
-                    output: settings.output,
                 })
             }
             Err(_) => *self = Interpreter::Start(settings),
@@ -384,9 +413,9 @@ impl Interpreter {
     }
 
     fn set_option_started(state: &mut State, so: ast::SetOption) -> Result<()> {
-        Self::set_option_start(&mut state.config, &mut *state.output, so)?;
+        Self::set_option_start(&mut state.settings.config, &mut *state.settings.output, so)?;
 
-        state.solver.config(&state.config)
+        state.solver.config(&state.settings.config)
     }
 
     fn assert(state: &mut State, assert: ast::Assert) -> Result<()> {
@@ -423,7 +452,7 @@ impl Interpreter {
             ),
         };
 
-        Interpreter::response(&mut *state.output, response)?;
+        Interpreter::response(&mut *state.settings.output, response)?;
         state.mode = mode;
 
         Ok(())
@@ -459,7 +488,7 @@ impl Interpreter {
     }
 
     fn declare_sort(state: &mut State, decl: ast::DeclareSort) -> Result<()> {
-        if decl.arity.value > 0 {
+        if *decl.arity.value > 0 {
             error!(
                 decl.arity.span,
                 "parametric uninterpreted sorts are not supported yet"
@@ -535,7 +564,7 @@ impl Interpreter {
     }
 
     fn get_value(state: &mut State, cmd: ast::GetValue) -> Result<()> {
-        if !state.config.produce_models {
+        if !state.settings.config.produce_models {
             error!(
                 cmd.span,
                 "no model value can be produced if the `:produce-models` option is not set to true"
@@ -558,7 +587,7 @@ impl Interpreter {
                                 if let Some(value) = value {
                                     values.push((
                                         ast::Term::from(ast::Symbol::new(function.name()).unwrap()),
-                                        ast::Term::from(value.into_term_in(state.solver.pool())),
+                                        ast::Term::from(value.into_term_in(&*state.solver.pool())),
                                     ))
                                 } else {
                                     error!(
@@ -574,7 +603,7 @@ impl Interpreter {
                     }
                 }
                 Interpreter::response(
-                    &mut *state.output,
+                    &mut *state.settings.output,
                     ast::Response::GetValue(ast::GetValueResponse { values, span: None }),
                 )?;
 

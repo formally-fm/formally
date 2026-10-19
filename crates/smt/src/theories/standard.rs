@@ -28,14 +28,17 @@ theories! {
     /// The core SMT-LIBv2 theory, with basic Boolean connectives.
     ///
     /// See [the official specification](https://smt-lib.org/theories-Core.shtml).
+    #[simplify]
     pub Core {
         /// The sort of Boolean terms.
         type Bool;
 
         /// The true constant.
+        #[name = "true"]
         const True: Core::Bool();
 
         /// The false constant.
+        #[name = "false"]
         const False: Core::Bool();
 
         /// Logical negation.
@@ -48,10 +51,12 @@ theories! {
 
         /// Logical conjunction.
         #[left_assoc]
+        #[commutative]
         fn and(Core::Bool(), Core::Bool()) -> Core::Bool();
 
         /// Logical disjunction.
         #[left_assoc]
+        #[commutative]
         fn or(Core::Bool(), Core::Bool()) -> Core::Bool();
 
         /// Logical exclusive disjunction.
@@ -61,10 +66,12 @@ theories! {
         /// Equality.
         #[name = "="]
         #[chainable]
+        #[commutative]
         fn equals<A>(A, A) -> Core::Bool();
 
         /// Disequality.
         #[pairwise]
+        #[commutative]
         fn distinct<A>(A, A) -> Core::Bool();
 
         /// If-then-else choice construct.
@@ -90,11 +97,13 @@ theories! {
         /// Addition.
         #[name = "+"]
         #[left_assoc]
+        #[commutative]
         fn plus(Reals::Real(), Reals::Real()) -> Reals::Real();
 
         /// Multiplication.
         #[name = "*"]
         #[left_assoc]
+        #[commutative]
         fn mult(Reals::Real(), Reals::Real()) -> Reals::Real();
 
         /// Division.
@@ -143,11 +152,13 @@ theories! {
         /// Addition.
         #[name = "+"]
         #[left_assoc]
+        #[commutative]
         fn plus (Ints::Int(), Ints::Int()) -> Ints::Int();
 
         /// Multiplication.
         #[name = "*"]
         #[left_assoc]
+        #[commutative]
         fn mult (Ints::Int(), Ints::Int()) -> Ints::Int();
 
         /// Division.

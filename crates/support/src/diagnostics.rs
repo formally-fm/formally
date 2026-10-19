@@ -27,6 +27,7 @@ use crate::*;
 use std::{
     cell::RefCell,
     convert::Infallible,
+    error::Error,
     fmt::{self, Debug, Display},
     ops::Deref,
     rc::Rc,
@@ -180,7 +181,7 @@ impl Emit for Diagnostic {
 ///    Ok(())
 /// }
 /// ```
-pub trait Diagnosable: Display + Located {
+pub trait Diagnosable: Error + Located {
     /// The level at which the diagnostic has to be emitted.
     fn level(&self) -> Level {
         Level::Error
@@ -189,6 +190,24 @@ pub trait Diagnosable: Display + Located {
     /// Emit additional notes after the main diagnostic.
     fn notes(&self) -> DiagnosticEmitted {
         DiagnosticEmitted
+    }
+}
+
+impl Located for Box<dyn Diagnosable> {
+    fn span(&self) -> Option<Span> {
+        (**self).span()
+    }
+}
+
+impl Error for Box<dyn Diagnosable> {}
+
+impl Diagnosable for Box<dyn Diagnosable> {
+    fn level(&self) -> Level {
+        (**self).level()
+    }
+
+    fn notes(&self) -> DiagnosticEmitted {
+        (**self).notes()
     }
 }
 
@@ -322,7 +341,7 @@ impl DefaultGlobalEmitter {
 /// The global [Emitter].
 ///
 /// This is the [Emitter] everyone should use, in general, to ensure a consistent rendering of
-/// diagnostics in an application based on [formally]. It is used by all the diagnostic macros
+/// diagnostics in an application based on `::formally`. It is used by all the diagnostic macros
 /// ([error!], [warning!], [note!], etc.).
 ///
 /// The behavior of [GlobalEmitter] can be changed locally with [Diagnostic::with()], or by changing
@@ -425,8 +444,9 @@ impl Emitter for NullEmitter {
 /// [BatchEmitter] works by relaying all the received diagnostics to an inner [Emitter] instance,
 /// but only after a call to [BatchEmitter::commit]. If the object is destroyed before a call to
 /// [BatchEmitter::commit], the pending dianostics are discarded.
+#[derive(Default)]
 pub struct BatchEmitter<'e> {
-    emitter: &'e dyn Emitter,
+    emitter: Option<&'e dyn Emitter>,
     emitted: RefCell<Vec<Emitted>>,
 }
 
@@ -458,13 +478,13 @@ impl Emit for Vec<Emitted> {
 impl<'e> BatchEmitter<'e> {
     /// Construct a new [BatchEmitter] relaying to the global [Emitter].
     pub fn new() -> BatchEmitter<'static> {
-        BatchEmitter::with_emitter(&GlobalEmitter)
+        BatchEmitter::default()
     }
 
     /// Construct a new [BatchEmitter] relaying to the provided [Emitter] instance.
     pub fn with_emitter(emitter: &'e dyn Emitter) -> BatchEmitter<'e> {
         BatchEmitter {
-            emitter,
+            emitter: Some(emitter),
             emitted: RefCell::default(),
         }
     }
@@ -474,7 +494,10 @@ impl<'e> BatchEmitter<'e> {
     /// The method returns `Ok(())` if no diagnostics were collected, or `Err(DiagnosticEmitted)`
     /// otherwise.
     pub fn commit(self) -> Result<(), DiagnosticEmitted> {
-        Diagnostic::with(self.emitter, || Ok(self.ok()?))
+        match self.emitter {
+            Some(emitter) => Diagnostic::with(emitter, || Ok(self.ok()?)),
+            None => Ok(self.ok()?),
+        }
     }
 
     /// Return the collected emitted diagnostics as an `Err(Vec<Emitted>)` if any, or `Ok(())` if no

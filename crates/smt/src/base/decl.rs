@@ -22,9 +22,12 @@
 // SOFTWARE.
 //
 
-use crate::*;
+use crate::formally;
 
-use formally::support::*;
+use formally::{
+    smt::{theories::Theory, *},
+    support::*,
+};
 
 use derive_more::{Deref, From};
 use transitive::Transitive;
@@ -50,7 +53,7 @@ use std::{fmt::Debug, sync::Arc};
 ///
 /// See also the [theories!] macro to see how to specify these annotations when declaring theory
 /// symbols.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Associativity {
     /// Equivalent to the `:left-assoc` annotation.
     LeftAssoc,
@@ -60,6 +63,13 @@ pub enum Associativity {
     Chainable,
     /// Equivalent to the `:pairwise` annotation.
     Pairwise,
+}
+
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Commutativity {
+    #[default]
+    NonCommutative,
+    Commutative,
 }
 
 /// A free variable.
@@ -163,6 +173,8 @@ pub(crate) struct PrimitiveData {
     pub domain: Vec<Sort>,
     pub range: Sort,
     pub associativity: Option<Associativity>,
+    pub commutativity: Commutativity,
+    pub theory: SArc<dyn Theory>,
 }
 
 impl Located for Primitive {
@@ -182,6 +194,8 @@ impl Primitive {
         domain: Vec<Sort>,
         range: Sort,
         associativity: Option<Associativity>,
+        commutativity: Commutativity,
+        theory: impl Into<SArc<dyn Theory>>,
     ) -> Primitive {
         Primitive(Nominal(SArc::Arc(Arc::new(PrimitiveData {
             name: name.into().into_owned(),
@@ -189,6 +203,8 @@ impl Primitive {
             domain,
             range,
             associativity,
+            commutativity,
+            theory: theory.into(),
         }))))
     }
 
@@ -218,11 +234,29 @@ impl Primitive {
         &self.0.range
     }
 
+    /// Get the [Theory] this [Primitive] comes from.
+    pub fn theory(&self) -> &dyn Theory {
+        &*self.0.theory
+    }
+
     /// Get the associativity annotation, if any, of the primitive function.
     ///
     /// See [Associativity] for details.
     pub fn associativity(&self) -> Option<Associativity> {
         self.0.associativity
+    }
+
+    pub fn commutativity(&self) -> Commutativity {
+        self.0.commutativity
+    }
+    
+    /// Form an [Atom] that calls this [Primitive] as a function with the given arguments.
+    pub fn call(self, args: impl IntoIterator<Item = Term>) -> Atom {
+        Atom {
+            head: self.into(),
+            arguments: args.into_iter().collect(),
+            span: None,
+        }
     }
 }
 
@@ -357,6 +391,17 @@ impl Declaration<Sort, Sort> {
 /// also refer to the [Nominal] type for details.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located, Deref)]
 pub struct Declared(pub(crate) Nominal<Arc<Declaration<Sort, Sort>>>);
+
+impl Declared {
+    /// Form an [Atom] that calls this [Declared] as a function with the given arguments.
+    pub fn call(self, args: impl IntoIterator<Item = Term>) -> Atom {
+        Atom {
+            head: self.into(),
+            arguments: args.into_iter().collect(),
+            span: None,
+        }
+    }
+}
 
 /// Specification for definitions of functions (and constants, and sorts).
 ///
@@ -510,6 +555,17 @@ impl<B: ToTerm> Definition<Sort, Sort, B> {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Located, Deref)]
 pub struct Defined(pub(crate) Nominal<Arc<Definition<Sort, Sort, Term>>>);
 
+impl Defined {
+    /// Form an [Atom] that calls this [Defined] as a function with the given arguments.
+    pub fn call(self, args: impl IntoIterator<Item = Term>) -> Atom {
+        Atom {
+            head: self.into(),
+            arguments: args.into_iter().collect(),
+            span: None,
+        }
+    }
+}
+
 /// A function.
 ///
 /// The [Function] type represent any function usable to build terms.
@@ -576,6 +632,15 @@ impl Function {
             Function::User(user) => user.range(),
         }
     }
+
+    /// Form an [Atom] that calls this [Function] with the given arguments.
+    pub fn call(self, args: impl IntoIterator<Item = Term>) -> Atom {
+        Atom {
+            head: self.into(),
+            arguments: args.into_iter().collect(),
+            span: None,
+        }
+    }
 }
 
 /// A *user function*, i.e. a function either declared or defined in some [Solver].
@@ -612,6 +677,15 @@ impl UserFunction {
         match self {
             UserFunction::Declared(decl) => &decl.range,
             UserFunction::Defined(def) => &def.range,
+        }
+    }
+
+    /// Form an [Atom] that calls this [UserFunction] with the given arguments.
+    pub fn call(self, args: impl IntoIterator<Item = Term>) -> Atom {
+        Atom {
+            head: self.into(),
+            arguments: args.into_iter().collect(),
+            span: None,
         }
     }
 }

@@ -31,6 +31,7 @@ use formally::smt::{
     },
     logics::{Logic, LogicEx, standard_logic},
 };
+
 use std::{any::Any, cell::RefCell, collections::HashMap, iter::zip, rc::Rc};
 
 type Result<T, E = backends::Error> = std::result::Result<T, E>;
@@ -48,6 +49,7 @@ pub struct ApiManager<M: Manager> {
     sorts_rev: RefCell<HashMap<M::Sort, smt::Sort>>,
     terms: RefCell<HashMap<smt::Term, M::Term>>,
     variables: RefCell<HashMap<smt::Variable, M::Term>>,
+    variables_rev: RefCell<HashMap<M::Term, smt::Variable>>,
 }
 
 /// A type that helps to implement instances of the [backends::Solver] trait.
@@ -66,7 +68,7 @@ struct ApiModel<'s, S: 's + Solver> {
     model: S::Model<'s>,
 }
 
-impl<S: Solver> backends::Solver for ApiSolver<S> {
+impl<S: 'static + Solver> backends::Solver for ApiSolver<S> {
     fn manager(&self) -> &dyn backends::Manager {
         &*self.manager
     }
@@ -131,6 +133,13 @@ impl<S: Solver> backends::Solver for ApiSolver<S> {
             model: self.solver.model()?,
         })))
     }
+
+    fn qe(&self, term: smt::Term, pool: &dyn smt::TermPool) -> Result<smt::Term> {
+        let term = self.manager.term(&term, &BindMap::default())?;
+        let term = self.solver.qe(term)?;
+
+        self.manager.export(term, pool)
+    }
 }
 
 impl<S: Solver> ApiSolver<S> {
@@ -155,13 +164,15 @@ impl<S: Solver> ApiSolver<S> {
         let manager =
             match Rc::downcast::<ApiManager<<S as Solver>::Manager>>(manager as Rc<dyn Any>) {
                 Ok(manager) => manager,
-                Err(_) => return Err(backends::Error::new(
-                    backend.name()?,
-                    backends::ErrorKind::Internal(
-                        "`ApiSolver` method called with a `dyn Manager` which is not `ApiManager`"
-                            .into(),
-                    ),
-                )),
+                Err(_) => {
+                    return Err(backends::Error::new(
+                        backend.name()?,
+                        backends::ErrorKind::Internal(
+                            "`ApiSolver` created with a `dyn Manager` which is not `ApiManager`"
+                                .into(),
+                        ),
+                    ));
+                }
             };
 
         let logic = match &config.logic {
@@ -183,6 +194,11 @@ impl<S: Solver> ApiSolver<S> {
             result: None,
             config: RefCell::new(config.clone()),
         })
+    }
+
+    /// Return a reference to the underlying [api::Solver](Solver) implementation.
+    pub fn solver(&self) -> &S {
+        &self.solver
     }
 }
 
@@ -206,7 +222,7 @@ impl<'s, S: 's + Solver> backends::ModelProvider for ApiModel<'s, S> {
 }
 
 impl<M: 'static + Manager> backends::Manager for ApiManager<M> {
-    fn backend(&self) -> &dyn Backend {
+    fn backend(&self) -> &'static dyn Backend {
         self.manager.backend()
     }
 }
@@ -234,7 +250,13 @@ impl<M: Manager> ApiManager<M> {
             sorts_rev: RefCell::default(),
             terms: RefCell::default(),
             variables: RefCell::default(),
+            variables_rev: RefCell::default(),
         }
+    }
+
+    /// Return a reference to the underlying [api::Manager](Manager) implementation.
+    pub fn manager(&self) -> Rc<M> {
+        self.manager.clone()
     }
 
     pub(crate) fn sort(&self, sort: &smt::Sort) -> Result<M::Sort> {
@@ -406,6 +428,9 @@ impl<M: Manager> ApiManager<M> {
         self.variables
             .borrow_mut()
             .insert(variable.clone(), t.clone());
+        self.variables_rev
+            .borrow_mut()
+            .insert(t.clone(), variable.clone());
 
         Ok(t)
     }
@@ -566,13 +591,14 @@ impl<M: Manager> ApiManager<M> {
 
     fn export(&self, term: M::Term, pool: &dyn smt::TermPool) -> Result<smt::Term> {
         let to_func = |decl| self.funcs.borrow().get(&decl).cloned();
+        let to_var = |ast| self.variables_rev.borrow().get(&ast).cloned();
         let to_sort = |decl| self.sorts_rev.borrow().get(&decl).cloned();
-        match self.manager.export(term, pool, to_func, to_sort) {
-            Some(t) => Ok(t),
-            None => Err(backends::Error::new(
+        match self.manager.export(term, pool, to_func, to_var, to_sort) {
+            Ok(t) => Ok(t),
+            Err(t) => Err(backends::Error::new(
                 self.manager.backend().name()?,
                 backends::ErrorKind::Unsupported {
-                    msg: "unsupported Z3_ast in conversion to Term".into(),
+                    msg: format!("unsupported term handle in conversion to Term: {t:?}"),
                     span: None,
                 },
             )),

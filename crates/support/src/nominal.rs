@@ -28,6 +28,7 @@ use std::{
     hash::{Hash, Hasher},
     ops::Deref,
 };
+use std::cmp::Ordering;
 
 /// Smart pointer wrapper for identity-based equality comparisons and hashing
 ///
@@ -39,7 +40,7 @@ use std::{
 ///
 /// In `formally`, this is used in places where two objects with the same value must nevertheless
 /// be considered distinct, most prominently the `Declared` and `Defined` types in the `smt` crate.
-#[derive(Clone, Default, From)]
+#[derive(Clone, Copy, Default, From)]
 #[from(T)]
 #[repr(transparent)]
 pub struct Nominal<T>(pub T);
@@ -80,6 +81,19 @@ impl<T: Deref> PartialEq for Nominal<T> {
 }
 
 impl<T: Deref> Eq for Nominal<T> {}
+
+impl<T: Deref<Target: Sized>> PartialOrd for Nominal<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+}
+
+impl<T: Deref<Target: Sized>> Ord for Nominal<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let this = &*self.0 as *const T::Target;
+        let other = &*other.0 as *const T::Target;
+        
+        this.cmp(&other)
+    }
+}
 
 impl<T> Deref for Nominal<T> {
     type Target = T;
